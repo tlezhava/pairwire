@@ -29,6 +29,8 @@ export default defineConfig({
         test: { name: "relay-worker", root: "packages/relay-worker", include: ["test/**/*.test.ts"] },
       },
       { extends: true, test: { name: "scripts", root: "scripts", include: ["test/**/*.test.ts"] } },
+      // Real `pairwire mcp` processes against a relay-node (npm run test:e2e).
+      { extends: true, test: { name: "e2e", root: "tests/e2e", include: ["**/*.test.ts"], testTimeout: 60_000, hookTimeout: 30_000 } },
     ],
   },
 });

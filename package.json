@@ -14,10 +14,10 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "build:plugin": "node scripts/not-yet.mjs build:plugin M4-3",
-    "test": "vitest run",
-    "test:e2e": "node scripts/not-yet.mjs test:e2e M3-8",
+    "test": "vitest run --project=!e2e",
+    "test:e2e": "vitest run --project e2e",
     "test:live": "vitest run --project relay-node --testTimeout=30000 test/live.test.ts",
-    "lint": "eslint . && tsx scripts/check-hidden-chars.ts && npm run typecheck --workspaces && tsc -p scripts/tsconfig.json",
+    "lint": "eslint . && tsx scripts/check-hidden-chars.ts && tsx scripts/check-inbound-imports.ts && npm run typecheck --workspaces && tsc -p scripts/tsconfig.json && tsc -p tests/tsconfig.json",
     "traceability": "tsx scripts/check-traceability.ts",
     "relay:dev": "npm run build && npm run dev -w @pairwire/relay-worker",
     "relay:node": "tsx packages/relay-node/src/main.ts"
