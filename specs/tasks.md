@@ -126,7 +126,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 ## M6 — Cross-harness
 
-- [ ] **S7 Codex spike:** confirm MCP config, skills location, hooks schema and feature
+- [x] **S7 Codex spike:** confirm MCP config, skills location, hooks schema and feature
   flag, env available to hooks. Update `04` §10.
 - [ ] Codex adapter + `pairwire install --codex`.
 - [ ] `pairwire install --print-config <harness>`.

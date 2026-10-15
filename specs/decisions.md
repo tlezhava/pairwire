@@ -386,3 +386,40 @@ Answer: pings are answered by `setWebSocketAutoResponse` without invoking
 restored from the socket attachments and SQLite storage, and buffered frames are still
 delivered. Not yet measured: the real duration billed for idle connections, which needs a
 deployed relay (optional step in M2-6).
+
+### S7 Codex CLI integration (2026-10-16)
+
+Method: a research pass over the Codex CLI docs (learn.chatgpt.com/docs, formerly
+developers.openai.com/codex) and source (openai/codex at 16e578d, 0.163.0), plus
+`codex --help` output from 0.160.0 with an empty `CODEX_HOME`. No Codex session was run.
+
+Answer:
+- MCP servers: `[mcp_servers.<name>]` in `~/.codex/config.toml` (project `.codex/config.toml`
+  only when trusted) with `command`, `args`, `env`, `env_vars`, `cwd`, timeouts and per-tool
+  `approval_mode`. The server's environment is cleared except a fixed list plus `env` and
+  `env_vars`; its cwd is the session's unless `cwd` is set. No session or project variable;
+  each tool call carries `_meta.sessionId` and `_meta.threadId`. Tools appear as
+  `mcp__<server>__<tool>`.
+- Approval: default mode `auto` prompts unless a tool is `readOnlyHint`, or
+  `destructiveHint: false` and `openWorldHint: false`. "Always allow" writes
+  `tools.<tool>.approval_mode = "approve"`. With `approval_policy = never` a tool that needs
+  approval is denied, except under full access, where it runs.
+- Hooks: on by default; `hooks.json` or `[hooks]` in `~/.codex` (or a trusted repo's
+  `.codex`); each must be trusted via `/hooks`. Events include SessionStart,
+  UserPromptSubmit, PostToolUse (also for MCP tools) and Stop. Input has `session_id`,
+  `cwd`, `permission_mode`, `prompt`; output is Claude-compatible (`additionalContext`,
+  Stop `decision: "block"`, `systemMessage`). Hooks get the full environment. `async` exists
+  but has no wake; there is no `asyncRewake`.
+- Skills: `~/.agents/skills/<name>/SKILL.md` (and repo `.agents/skills`), frontmatter
+  `name` and `description`. Custom prompts are deprecated; nothing runs a shell command
+  before the model sees a prompt.
+- Plugins: Codex reads `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`,
+  but does not expand `${CLAUDE_PLUGIN_ROOT}` in a legacy `.mcp.json`.
+- Idle wake: `codex queue --thread <id> --message <text>` starts a turn in an idle thread
+  as a user message.
+
+Decision: Codex support ships as `pairwire install --codex` with absolute paths (`04` §10),
+D1 and D2 delivery, no D3 yet. Tool annotations make `send` always prompt in Codex. Still
+to confirm hands-on (Codex manual acceptance): that hook `session_id` equals
+`_meta.sessionId`, that PostToolUse context on MCP tools reaches the model, the approval
+prompt UX, and the `hooks.json` timeout key.

@@ -608,17 +608,66 @@ build. The release script bumps the version, rebuilds, commits and tags.
 
 ## 10. Other harnesses (M6)
 
-Same client binary, different wiring. Facts below come from third-party documentation
-and must be confirmed in spike S7 before building.
+Same client bundle, different wiring. The Codex facts below come from spike S7
+(`decisions.md`), which read the Codex CLI 0.163.0 docs and source; the items marked
+**[hands-on]** still need a real Codex session (manual acceptance, Codex steps).
 
-- **Codex CLI:** MCP server registered in `~/.codex/config.toml` under
-  `[mcp_servers.pairwire]`; agent guide installed as a skill under
-  `~/.agents/skills/pairwire/SKILL.md` (and/or a marked section in `AGENTS.md`); hooks in
-  `~/.codex/hooks.json`, reportedly Claude-compatible JSON, behind
-  `[features] codex_hooks = true`. No `CLAUDE_PROJECT_DIR`: use hook input `cwd` → git
-  root.
-- **Any MCP harness:** D1 only. `pairwire install --print-config <harness>` prints the
-  MCP snippet and the agent-guide text to paste.
-- `pairwire install --codex` copies `pairwire.mjs` to `~/.pairwire/bin/`, writes config
-  idempotently between `# >>> pairwire >>>` / `# <<< pairwire <<<` markers, and backs up
-  every file it edits.
+### Codex CLI
+
+`pairwire install --codex` sets everything up; it is idempotent and backs up every file it
+edits (`<file>.pairwire-backup-<UTC timestamp>`) before changing it.
+
+1. **Files.** Copies the plugin's `dist/` and `hooks/run.sh` to `~/.pairwire/bin/` (same
+   layout as the plugin, so `run.sh` finds `../dist/pairwire.mjs`).
+2. **MCP server** in `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`), between
+   `# >>> pairwire >>>` and `# <<< pairwire <<<` markers at the end of the file:
+
+   ```toml
+   [mcp_servers.pairwire]
+   command = "node"
+   args = ["<home>/.pairwire/bin/dist/pairwire.mjs", "mcp"]
+   env = { PAIRWIRE_HARNESS = "codex" }
+   env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"]
+   startup_timeout_sec = 20
+   ```
+
+   Codex starts MCP servers with a cleared environment (only HOME, PATH, USER, … plus
+   `env` and the names in `env_vars`), so pairwire's variables are passed by name. No `cwd`:
+   the server then runs in the session's working directory, which `resolveProjectDir()`
+   turns into the project (git root). If the file already defines `[mcp_servers.pairwire]`
+   outside the markers, install stops and says so.
+3. **Hooks** in `$CODEX_HOME/hooks.json` (Claude-compatible format): SessionStart,
+   UserPromptSubmit, PostToolUse and Stop, each `sh "<home>/.pairwire/bin/hooks/run.sh" <event>`.
+   Existing entries are kept; earlier pairwire entries (recognized by that path) are replaced.
+   Codex runs a hook only after the user trusts it with `/hooks`; install prints this step.
+   Codex has no `asyncRewake`, so there is no `stop-wait` hook and no D3 wake: Codex sessions
+   get D1 and D2. (`codex queue` can wake an idle thread [hands-on]; a later version may use it
+   to send a fixed "new pairwire message" notice, never peer text.)
+4. **Skill** at `~/.agents/skills/pairwire/SKILL.md` (the same file as the plugin's).
+5. `pairwire install --codex --uninstall` removes the marked block, the pairwire hook entries
+   and the skill (with backups); it leaves `~/.pairwire` alone.
+
+Differences from Claude Code that the client handles:
+
+- **Session id.** Codex gives MCP servers no session variable. Each `tools/call` carries
+  `_meta.sessionId`; when the binding's `owner_session` is null, the owning server records
+  the first one it sees, so hooks (whose input has `session_id`) can match it
+  [hands-on: that the two ids are equal]. Until then the room relies on D1.
+- **Approval (INV-4).** Codex's default MCP approval mode prompts for a tool unless it is
+  annotated read-only, or both non-destructive and closed-world. `send`, `start`, `join` and
+  `leave` are annotated `openWorldHint: true` so they always prompt; `status` and `inbox` are
+  read-only or closed-world and run without a prompt. install never writes
+  `approval_mode = "approve"`. Choosing "always allow" in Codex writes
+  `[mcp_servers.pairwire.tools.send] approval_mode = "approve"`; REQ-SAFE-5's warning cannot
+  see that, so the README states it.
+- **Human-only commands.** Codex has no pre-model shell execution in prompts, so there are no
+  `/pairwire:say` or `/pairwire:continue`. The human runs
+  `node ~/.pairwire/bin/dist/pairwire.mjs ctl say|continue|log` in a terminal (same project).
+  Hop budget resets also happen through Codex's UserPromptSubmit hook.
+
+### Any MCP harness
+
+`pairwire install --print-config <harness>` prints the MCP server entry for that harness
+(TOML for `codex`, an `mcpServers` JSON object otherwise) pointing at the bundle it runs
+from, plus the agent-guide text to paste into the harness's instructions. Delivery is D1
+only (the `inbox` tool and the status footer).
