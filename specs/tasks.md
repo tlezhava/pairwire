@@ -79,7 +79,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] **M2-2 relay-node** passes conformance; `/v1/info`, `/health`; logging rules.
 - [x] **M2-3 relay-worker** (Durable Object, hibernation, SQLite, alarm) passes
   conformance in workerd (`@cloudflare/vitest-plugin`).
-- [ ] **M2-4 INV-1 recorder test** against both relays.
+- [x] **M2-4 INV-1 recorder test** against both relays.
 - [ ] **M2-5 Dockerfile** for relay-node; CI builds the image.
 - [ ] **M2-6** 👤 Deploy a dev relay to the human's Cloudflare account; set
   `DEFAULT_RELAY_HOST` for development builds.
