@@ -64,7 +64,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] **M1-2 Traceability check.** `scripts/check-traceability.ts` per `07-testing.md`,
   wired into CI. Done when: CI lists every REQ/INV id lacking a test (expected: all,
   reported as warnings until M4, errors after).
-- [ ] **M1-3 Share string + config constants** (`02` §1). Tests first.
+- [x] **M1-3 Share string + config constants** (`02` §1). Tests first.
 - [ ] **M1-4 Key schedule** (`02` §2, §7 vectors).
 - [ ] **M1-5 Handshake + session keys** (`02` §4, §7 vectors).
 - [ ] **M1-6 MSG framing + envelope schema** (`02` §3, §6).

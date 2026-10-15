@@ -1,2 +1,16 @@
 // @pairwire/core — isomorphic protocol library (specs/02-protocol.md). No I/O.
-export const PROTOCOL_VERSION = 1;
+export { base32Decode, base32Encode } from "./base32.js";
+export { DEFAULT_RELAY_HOST, PROTOCOL_VERSION, SECRET_BYTES, SHARE_PREFIX } from "./config.js";
+export {
+  NoDefaultRelayError,
+  ShareStringError,
+  encodeShareString,
+  formatRelayAddress,
+  generateSecret,
+  parseRelayAddress,
+  parseShareString,
+  relayUrl,
+  type ParsedShareString,
+  type RelayAddress,
+  type ShareStringErrorCode,
+} from "./share.js";
