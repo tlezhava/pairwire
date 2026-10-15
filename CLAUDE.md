@@ -90,7 +90,7 @@ npm test               # unit + integration tests
 npm run test:e2e       # two-client end-to-end tests against a local relay (M3-8)
 npm run lint           # eslint + hidden-character check + tsc --noEmit
 npm run traceability   # REQ-*/INV-* ids without a test (warnings until M4-6, then errors)
-npm run relay:dev      # Cloudflare relay locally (wrangler dev) (M2-3)
+npm run relay:dev      # Cloudflare relay locally (builds, then wrangler dev on :8787)
 npm run relay:node     # Node relay locally (PORT, HOST env; default 0.0.0.0:8787)
 ```
 

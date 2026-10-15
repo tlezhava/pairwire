@@ -8,7 +8,7 @@ Status: draft v0.1
 |---|---|---|---|
 | Unit | vitest | `packages/*/test` | yes |
 | Relay conformance | vitest, one suite run against both relays | `packages/core/test/relay-conformance/` | yes |
-| Durable Object | `@cloudflare/vitest-pool-workers` | `packages/relay-worker/test` | yes |
+| Durable Object | `@cloudflare/vitest-plugin` | `packages/relay-worker/test` | yes |
 | Client integration | vitest, real relay-node on a random port, two `pairwire mcp` processes driven by an MCP test client, isolated `PAIRWIRE_HOME`s | `tests/e2e` | yes |
 | Hook contract | vitest, feeds recorded hook JSON to `pairwire hook <event>` and checks stdout | `packages/client/test/hooks` | yes |
 | Plugin | `claude plugin validate plugins/claude-code --strict` | CI step | yes |

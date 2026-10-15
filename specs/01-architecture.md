@@ -89,7 +89,7 @@ pairwire/
 | Runtime | Node >= 20 (client, relay-node); Workers runtime (relay-worker) | |
 | Monorepo | npm workspaces | No extra tooling |
 | Build | `tsc` for libraries; `esbuild` to bundle the client into one `.mjs` for the plugin | |
-| Tests | `vitest`; `@cloudflare/vitest-pool-workers` for the Durable Object | |
+| Tests | `vitest`; `@cloudflare/vitest-plugin` (formerly `vitest-pool-workers`) for the Durable Object | |
 | MCP | `@modelcontextprotocol/sdk` | |
 | Crypto | `@noble/curves` (X25519), `@noble/hashes` (SHA-256, HKDF), `@noble/ciphers` (XChaCha20-Poly1305) | Audited, pure JS, work in Workers |
 | Validation | `zod` | |

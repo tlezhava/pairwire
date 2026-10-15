@@ -158,7 +158,7 @@ Status: accepted (2026-10-15)
 - **TypeScript ~5.9.3.** The latest release is 7.x (the native port), but
   `01-architecture.md` specifies 5.x, and `typescript-eslint` 8 supports only `<6.1`.
   Revisit together with `typescript-eslint`.
-- **vitest ^4.1.** `@cloudflare/vitest-pool-workers` (needed in M2-3) requires vitest
+- **vitest ^4.1.** `@cloudflare/vitest-pool-workers` (needed in M2-3) required vitest
   4.1, so we don't take vitest 5.
 - **vite ^7.3, pinned explicitly.** Vite 8 declares an optional `@vitejs/devtools` peer,
   which resolves to `vitest@*` (5.x) and collides with vitest 4.1.
@@ -173,6 +173,13 @@ Status: accepted (2026-10-15)
 - **Core isomorphism, enforced twice.** `packages/core/tsconfig.json` checks `src` with
   `lib: ES2022` and `types: []` (no Node, no DOM), and ESLint forbids Node built-in
   imports and the `process`/`Buffer` globals there.
+- **Workers testing (M2-3).** `@cloudflare/vitest-pool-workers` is deprecated and renamed
+  `@cloudflare/vitest-plugin`; we use the plugin. Pinned to `1.4.0` with `wrangler 4.149.0`
+  (the version it depends on): the oldest release whose miniflare ships `sharp` 0.35.5,
+  which fixes a high-severity CVE (GHSA-wq5f-xc86-pv6w) in earlier versions. Tests can fake
+  `Date` inside the isolate, so the Durable Object's alarm paths (idle expiry, max age) are
+  tested for real; the conformance suite's fake-clock cases run against the in-memory host
+  and relay-node only.
 
 ## ADR-016 Secret scanner must be linear-time (M1-8 finding)
 
