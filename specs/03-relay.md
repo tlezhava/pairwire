@@ -102,7 +102,9 @@ above.
   protected by ephemeral session keys.
 - `wrangler.toml` contains no account id or secrets; a fresh fork deploys with the button.
 - Cost target: one pairing session (2 connections, about 200 messages) uses well under
-  1 GB-s of duration. Hibernation is what makes this true — verify in spike S5.
+  1 GB-s of duration. Hibernation is what makes this true. S5 confirmed in workerd that
+  pings never invoke the object and that eviction keeps sockets, slots, tokens and
+  buffers; the duration figure itself is read after the first deploy (M2-6).
 
 ## Node implementation (`relay-node`)
 

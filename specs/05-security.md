@@ -24,7 +24,7 @@ protect, against whom, and the invariants code must keep.
 | A3 Someone who later obtains the share string (chat logs, agent transcript) | Knows the secret | Ephemeral X25519 session keys (cannot decrypt passively); sealed rooms (cannot join once both slots are taken); peer `instance` change warning |
 | A4 The peer, or the peer's compromised agent | Sends arbitrary text to your agent | INV-2, INV-3, INV-8; agent guide; harness permission prompts; hop budget |
 | A5 Your own agent, oversharing | Sends secrets or more code than intended | Outbound approval (INV-4); secret scanner (INV-5); agent guide |
-| A6 Two agents in a loop | Burns tokens and time | Hop budget (INV-6), client and relay rate limits, Stop hook only blocks for new messages |
+| A6 Two agents in a loop | Burns tokens and time | Hop budget (INV-6), client and relay rate limits, Stop hook only blocks for new messages, a D3 wake turn doesn't count as human input |
 
 ## Invariants
 

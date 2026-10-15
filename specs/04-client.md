@@ -15,7 +15,7 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 | Subcommand | Purpose |
 |---|---|
 | `pairwire mcp` | MCP server over stdio. Owns the room connection for one agent session. |
-| `pairwire hook <session-start\|user-prompt-submit\|post-tool-use\|stop>` | Hook entrypoints. Read hook JSON on stdin, print hook JSON on stdout. |
+| `pairwire hook <session-start\|user-prompt-submit\|post-tool-use\|stop\|stop-wait>` | Hook entrypoints. Read hook JSON on stdin, print hook JSON on stdout. `stop-wait` is the D3 waiter (section 6). |
 | `pairwire ctl <continue\|say\|log>` | Human-side control, used by slash commands through `!` execution (section 8, verified in S8). Talks to the MCP server over the room's `ctl.sock`. |
 | `pairwire doctor` | Checks Node version, config, state permissions, relay reachability, plugin wiring. |
 | `pairwire install [--codex\|--print-config <harness>]` | M6. Non-plugin installs. |
@@ -29,10 +29,10 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 |---|---|---|---|
 | `name` | `PAIRWIRE_NAME` | `git config user.name`, else `$USER` | Display name sent in HELLO |
 | `relay` | `PAIRWIRE_RELAY` | built-in default | Relay host for rooms this client **starts** |
-| `auto_continue` | — | `true` | Stop hook keeps the agent working when new messages arrive |
+| `auto_continue` | — | `true` | Stop hook keeps the agent working when new messages arrive, and D3 wakes an idle session for them |
 | `hop_budget` | — | `8` | Max consecutive agent sends without human input (REQ-SAFE-4) |
 | `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `auto` = hooks inject messages; `pull` = agent must call `inbox` |
-| `channels` | `PAIRWIRE_CHANNELS` | `false` | Use Claude Code Channels for push instead of hooks (section 6, D3) |
+| `channels` | `PAIRWIRE_CHANNELS` | `false` | Later milestone, not in the MVP: use Claude Code Channels for push instead of hooks (section 6, D3) |
 
 `PAIRWIRE_HOME` moves the whole state directory (tests use this).
 
@@ -197,7 +197,7 @@ Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attr
 |---|---|---|---|
 | D1 Pull | `inbox` tool, status footer, skill tells the agent when to check | All harnesses | MVP |
 | D2 Hooks | `PostToolUse`, `Stop`, `UserPromptSubmit`, `SessionStart` hooks inject undelivered messages | Mid-turn and end-of-turn (REQ-MSG-2, REQ-MSG-3) | MVP (verified in S1) |
-| D3 Wake | Wake an idle session when a message arrives (REQ-MSG-4) | Idle sessions | Mechanism chosen by spikes S3/S4 |
+| D3 Wake | `Stop`-hook `asyncRewake` waiter wakes an idle session when a message arrives (REQ-MSG-4) | Idle sessions | MVP (verified in S3) |
 
 ### D2 hook behavior
 
@@ -226,25 +226,74 @@ removes the flag when no such room remains.
 |---|---|
 | `SessionStart` (all sources) | If the project has an active room: `additionalContext` = one-paragraph reminder (paired with whom, how messages arrive, follow the pairwire skill). This re-orients the agent after `compact`/`resume`. |
 | every hook | REQ-SAFE-5: if a room is active, the hook input's `permission_mode` is `bypassPermissions` or `auto` (S6: both run `send` without a prompt), and the hook input's `session_id` is not in `bypass_warned_sessions`, show the human a warning and add the `session_id` (once per session, so a restart in bypass mode warns again) The warning is a `systemMessage`, which Claude Code shows the human as a grey "<Event> says: …" line from `UserPromptSubmit`, `PostToolUse` and `Stop` hooks, but not from `SessionStart` (S1b); the model doesn't see it. So `SessionStart` never warns; the next other hook does. Checked in every hook because pairing and mode changes happen mid-session. |
-| `UserPromptSubmit` | Reset `hop_count` to 0 (human input). Inject undelivered messages as `additionalContext`. |
-| `PostToolUse` (all tools) | Inject undelivered messages as `additionalContext`. Mark them delivered. |
+| `UserPromptSubmit` | Reset `hop_count` to 0 (human input), **unless the prompt starts with `<task-notification>`**: Claude Code submits a D3 wake, and the result of any other background task, as a prompt of that form, and `UserPromptSubmit` fires for it (S3). It is not human input, so it must not reset the budget (INV-6). Cancel this session's D3 waiter. Inject undelivered messages as `additionalContext`. |
+| `PostToolUse` (all tools) | Cancel this session's D3 waiter. Inject undelivered messages as `additionalContext`. Mark them delivered. |
 | `Stop` | Claude Code shows a blocking reason to the human as "Stop hook error: <reason>" (S1), so the reason starts with a plain line such as "pairwire: new message(s) from your collaborator; handling them before stopping." If there are undelivered items (messages or local notices, section 5) and `auto_continue` is true: `{"decision":"block","reason": <rendered messages>}` so the agent handles them before stopping. Mark them delivered. Otherwise exit 0. Blocks only for **new** messages, so it cannot loop on its own; cross-agent ping-pong is bounded by both sides' hop budgets. |
 
-### D3 candidates (decided by spikes)
+### D3 wake: the `stop-wait` waiter (S3)
 
-- **S3: `asyncRewake` waiter.** The `Stop` hook also launches a background waiter
-  (`"async": true, "asyncRewake": true`) that blocks on `ctl.sock` until a message
-  arrives, then exits with code 2 and the rendered notice on stderr, which wakes the
-  agent. The waiter exits 0 quietly if the human submits a prompt first. Preferred if it
-  works, because it needs no special launch flag.
-- **S4: Channels.** The MCP server declares the `claude/channel` capability and emits
-  `notifications/claude/channel` with the rendered message as `content` and `meta`
-  `{from, kind, id}` (meta keys must be identifiers). During the Channels research preview
-  a non-Anthropic plugin needs
-  `claude --dangerously-load-development-channels plugin:pairwire@pairwire`; ship this as
-  an opt-in "live mode" documented in the README, with `PAIRWIRE_CHANNELS=1` telling the
-  client to skip hook injection so nothing is delivered twice.
-- **S9: plugin monitors** (experimental) as a fallback if S3 fails.
+Besides the ordinary `Stop` hook, `hooks.json` registers a second `Stop` hook,
+`run.sh stop-wait`, with `"async": true, "asyncRewake": true, "timeout": 86400`. Claude
+Code starts it at the end of every turn and doesn't wait for it. If it later exits with
+code 2, Claude Code starts a new turn in the idle session whose prompt is
+`<task-notification>…Stop hook feedback…` followed by the waiter's stderr; the human sees
+"Stop hook feedback" (S3). Exit 0 does nothing.
+
+What S3 showed, and what the design does about it:
+
+- **Waiters pile up.** A pending waiter is not stopped when the human types, so every
+  turn adds one; two pending waiters would wake the session twice. → The MCP server
+  keeps **at most one waiter per session**, and hooks cancel it whenever the session is
+  busy.
+- **A waiter that exits 0 is not replaced until the next turn ends.** A waiter with its
+  own time limit left the session unwakeable after the limit. → The waiter never exits on
+  its own timer; it ends only when woken, superseded, cancelled, or when the MCP server
+  or session goes away. S3 saw one live 80 minutes with `timeout: 86400`. If Claude Code
+  stops it at the 24 h timeout, messages wait for the next turn (D2) or `inbox` (D1).
+- **Session end.** On `/exit` Claude Code sends SIGTERM to pending waiters; none were
+  orphaned (S3). The waiter exits 0 on SIGTERM, SIGINT, SIGHUP and on any error.
+
+Waiter protocol (over the room's `ctl.sock`, section 1):
+
+1. `run.sh` exits 0 at once if the `active` flag is missing (no room) or Node is missing
+   or too old (no `systemMessage`: an async hook's stdout isn't shown).
+2. `pairwire hook stop-wait` exits 0 unless `delivery` is `auto`, `auto_continue` is
+   true, and the hook input's `session_id` equals the binding's `owner_session` (passive
+   sessions never wait). Otherwise it connects to `ctl.sock` and sends
+   `{"op":"wait","session":<session_id>}`. If it can't connect, it exits 0.
+3. The server closes any earlier `wait` connection for that session with
+   `{"t":"superseded"}`; that waiter exits 0. If undelivered items (messages or local
+   notices, section 5) already exist, it wakes the new waiter at once, which closes the
+   gap between the `Stop` hook's check and the waiter's arrival.
+4. When a message or local notice arrives (never an ack), the server takes undelivered
+   items under the same 10,000-character rule as the hooks (section 5), marks them
+   delivered under the `delivered.json` lock, and sends `{"t":"wake","text":…}`. The text
+   starts with a plain line, "pairwire: new message(s) from your collaborator arrived
+   while you were idle.", followed by the rendered items. The waiter writes the text to
+   stderr and exits 2.
+5. `UserPromptSubmit` and `PostToolUse` send `{"op":"wait_cancel","session":…}`
+   (fire-and-forget, 50 ms connect timeout, errors ignored); the server closes that
+   session's waiter with `{"t":"cancelled"}` and it exits 0. So a waiter is pending only
+   while the session is idle, apart from the moment between a `Stop` block and the
+   agent's next tool call. A message arriving in that moment still reaches the agent
+   exactly once, because whichever path takes an item first marks it delivered.
+6. If the connection drops (MCP server exited or restarted), the waiter exits 0. The next
+   turn re-arms it.
+
+A woken turn is not human input: `UserPromptSubmit` sees the `<task-notification>`
+prompt and leaves `hop_count` alone, so two agents waking each other stay bounded by
+their hop budgets (INV-6).
+
+### Not used for D3 in the MVP
+
+- **Channels (S4 not run).** The MCP server would declare the `claude/channel`
+  capability and emit `notifications/claude/channel` with the rendered message as
+  `content` and `meta` `{from, kind, id}`. During the research preview a non-Anthropic
+  plugin needs `claude --dangerously-load-development-channels plugin:pairwire@pairwire`.
+  Channels-based push is outside the MVP (`00-product.md`); spike S4 runs when that
+  "live mode" is taken up, with `PAIRWIRE_CHANNELS=1` telling the client to skip hook
+  injection so nothing is delivered twice.
+- **Plugin monitors (S9 not run).** Only needed if S3 had failed.
 
 ## 7. Outbound path
 
@@ -389,7 +438,10 @@ matches every tool, MCP tools included.
     "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "session-start"], "timeout": 10 }] }],
     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "user-prompt-submit"], "timeout": 10 }] }],
     "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "post-tool-use"], "timeout": 10 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop"], "timeout": 10 }] }]
+    "Stop":             [{ "hooks": [
+                            { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop"], "timeout": 10 },
+                            { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop-wait"], "async": true, "asyncRewake": true, "timeout": 86400 }
+                          ] }]
   }
 }
 ```

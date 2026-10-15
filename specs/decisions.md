@@ -69,7 +69,7 @@ Every harness (Claude Code, Codex, others) shares one layout and one set of tool
 
 ## ADR-009 Delivery tiers D1/D2/D3
 
-Status: proposed — D3 mechanism decided by S3/S4/S9
+Status: accepted (2026-10-16, after S3) — D3 is a `Stop`-hook `asyncRewake` waiter
 
 Pull (tool + footer) works everywhere; hooks give mid-turn and end-of-turn delivery in
 Claude Code; idle wake depends on harness features still being verified. Channels is in
@@ -303,3 +303,51 @@ Finding with security impact: in **auto** permission mode (the human's own defau
 and whenever that allow rule exists, `send` runs with no prompt at all. Other approval
 prompts offer "Yes, and switch to auto mode". INV-4 ("human approves outbound by
 default") holds only in default mode; REQ-SAFE-5 now covers it (ADR-017).
+
+### S3 Idle wake via `asyncRewake` (2026-10-15/16)
+
+Method: a plugin (`spikes/s3/`) whose `Stop` hook starts a waiter (`node waiter.mjs`,
+`"async": true, "asyncRewake": true`) that polls for a trigger file, then writes a canary
+to stderr and exits 2; a `UserPromptSubmit` hook logs its input. Every waiter logs
+armed/woke/timeout/signal events. The human ran it in Claude Code 2.1.30x (2.1.301 at the end) in
+two rounds (waiter limit 900 s, then none with hook `timeout: 86400`); I touched the
+trigger from outside while the session was idle.
+
+Answer:
+- **Wake works.** About 50 ms after the trigger, the idle session started a turn; the
+  human saw "Stop hook feedback", and the agent relayed the canary.
+- **What the agent sees:** a user turn whose prompt is
+  `<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>` plus a
+  system reminder "Stop hook blocking error from command \"Stop\": <stderr>".
+  `UserPromptSubmit` fires for it with that prompt, so pairwire must not treat such a
+  prompt as human input (hop budget, INV-6).
+- **Re-arming:** the woken turn's end starts a new waiter, so wakes repeat.
+- **A waiter that exits 0 does nothing**, and nothing replaces it until a turn ends. In
+  round 1 the waiter's own 900 s limit expired and the session stayed unwakeable.
+- **Lifetime:** with `timeout: 86400` a waiter lived 80 minutes (until `/exit`); the
+  24 h limit itself wasn't reached.
+- **Typing first:** the pending waiter is **not** stopped when the human submits a prompt,
+  and the new turn's end starts another: two were pending at once.
+- **Session end:** on `/exit`, Claude Code sent SIGTERM to both pending waiters at the same
+  instant; no orphans.
+
+Decision: D3 is the `stop-wait` waiter (`04` §6), ADR-009 accepted. The MCP server
+keeps one waiter per session; hooks cancel it when the session is busy; it has no timer of
+its own; `UserPromptSubmit` doesn't reset `hop_count` for `<task-notification>` prompts.
+S4 (Channels) and S9 (plugin monitors) are not needed for the MVP and were not run.
+
+Evidence: `spikes/s3/out/waiters-run1.jsonl` and `waiters.jsonl` (local, gitignored) and
+the session output reported by the human.
+
+### S5 Durable Object hibernation (2026-10-15)
+
+Answered by the relay-worker tests (M2-3) instead of a separate spike: they run the real
+`RoomObject` in workerd through `@cloudflare/vitest-plugin`
+(`packages/relay-worker/test/durable-object.test.ts`).
+
+Answer: pings are answered by `setWebSocketAutoResponse` without invoking
+`webSocketMessage` (the object's invocation counter stays unchanged). After
+`evictDurableObject` (a simulated hibernation), sockets, slots and member tokens are
+restored from the socket attachments and SQLite storage, and buffered frames are still
+delivered. Not yet measured: the real duration billed for idle connections, which needs a
+deployed relay (optional step in M2-6).

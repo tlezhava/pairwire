@@ -26,15 +26,16 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   session's)? Can the MCP server see any session-identifying value (for example a session
   id in its environment) that hooks could match against their input's `session_id`? This
   decides ADR-007 and the passive-session hook rule.
-- [ ] **S3 Idle wake via `asyncRewake`.** From a `Stop` hook, launch an async rewake waiter
+- [x] **S3 Idle wake via `asyncRewake`.** From a `Stop` hook, launch an async rewake waiter
   that exits 2 after a delay. Does it wake an idle session? What does the agent see?
   What happens if the user types first, or the session ends? Can it re-arm every turn
   without piling up processes?
-- [ ] **S4 Channels.** Wrap the S1 server as a channel (`claude/channel` capability). With
+- [x] **S4 Channels.** Not run: S3 settled D3, and Channels push is outside the MVP; runs
+  when live mode is taken up. Wrap the S1 server as a channel (`claude/channel` capability). With
   `--dangerously-load-development-channels plugin:<name>@<marketplace>`, confirm
   delivery mid-turn and when idle, and whether env vars from the `claude` process reach
   the MCP server.
-- [ ] **S5 Durable Object hibernation.** Minimal DO with `acceptWebSocket`,
+- [x] **S5 Durable Object hibernation.** Minimal DO with `acceptWebSocket`,
   `setWebSocketAutoResponse`, `serializeAttachment`, SQLite storage, alarm. Confirm with
   `wrangler dev` that pings don't invoke handlers and attachments survive hibernation.
   👤 Optionally deploy to the human's free account and read duration usage after an
@@ -49,7 +50,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   `allowed-tools` pre-approval also let the model run that command itself later in the
   turn (which would widen residual risk 2)? If unsafe, find a safe way to pass the text
   (stdin, env, temp file) or record that `say`/`continue` move to M5.
-- [ ] **S9 Plugin monitors** — only if S3 fails: can an experimental plugin monitor wake an
+- [x] **S9 Plugin monitors** — not run, S3 worked. Only if S3 fails: can an experimental plugin monitor wake an
   idle session with a message?
 - [ ] **M0-DONE** Update `04-client.md` D3 choice and remove all M0 **[verify]** markers.
   If S8 moved `say`/`continue` to M5, remove them from `06-agent-guide.md` and the command
@@ -82,7 +83,8 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] **M2-4 INV-1 recorder test** against both relays.
 - [x] **M2-5 Dockerfile** for relay-node; CI builds the image.
 - [ ] **M2-6** 👤 Deploy a dev relay to the human's Cloudflare account; set
-  `DEFAULT_RELAY_HOST` for development builds.
+  `DEFAULT_RELAY_HOST` for development builds. Optionally (S5) leave two sockets idle for
+  an hour and read the duration usage in the dashboard.
 
 ## M3 — Client
 
@@ -100,7 +102,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 ## M4 — Claude Code plugin and MVP release 0.1.0
 
 - [ ] **M4-1 Hook entrypoints** (`04` §6) + hook contract tests.
-- [ ] **M4-2 D3 mechanism** chosen in M0.
+- [ ] **M4-2 D3 waiter** (`04` §6 `stop-wait`, chosen in S3) + its tests.
 - [ ] **M4-3 Plugin files** (`04` §9, §8 command rules: `disable-model-invocation`, heredoc,
   narrow `allowed-tools` verified to match): manifest, `.mcp.json`, hooks + `hooks/run.sh`,
   seven commands, SKILL.md generated from `06` §2, `npm run build:plugin` bundles

@@ -90,7 +90,8 @@ From then on it fails CI.
   cannot produce `author: "human"`.
 - REQ-SAFE-3: blocked send leaves no trace on the wire.
 - REQ-SAFE-4/INV-6: ninth consecutive send fails; `user-prompt-submit` hook resets;
-  `ctl continue` resets; no MCP tool resets.
+  `ctl continue` resets; no MCP tool resets; a `user-prompt-submit` whose prompt starts
+  with `<task-notification>` (a D3 wake) does not reset.
 - Passive mode: second MCP server in the same project refuses with the owner pid.
 - Dead-owner takeover and reconnect (REQ-ROOM-6).
 - INV-7: grep all files under `PAIRWIRE_HOME` (except `secret` and `state.json`), all
@@ -122,7 +123,14 @@ From then on it fails CI.
   (measured, reported, not a hard failure until S1 sets the budget).
 - Delivery: PostToolUse and UserPromptSubmit produce `additionalContext`; Stop produces
   `decision: "block"` only when there are new messages; nothing is delivered twice across
-  hooks and the `inbox` tool.
+  hooks, the D3 waiter and the `inbox` tool.
+- REQ-MSG-4 D3 waiter (`04` §6): an arriving message ends the waiter with exit 2 and the
+  rendered items on stderr, marked delivered; items already undelivered when it registers
+  wake it at once; a second `wait` for the same session ends the first with exit 0;
+  `wait_cancel` from UserPromptSubmit and PostToolUse ends it with exit 0; an ack never
+  wakes it; a passive session's waiter, `delivery: pull`, `auto_continue: false`, an
+  unreachable `ctl.sock`, a dropped connection and SIGTERM all end it with exit 0 and no
+  output; it has no timer of its own.
 - Internal error → exit 0, no output, error logged.
 
 ### Injection corpus (SEC)
@@ -143,7 +151,9 @@ Kept in `tests/manual/ACCEPTANCE.md`; minimum content:
    10 s.
 3. A asks B a question; B's agent answers without the B human typing; A's approval
    prompt shows the exact text.
-4. B is idle when a message arrives — behavior matches whichever D3 mechanism shipped.
+4. B is idle when a message arrives: B's session wakes on its own and its agent handles
+   the message (D3); B's human sees "Stop hook feedback". B then types a prompt before
+   the next message arrives, and the message is delivered once, not twice.
 5. Hop budget pauses a scripted back-and-forth after 8 agent messages.
 6. Kill session B, restart in the same folder, messages sent meanwhile arrive.
 7. `/pairwire:leave` on A ends the room on B.
