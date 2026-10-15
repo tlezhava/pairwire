@@ -183,7 +183,7 @@ Close codes:
 | Code | Name | Meaning | Client retries? |
 |---|---|---|---|
 | 1000 | normal | Client-initiated close | — |
-| 4001 | `room_full` | Both slots are taken and the token matches neither (REQ-ROOM-4) | no |
+| 4001 | `room_full` | Both slots are taken and the join has no token (REQ-ROOM-4) | no |
 | 4002 | `bad_token` | Token supplied but it matches no slot (whether or not a slot is free). The client treats this like 4003: the room is gone | no |
 | 4003 | `ended` | Room ended (`leave`), expired, or past max age (REQ-ROOM-7) | no |
 | 4004 | `unsupported_version` | `v` not supported | no |
