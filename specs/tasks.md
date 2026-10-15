@@ -74,7 +74,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 ## M2 — Relay
 
-- [ ] **M2-1 Conformance suite** in `packages/core/test/relay-conformance/`, parameterized
+- [x] **M2-1 Conformance suite** in `packages/core/test/relay-conformance/`, parameterized
   by a relay factory.
 - [ ] **M2-2 relay-node** passes conformance; `/v1/info`, `/health`; logging rules.
 - [ ] **M2-3 relay-worker** (Durable Object, hibernation, SQLite, alarm) passes
