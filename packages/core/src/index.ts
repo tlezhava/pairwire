@@ -38,6 +38,19 @@ export {
   type Session,
 } from "./handshake.js";
 export { SALT, deriveRoomKeys, type RoomKeys } from "./keys.js";
+export { CLIENT_LIMITS, RELAY_LIMITS, SUPPORTED_PROTOCOLS, relayInfo } from "./limits.js";
+export {
+  CLOSE,
+  RelayRoom,
+  base64url,
+  type BufferedFrame,
+  type Effect,
+  type Member,
+  type Output,
+  type RoomState,
+  type Slot,
+  type SocketId,
+} from "./relay-room.js";
 export {
   HOOK_CONTEXT_CAP,
   HOOK_MAX_BODY,
