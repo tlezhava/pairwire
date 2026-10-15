@@ -1,4 +1,5 @@
 KICKOFF.md
+prompt_copied_from_cloudflare.md
 spikes/*/out/
 node_modules/
 packages/*/dist/
