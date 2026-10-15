@@ -75,6 +75,8 @@ If a task seems to require weakening one of these, stop and ask.
 - No `console.log` in library code. The client logs through `packages/client/src/log.ts`;
   each relay has its own thin logger. All of them redact through `redact()` from
   `packages/core`. Core itself does no I/O and never logs.
+- Never write invisible or bidirectional-control characters literally in source (zero-width,
+  bidi overrides, the Unicode tag block). Use `\u` escapes; `npm run lint` fails otherwise.
 
 ## Commands
 
@@ -86,7 +88,7 @@ npm run build          # build all packages
 npm run build:plugin   # bundle the client into plugins/claude-code/dist and generate SKILL.md (M4-3)
 npm test               # unit + integration tests
 npm run test:e2e       # two-client end-to-end tests against a local relay (M3-8)
-npm run lint           # eslint + tsc --noEmit
+npm run lint           # eslint + hidden-character check + tsc --noEmit
 npm run traceability   # REQ-*/INV-* ids without a test (warnings until M4-6, then errors)
 npm run relay:dev      # Cloudflare relay locally (wrangler dev) (M2-3)
 npm run relay:node     # Node relay locally (M2-2)

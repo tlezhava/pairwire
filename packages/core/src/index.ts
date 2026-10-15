@@ -38,6 +38,22 @@ export {
   type Session,
 } from "./handshake.js";
 export { SALT, deriveRoomKeys, type RoomKeys } from "./keys.js";
+export {
+  HOOK_CONTEXT_CAP,
+  HOOK_MAX_BODY,
+  PREAMBLE,
+  noticePeerChanged,
+  noticePeerJoined,
+  noticePeerLeft,
+  noticeWrongKey,
+  renderForHook,
+  renderItems,
+  type HookRender,
+  type Notice,
+  type NoticeEvent,
+  type RenderItem,
+} from "./render.js";
+export { ANONYMOUS, NAME_MAX_CHARS, displayName, escapeAttr, sanitizeAttr, sanitizeText } from "./sanitize.js";
 export { DEFAULT_RELAY_HOST, PROTOCOL_VERSION, SECRET_BYTES, SHARE_PREFIX } from "./config.js";
 export {
   NoDefaultRelayError,
