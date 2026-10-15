@@ -52,7 +52,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   (stdin, env, temp file) or record that `say`/`continue` move to M5.
 - [x] **S9 Plugin monitors** — not run, S3 worked. Only if S3 fails: can an experimental plugin monitor wake an
   idle session with a message?
-- [ ] **M0-DONE** Update `04-client.md` D3 choice and remove all M0 **[verify]** markers.
+- [x] **M0-DONE** Update `04-client.md` D3 choice and remove all M0 **[verify]** markers.
   If S8 moved `say`/`continue` to M5, remove them from `06-agent-guide.md` and the command
   lists. Make sure no spike output (`spikes/out/`, env dumps) is committed. Summarize
   spike results for the human and get a go-ahead before M1.
