@@ -53,8 +53,13 @@ describe("paths", () => {
 
   it("moves the control socket to XDG_RUNTIME_DIR, else /tmp/pairwire-<uid>, when the path is too long", () => {
     const home = "/" + "x".repeat(80);
-    expect(chooseCtlPath(home, ROOM, { XDG_RUNTIME_DIR: "/run/user/501" }, 501)).toBe("/run/user/501/pairwire-abcdefghijkl.sock");
-    expect(chooseCtlPath(home, ROOM, {}, 501)).toBe("/tmp/pairwire-501/abcdefghijkl.sock");
+    expect(chooseCtlPath(home, ROOM, { XDG_RUNTIME_DIR: "/run/user/501" }, 501)).toMatch(/^\/run\/user\/501\/pairwire-[0-9a-f]{16}\.sock$/);
+    expect(chooseCtlPath(home, ROOM, {}, 501)).toMatch(/^\/tmp\/pairwire-501\/[0-9a-f]{16}\.sock$/);
+  });
+
+  it("gives two state directories in the same room different fallback sockets", () => {
+    const long = "/" + "x".repeat(80);
+    expect(chooseCtlPath(long + "/a", ROOM, {}, 501)).not.toBe(chooseCtlPath(long + "/b", ROOM, {}, 501));
   });
 
   it("refuses room ids that are not 26 base32 characters", () => {

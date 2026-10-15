@@ -95,7 +95,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   handshake, sessions current/previous, outbox flush, acks, `peer_left` handling.
 - [x] **M3-4 MCP server + tools** (`04` §4) incl. status footer, rate limit, hop budget.
 - [x] **M3-5 Transcript** writer (REQ-MSG-8).
-- [ ] **M3-6 `ctl.sock`** + `pairwire ctl` (`ctl say` reads its text from stdin; S8).
+- [x] **M3-6 `ctl.sock`** + `pairwire ctl` (`ctl say` reads its text from stdin; S8).
 - [ ] **M3-7 `pairwire doctor` and `pairwire purge`.**
 - [ ] **M3-8 e2e suite** (`07-testing.md` client and e2e section) green.
 

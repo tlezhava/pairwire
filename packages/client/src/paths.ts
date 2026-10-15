@@ -1,5 +1,7 @@
 // Layout of the local state directory (04 §3).
 import { homedir } from "node:os";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { join, resolve } from "node:path";
 
 export const ROOM_ID_PATTERN = /^[a-z2-7]{26}$/;
@@ -34,13 +36,14 @@ export function roomFile(home: string, roomId: string, file: RoomFile): string {
 const MAX_SOCKET_PATH_BYTES = 100;
 
 /**
- * `rooms/<id>/ctl.sock` if that is under 100 bytes, else `$XDG_RUNTIME_DIR/pairwire-<id12>.sock`,
- * else `/tmp/pairwire-<uid>/<id12>.sock` (the caller creates that directory as 0700).
+ * `rooms/<id>/ctl.sock` if that is under 100 bytes, else `$XDG_RUNTIME_DIR/pairwire-<tag>.sock`,
+ * else `/tmp/pairwire-<uid>/<tag>.sock` (created 0700 by the listener). The tag hashes the state
+ * directory with the room id: two members of one room may share a machine.
  */
 export function chooseCtlPath(home: string, roomId: string, env: NodeJS.ProcessEnv = process.env, uid = process.getuid?.() ?? 0): string {
   const inRoom = join(roomDir(home, roomId), "ctl.sock");
   if (Buffer.byteLength(inRoom) < MAX_SOCKET_PATH_BYTES) return inRoom;
-  const short = roomId.slice(0, 12);
-  if (env.XDG_RUNTIME_DIR) return join(env.XDG_RUNTIME_DIR, `pairwire-${short}.sock`);
-  return join("/tmp", `pairwire-${uid}`, `${short}.sock`);
+  const tag = bytesToHex(sha256(utf8ToBytes(`${home}\n${roomId}`))).slice(0, 16);
+  if (env.XDG_RUNTIME_DIR) return join(env.XDG_RUNTIME_DIR, `pairwire-${tag}.sock`);
+  return join("/tmp", `pairwire-${uid}`, `${tag}.sock`);
 }
