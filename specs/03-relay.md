@@ -32,14 +32,24 @@ reported at `/v1/info`.
 | Join deadline | 10 s after upgrade | close 4006 |
 | Binary frame size | 64 KiB | `error too_large`, frame dropped |
 | Control frame size | 1 KiB | close 4005 |
-| Frames per member | 60 per minute, burst 20 | `error rate_limited` with `retry_after`, frame dropped |
+| Binary frames per member | 60 per minute, burst 20 | `error rate_limited` with `retry_after`, frame dropped |
 | Offline buffer per member | 100 frames or 1 MiB, whichever first | `error buffer_full` to sender, frame dropped |
-| Buffered frame lifetime | 24 h | silently discarded |
-| Room idle expiry | 24 h with no connected member and no frame | room becomes a tombstone; joins get 4003 |
+| Buffered frame lifetime | 72 h | silently discarded |
+| Room idle expiry | 72 h with no connected member and no frame | room becomes a tombstone; joins get 4003 |
 | Room max age | 7 days from creation | sockets closed with 4003; tombstone kept until max age, then all storage deleted |
 
-Clients must keep their own limits below these (client sends at most 20 messages per
-minute, `04-client.md`), so a well-behaved client never hits the relay's.
+The rate limit counts **binary** frames only. Control frames are bounded by the control
+frame size and the join rules; pings can't be counted anyway, because on Cloudflare the
+auto-response answers them without waking the object. The Durable Object keeps its token
+bucket in memory, so it resets when the object hibernates. That errs toward leniency and
+is acceptable.
+
+Idle expiry is 72 h so a pair can close their laptops on Friday evening and resume on
+Monday morning.
+
+Clients must keep their own limits below these: at most 20 messages per minute from
+`send` and at most 8 binary frames per 10 s on the wire (`02-protocol.md` §6.2,
+`04-client.md`). A well-behaved client therefore never hits the relay's limits.
 
 ## Room state machine (`relay-room.ts`)
 
@@ -53,7 +63,7 @@ interface RoomState {
   createdAt: number;               // ms
   lastActivityAt: number;          // ms; any frame, connect or disconnect
   epoch: number;                   // +1 on every accepted socket (02 §4.1)
-  ended: null | { at: number; reason: "left" | "expired"; pendingNotice?: "a" | "b" };
+  ended: null | { at: number; reason: "left" | "expired" };   // tombstone: no tokens, no buffers
   slots: { a?: Slot; b?: Slot };
 }
 interface Slot {
@@ -83,10 +93,13 @@ above.
   storage. Use the SQLite storage backend for the class (required on the Workers Free plan).
 - An alarm enforces idle expiry and max age. When checking idle expiry it treats
   `state.getWebSockets().length > 0` as activity, because auto-answered pings never reach
-  the object. Idle expiry turns the room into a tombstone (`ended`, no tokens, no buffers);
-  at max age the object calls `deleteAll()`. A join after `deleteAll()` creates a fresh
-  room, which is acceptable because both clients discard the secret long before 7 days of
-  silence (`04-client.md`).
+  the object. Idle expiry and `leave` turn the room into a tombstone (`ended`, no tokens,
+  no buffers). At max age the object calls `deleteAll()`. After that, a join **with** a
+  token is closed with 4002, because the token matches no slot (`02-protocol.md` §5 rule
+  2). Clients treat 4002 like 4003, and they also delete the room locally at the
+  `expires_at` reported in `joined`. A token-less join after `deleteAll()` creates a fresh
+  room. That is harmless: the original members are gone, and the room's traffic was
+  protected by ephemeral session keys.
 - `wrangler.toml` contains no account id or secrets; a fresh fork deploys with the button.
 - Cost target: one pairing session (2 connections, about 200 messages) uses well under
   1 GB-s of duration. Hibernation is what makes this true — verify in spike S5.
@@ -102,13 +115,15 @@ above.
   if `PAIRWIRE_RELAY_INSECURE_OK` is not set and the server is not bound to localhost,
   reminding the operator that clients require `wss://`.
 - Dockerfile: multi-stage, `node:20-alpine` runtime, non-root user, `EXPOSE 8787`,
-  `HEALTHCHECK` on `/health`. Image published as `ghcr.io/<owner>/pairwire-relay`.
+  `HEALTHCHECK` on `/health`. Image published as `ghcr.io/tlezhava/pairwire-relay`.
 
 ## Logging
 
 - Our code logs counts and error codes, never `room_id`, tokens, IP addresses or frame
   contents.
 - If a correlation id is needed, log the first 4 characters of `SHA-256(room_id)`.
+- Each relay has its own thin logger built on `redact()` from `packages/core` (core does
+  no I/O and never logs itself). No `console.log` outside that logger.
 - Platform request logs (Cloudflare, a reverse proxy) may record the URL path and so the
   `room_id`. That is acceptable: `room_id` reveals nothing about the keys. Don't add
   anything else sensitive to URLs.
@@ -117,7 +132,7 @@ above.
 
 - README section "Run your own relay" with:
   - a **Deploy to Cloudflare** button pointing at `packages/relay-worker`, and
-  - `docker run -p 8787:8787 ghcr.io/<owner>/pairwire-relay` plus a reverse-proxy example
+  - `docker run -p 8787:8787 ghcr.io/tlezhava/pairwire-relay` plus a reverse-proxy example
     (Caddy, two lines) for TLS.
 - Clients pick up the relay with `PAIRWIRE_RELAY=relay.example.com` or
   `"relay": "relay.example.com"` in `~/.pairwire/config.json`. Share strings created

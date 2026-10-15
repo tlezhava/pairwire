@@ -1,6 +1,6 @@
 # 02 — Protocol (v1)
 
-Status: draft v0.2 · Implemented in `packages/core`
+Status: draft v0.3 · Implemented in `packages/core`
 
 Everything in this file is normative. Byte strings are written in hex. `||` is
 concatenation. `utf8(x)` is the UTF-8 encoding of string `x`. `u32be(n)` is `n` as 4
@@ -29,7 +29,9 @@ pw1_<base32(secret)>[@<relay-host>[:<port>]]
 Relay URL derivation:
 
 - No host part → built-in default relay (constant `DEFAULT_RELAY_HOST` in
-  `packages/core/src/config.ts`, set before first release).
+  `packages/core/src/config.ts`, set before first release). While it is unset (`null`),
+  a share string without a host part is refused with "no default relay configured; set
+  PAIRWIRE_RELAY", and `start` requires a configured relay.
 - Host part → `wss://<host>[:<port>]`.
 - `ws://` (plaintext) is used **only** when the host is `localhost`, `127.0.0.1` or `[::1]`
   (local development and tests).
@@ -82,9 +84,10 @@ epoch `E`:
 - on receiving `joined` with `peer_present: true` and `epoch: E`, and
 - on receiving `peer_joined` with `epoch: E`.
 
-A client keeps handshake state only for the **latest epoch it has seen**. HELLOs for an
-older epoch are dropped. A second valid HELLO for the same epoch replaces the first (the
-peer restarted its handshake) and the client recomputes the session.
+A client keeps handshake state only for the **latest epoch it has seen**. It accepts at
+most **one** HELLO per epoch. HELLOs for an older epoch, a second HELLO for the same
+epoch, and HELLOs for an epoch the client has not seen yet are dropped and counted. (A
+peer can only restart its handshake by reconnecting, which creates a new epoch.)
 
 ### 4.2 HELLO contents
 
@@ -107,7 +110,9 @@ ciphertext    = XChaCha20-Poly1305(key = hello_key, nonce, aad).seal(hello_paylo
 ```
 
 A HELLO that fails to decrypt is dropped and counted. After 5 failures on one connection
-the client disconnects and tells its human "someone with the wrong key is in this room".
+the client disconnects and tells its human "someone with the wrong key is in this room"
+(a local notice, `04-client.md` section 5). It then stops reconnecting to this room until
+the human runs a pairwire command, and `status` shows the error.
 
 ### 4.3 Session keys
 
@@ -161,7 +166,7 @@ Relay → client:
 
 | Frame | Meaning |
 |---|---|
-| `{"t":"joined","member":"a","token":"<base64url 32 bytes>","epoch":7,"peer_present":false,"buffered":0}` | Join accepted. Store `token` in room state; it is required to rejoin this slot. |
+| `{"t":"joined","member":"a","token":"<base64url 32 bytes>","epoch":7,"peer_present":false,"buffered":0,"expires_at":1760529600000}` | Join accepted. Store `token` in room state; it is required to rejoin this slot. `expires_at` is the room's max-age deadline (relay creation time + max age, ms since epoch); clients delete the room locally at that time. |
 | `{"t":"peer_joined","epoch":8}` | The other member connected (or reconnected). |
 | `{"t":"peer_left","reason":"disconnected"}` | The other member's socket closed; their slot is kept. |
 | `{"t":"peer_left","reason":"left"}` | The other member sent `leave`. The room is over. Followed by close 4003. |
@@ -173,7 +178,7 @@ Close codes:
 |---|---|---|---|
 | 1000 | normal | Client-initiated close | — |
 | 4001 | `room_full` | Both slots are taken and the token matches neither (REQ-ROOM-4) | no |
-| 4002 | `bad_token` | Token supplied but unknown, and no free slot | no |
+| 4002 | `bad_token` | Token supplied but it matches no slot (whether or not a slot is free). The client treats this like 4003: the room is gone | no |
 | 4003 | `ended` | Room ended (`leave`), expired, or past max age (REQ-ROOM-7) | no |
 | 4004 | `unsupported_version` | `v` not supported | no |
 | 4005 | `protocol_error` | First frame not `join`, or malformed control frame | no |
@@ -187,12 +192,14 @@ Membership rules:
    token. A room with no free slot refuses it with 4001. Once both slots have been taken,
    the room is **sealed**: knowing the share string is no longer enough to get in.
 2. A join with a token matching a slot takes that slot back. Any older socket on that slot
-   is closed with 4007.
+   is closed with 4007. A join with a token that matches no slot is closed with 4002, even
+   if a slot is free, so a stale client can never re-create a room the relay has deleted.
 3. `leave` ends the room. The relay marks the room **ended** (a tombstone kept until the
-   room's max age), sends `peer_left` with `reason: "left"` to the other member if it is
-   connected, and closes both sockets with 4003. If the other member is offline, it gets
-   `peer_left` (`left`) followed by 4003 when it next joins. Any other join to an ended
-   room is closed with 4003.
+   room's max age), discards all tokens and buffered frames, sends `peer_left` with
+   `reason: "left"` to the other member if it is connected, and closes both sockets with
+   4003. Any later join to an ended room (with or without a token) receives
+   `peer_left` (`left`) first if the room ended by `leave`, then close 4003. This needs no
+   token and reveals only that the room ended.
 4. Ordering on (re)join: the relay sends `joined`, then any buffered binary frames in
    order, then `peer_joined` to the other member.
 5. HELLO frames (first byte 0x01) are never buffered; they are dropped if the peer is not
@@ -222,7 +229,11 @@ ciphertext = XChaCha20-Poly1305(key = my send key for sid, nonce, aad).seal(utf8
 }
 ```
 
-The serialized envelope must stay under 28 KiB so the frame stays under 32 KiB.
+Size limits: the **serialized** envelope (UTF-8 JSON) is at most 28 KiB, so the frame
+stays under 32 KiB. This is the binding limit, because JSON escaping can make the
+serialized body several times larger than the raw body. `body` is additionally limited to
+24 KiB of UTF-8. A sender rejects a message that breaks either limit (error `too_large`,
+reporting both sizes); a receiver drops and counts an envelope that breaks either.
 
 | kind | Meaning | Shown to agent? |
 |---|---|---|
@@ -267,8 +278,9 @@ For non-ack envelopes:
 - Resend all unacked envelopes, in seq order, with the **same id and seq**, re-encrypted
   under the current session: (a) after each new session becomes current, and (b) when the
   oldest unacked envelope is 15 s old with no ack while the peer is connected.
-- Pace sends to at most 10 frames per 10 s so a resend burst stays under the relay's
-  limits. On `error rate_limited`, wait `retry_after`, then resend unacked envelopes.
+- Pace binary frames to at most 8 per rolling 10 s, counting HELLOs, acks and resends, so
+  a resend burst stays below the relay's limit (`03-relay.md`). On `error rate_limited`,
+  wait `retry_after`, then resend unacked envelopes.
 - Acks themselves are not kept or resent; the next ack supersedes them.
 
 ## 7. Test vectors

@@ -38,13 +38,16 @@ writing any code. You do not need to read every spec for every task.
    throwaway code under `spikes/<id>/`, record findings in `specs/decisions.md`, then
    update the affected spec. Spike code is never imported by product code.
 4. **Requirements are traceable.** Every REQ-* and INV-* has at least one test whose
-   name contains the ID (e.g. `it("REQ-ROOM-4: third member is refused", ...)`).
+   name contains the ID (e.g. `it("REQ-ROOM-4: third member is refused", ...)`), or a
+   `manual`/`deferred` entry in `tests/traceability.json` (see `specs/07-testing.md`).
 5. **Test first for `packages/core`.** Crypto, codecs, envelope validation and the
    sanitizer are written test-first, including the fixed test vectors in
    `specs/02-protocol.md`.
 6. **Ask the human** before: adding a runtime dependency not listed in
    `specs/01-architecture.md`, changing anything in `specs/00-product.md` goals/non-goals,
-   changing a security invariant, deploying anything, or publishing anything.
+   changing a security invariant, deploying anything, or publishing anything. Dev
+   dependencies and anything under `spikes/` don't need approval
+   (`specs/01-architecture.md`, Tech stack).
 
 ## Security invariants (summary — full text in specs/05-security.md)
 
@@ -69,8 +72,9 @@ If a task seems to require weakening one of these, stop and ask.
   `zod` schemas that live next to the spec'd types.
 - Conventional commits (`feat:`, `fix:`, `test:`, `docs:`, `spec:`, `chore:`), small and
   focused. Spec changes use `spec:`.
-- No `console.log` in library code; use the logger in `packages/client/src/log.ts`, which
-  redacts secrets.
+- No `console.log` in library code. The client logs through `packages/client/src/log.ts`;
+  each relay has its own thin logger. All of them redact through `redact()` from
+  `packages/core`. Core itself does no I/O and never logs.
 
 ## Commands
 

@@ -67,13 +67,14 @@ client unless stated otherwise. Each requirement has at least one test (see
 - **REQ-ROOM-3** WHEN the handshake completes THE SYSTEM SHALL show both users the peer's
   display name and harness.
 - **REQ-ROOM-4** WHEN a third client tries to join a room that already has two members
-  THE RELAY SHALL refuse it with error `room_full`.
+  THE RELAY SHALL refuse it with close code 4001 `room_full`.
 - **REQ-ROOM-5** WHEN a user runs `/pairwire:leave` THE SYSTEM SHALL notify the peer, close
   the connection, and delete the local room secret.
 - **REQ-ROOM-6** WHEN a session restarts in the same project directory while its room is
   still alive THE SYSTEM SHALL reconnect to the room without a new share string.
-- **REQ-ROOM-7** WHEN a room has had no activity for 24 hours, or is 7 days old,
-  THE RELAY SHALL end it, and later joins SHALL be refused with `ended` (4003).
+- **REQ-ROOM-7** WHEN a room has had no connected member and no frame for 72 hours, or
+  is 7 days old, THE RELAY SHALL end it, and later joins SHALL be refused with `ended`
+  (4003), or with `bad_token` (4002) once the relay has deleted the room after max age.
 - **REQ-ROOM-8** WHEN the share string is malformed THE SYSTEM SHALL refuse it with a
   message that says what is wrong, without echoing the string.
 
@@ -85,7 +86,9 @@ client unless stated otherwise. Each requirement has at least one test (see
   SHALL make it visible to the agent as soon as its current tool call completes (delivery
   tier D2).
 - **REQ-MSG-3** WHEN a message arrives while the receiving agent is finishing a turn
-  THE SYSTEM SHALL keep the agent working to handle it, subject to the hop budget (D2).
+  THE SYSTEM SHALL keep the agent working to handle it (D2), blocking the stop only for
+  messages the agent has not seen yet, so ping-pong between agents stays bounded by both
+  sides' hop budgets.
 - **REQ-MSG-4** WHEN a message arrives while the receiving session is idle THE SYSTEM
   SHALL wake the agent if the harness supports it (D3), and otherwise show it on the
   agent's next turn.

@@ -41,14 +41,18 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 ```
 ~/.pairwire/                              0700
 ├── config.json
-├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, updated_at}
+├── active                                empty flag file; exists iff some room on this machine
+│                                         is "waiting" or "active" (hook fast path, section 6)
+├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_ppid, updated_at}
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
     ├── state.json                        member, token, epoch, sessions (current+previous),
     │                                     my_seq, peer_max_seq, peer {name, harness, instance},
     │                                     hop_count, status ("waiting"|"active"|"left"|"ended"),
-    │                                     created_at, ctl_path, bypass_warned
-    ├── inbox.jsonl                       accepted inbound envelopes + received_at
+    │                                     created_at, expires_at, ctl_path, error,
+    │                                     bypass_warned_sessions
+    ├── inbox.jsonl                       accepted inbound envelopes and local notices
+    │                                     ({source: "peer"|"local", ..., received_at})
     ├── delivered.json                    ids already shown to the agent
     ├── outbox.jsonl                      sent-but-unacked and not-yet-sent envelopes (02 §6.2)
     └── transcript.md                     human-readable log of both directions
@@ -74,17 +78,22 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
   - binding with a dead owner → take ownership and reconnect (REQ-ROOM-6).
 - Hooks deliver only for the owning session: a hook walks its own ancestor process chain
   and acts only if `owner_ppid` is in it; otherwise it exits 0 with no output, so a
-  passive session never consumes the owner's messages **[verify: S2 — process tree]**.
+  passive session never consumes the owner's messages **[verify: S2 — process tree; also
+  look for a session id visible to the MCP server, which would let hooks compare the hook
+  input's `session_id` instead of walking processes (spawning `ps` costs 20–50 ms on
+  macOS)]**.
 - A room is removed locally (status `ended`, secret and keys deleted, binding removed)
-  when the relay closes with 4003, when the peer leaves, or 7 days after `created_at`.
+  when the relay closes with 4003 or 4002, when the peer leaves, or at the `expires_at`
+  the relay reported in `joined` (`02-protocol.md` §5). Before the first `joined`, a
+  `waiting` room uses `created_at` + 7 days.
 - Writes to JSON files are atomic (write temp file, fsync, rename). `delivered.json` and
   `state.json` updates take a lock (`mkdir <file>.lock`, stale after 5 s).
 - Leaving deletes `secret` and the session keys in `state.json`, sets `status: "left"`,
   removes the binding, and keeps `transcript.md` and `inbox.jsonl` until `pairwire purge`.
 - **Peer identity.** The peer's `instance`, `name` and `harness` from the first accepted
   HELLO are stored. If a later HELLO carries a different `instance` (or name), the client
-  keeps the session but writes a warning to the transcript and puts a notice at the top of
-  the next delivery: "The peer reconnected as a different client (was Nika/codex, now
+  keeps the session but writes a warning to the transcript and queues a local notice
+  (`peer_changed`, section 5): "The peer reconnected as a different client (was Nika/codex, now
   …). If you didn't expect this, run /pairwire:leave." (Mitigates A3 in `05-security.md`.)
 
 ## 4. MCP tools
@@ -100,10 +109,10 @@ new mail on any pairwire call (delivery tier D1).
 |---|---|---|
 | `start` | `{ name?: string }` | Fails if this project has a room with status `active` (a handshake has happened). If a room is still `waiting` (no handshake yet), sends relay `leave` for it and creates a new one. Generates the secret, connects, returns the share string and instructions for the human. The share string is returned **only** here (REQ-ROOM-1). |
 | `join` | `{ share: string, name?: string }` | Parses the share string (REQ-ROOM-8), connects to its relay, waits up to 30 s for the handshake. Success → peer name and harness. If the peer isn't online within 30 s, the room stays bound and connected in the background and the tool returns "joined; waiting for your collaborator to come online". Relay errors (4001 etc.) → no binding is kept. |
-| `send` | `{ kind: "chat"\|"question"\|"answer", body: string, reply_to?: string }` | Validates (`body` max 24 KiB UTF-8), secret-scans (REQ-SAFE-3), checks the hop budget (REQ-SAFE-4), rate-limits (20/min), then follows the sender rules in `02` §6.2: sent under the current session even if the peer is offline (the relay buffers), or queued if no session has ever existed. Returns `{ id, status: "sent"\|"queued" }`; "delivered" arrives later via ack. Never sets `author: "human"`. |
+| `send` | `{ kind: "chat"\|"question"\|"answer", body: string, reply_to?: string }` | Validates (`body` max 24 KiB UTF-8 **and** serialized envelope max 28 KiB, `02` §6), secret-scans (REQ-SAFE-3), checks the hop budget (REQ-SAFE-4), rate-limits (20/min), then follows the sender rules in `02` §6.2: sent under the current session even if the peer is offline (the relay buffers), or queued if no session has ever existed. Returns `{ id, status: "sent"\|"queued" }`; "delivered" arrives later via ack. Never sets `author: "human"`. |
 | `inbox` | `{}` | Returns all undelivered messages, wrapped (section 5), marks them delivered, and lists delivery status of the agent's last 5 sent messages. |
 | `status` | `{}` | Room state, peer, relay host, unread count, hop budget, transcript path. Never returns the share string or secret. |
-| `leave` | `{ message?: string }` | Sends `bye` (optional body), then relay `leave`; cleans up (REQ-ROOM-5). |
+| `leave` | `{ message?: string }` | If `message` is given, it passes the same validation and secret scan as `send` (INV-5); a blocked message aborts the leave and says why. Then sends `bye` (optional body), then relay `leave`; cleans up (REQ-ROOM-5). |
 
 There is deliberately **no** tool to reset the hop budget, change config, or send as a
 human: those are human-only paths (`ctl`, section 8).
@@ -123,11 +132,31 @@ Does POST /orders accept a client-generated idempotency key, or do you generate 
 </pairwire_message>
 ```
 
+**Local notices.** Some events come from our own client, not from a peer message:
+
+| Event | Text (peer-supplied fields sanitized) |
+|---|---|
+| `peer_joined` | "Nika (codex) joined the room." (REQ-ROOM-3) |
+| `peer_left` | "Nika ended the room." / "The room expired." |
+| `peer_changed` | Peer `instance` or name changed (section 3, Peer identity) |
+| `wrong_key` | Five HELLOs failed to decrypt (`02-protocol.md` §4.2) |
+
+They are appended to `inbox.jsonl` with `source: "local"` and rendered by the same
+renderer, outside any `<pairwire_message>`, as
+`<pairwire_notice event="peer_joined">…</pairwire_notice>`. The sanitizer runs on every
+peer-supplied value inside them. Notices count as undelivered items for every tier, so
+they can trigger `Stop` and D3 wake. **Acks never create an inbox entry and never trigger
+delivery or wake**, so receipts can't cause loops; delivery status shows up only in the
+`inbox` and `status` results and the status footer.
+
 Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attribute value:
 
 1. Unicode NFC.
-2. Remove bidirectional controls (U+202A–U+202E, U+2066–U+2069), zero-width characters
-   (U+200B–U+200F, U+2060, U+FEFF) and all C0/C1 controls except `\n` and `\t`.
+2. Remove all characters of General Category **Cf** (format) except U+200D (zero-width
+   joiner, needed for emoji). This covers bidi controls, zero-width characters, U+00AD,
+   U+061C, U+180E, U+2061–U+2064, U+FEFF and U+FFF9–U+FFFB. Also remove the whole tag
+   block U+E0000–U+E007F (used for invisible "ASCII smuggling"), and all C0/C1 controls
+   except `\n` and `\t`.
 3. Neutralize tag look-alikes: any `<` followed by optional `/`, optional whitespace and,
    case-insensitively, `pairwire_message`, `system-reminder`, `system`, `channel`,
    `function`, `antml` or `pairwire` is replaced by `‹` (U+2039), so the body can never
@@ -136,8 +165,11 @@ Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attr
 4. Attribute values: additionally escape `&`, `"`, `<`, `>`; `from` is truncated to 40
    characters.
 5. Bodies longer than 8,000 characters are not injected through hooks (hook context is
-   capped at 10,000 characters); the hook instead says "message #id is long; call the
-   pairwire inbox tool to read it".
+   capped at 10,000 characters **[verify: S1]**); the hook instead says "message #id is
+   long; call the pairwire inbox tool to read it". A hook injects whole items, oldest
+   first, while the rendered total stays within the cap. The rest stay undelivered for
+   the next hook, and the hook adds "*n* more messages waiting; call the pairwire inbox
+   tool".
 
 ## 6. Delivery tiers in Claude Code
 
@@ -150,17 +182,30 @@ Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attr
 ### D2 hook behavior
 
 All hooks: exit 0 with empty output in under 100 ms p95 when there is nothing to deliver
-**[verify: S1 — measure Node start-up cost; if too slow, see S1 fallback]**. Hooks never
-fail the harness: any internal error → exit 0, no output, error logged to
-`~/.pairwire/hook-errors.log`.
+**[verify: S1 — measure Node start-up cost]**. Hooks never fail the harness: any internal
+error → exit 0, no output, error logged to `~/.pairwire/hook-errors.log`.
+
+Every hook runs through a POSIX wrapper, `hooks/run.sh <event>`, so the "never fail"
+rule also holds when Node is missing:
+
+1. If `${PAIRWIRE_HOME:-$HOME/.pairwire}/active` does not exist (no room on this
+   machine), exit 0 immediately without starting Node.
+2. If `node` is missing or older than 20: print a one-time notice telling the human what
+   to install (REQ-INST-4), using the user-visible output field from S1. Record that it
+   was shown in `hook-node-warned` under the state dir, then exit 0.
+3. Otherwise `exec node "<plugin root>/dist/pairwire.mjs" hook <event>`, with stdin
+   passed through. The wrapper derives the plugin root from its own path.
+
+The MCP server creates the `active` flag when a room becomes `waiting` or `active`. It
+removes the flag when no such room remains.
 
 | Hook | Behavior |
 |---|---|
 | `SessionStart` (all sources) | If the project has an active room: `additionalContext` = one-paragraph reminder (paired with whom, how messages arrive, follow the pairwire skill). This re-orients the agent after `compact`/`resume`. |
-| every hook | REQ-SAFE-5: if a room is active, the hook input's `permission_mode` is `bypassPermissions`, and `bypass_warned` is false, show the human a one-time warning and set `bypass_warned` **[verify: S1 — user-visible message field]**. Checked in every hook because pairing and mode changes happen mid-session. |
+| every hook | REQ-SAFE-5: if a room is active, the hook input's `permission_mode` is `bypassPermissions`, and the hook input's `session_id` is not in `bypass_warned_sessions`, show the human a warning and add the `session_id` (once per session, so a restart in bypass mode warns again) **[verify: S1 — user-visible message field]**. Checked in every hook because pairing and mode changes happen mid-session. |
 | `UserPromptSubmit` | Reset `hop_count` to 0 (human input). Inject undelivered messages as `additionalContext`. |
 | `PostToolUse` (all tools) | Inject undelivered messages as `additionalContext`. Mark them delivered. |
-| `Stop` | If there are undelivered messages and `auto_continue` is true: `{"decision":"block","reason": <rendered messages>}` so the agent handles them before stopping. Mark them delivered. Otherwise exit 0. Blocks only for **new** messages, so it cannot loop on its own; cross-agent ping-pong is bounded by both sides' hop budgets. |
+| `Stop` | If there are undelivered items (messages or local notices, section 5) and `auto_continue` is true: `{"decision":"block","reason": <rendered messages>}` so the agent handles them before stopping. Mark them delivered. Otherwise exit 0. Blocks only for **new** messages, so it cannot loop on its own; cross-agent ping-pong is bounded by both sides' hop budgets. |
 
 ### D3 candidates (decided by spikes)
 
@@ -184,7 +229,9 @@ fail the harness: any internal error → exit 0, no output, error logged to
    the tool input, so the human sees the exact text (REQ-SAFE-2, INV-4). The plugin never
    ships permission rules that pre-approve `send`. The README explains how a user can
    allow-list it themselves if they want autonomy.
-2. Client validates against the envelope schema; `body` max 24 KiB of UTF-8.
+2. Client validates against the envelope schema: `body` max 24 KiB of UTF-8 and
+   serialized envelope max 28 KiB (`02-protocol.md` §6). Steps 2–3 also apply to the
+   `leave` message and to `/pairwire:say`.
 3. Secret scanner (`packages/core/src/secrets.ts`) runs on `body`. On a match, `send` fails
    with the rule ids and character offsets (never the matched text). Rules: pairwire share
    strings (`pw1_[a-z2-7]{52}`, case-insensitive, as is the logger's redaction), PEM private key headers, AWS access key ids, GitHub
@@ -232,6 +279,7 @@ plugins/claude-code/
 ├── .claude-plugin/plugin.json
 ├── .mcp.json
 ├── hooks/hooks.json
+├── hooks/run.sh                      # POSIX wrapper: fast path + Node check (section 6)
 ├── commands/   start.md  join.md  status.md  log.md  say.md  continue.md  leave.md
 ├── skills/pairwire/SKILL.md          # generated from specs/06-agent-guide.md section 2
 └── dist/pairwire.mjs                 # bundled client, produced by `npm run build:plugin`
@@ -245,8 +293,8 @@ plugins/claude-code/
   "displayName": "pairwire",
   "version": "0.1.0",
   "description": "Pair your coding agent with a colleague's agent over an end-to-end encrypted relay.",
-  "author": { "name": "<maintainer>" },
-  "repository": "https://github.com/<owner>/pairwire",
+  "author": { "name": "Tazo Lezhava" },
+  "repository": "https://github.com/tlezhava/pairwire",
   "license": "MIT",
   "keywords": ["pairing", "collaboration", "agents", "mcp"]
 }
@@ -269,17 +317,20 @@ plugins/claude-code/
 }
 ```
 
-`hooks/hooks.json` (exec form, one entry per event; `matcher` value for "all tools"
-**[verify: S1]**):
+`hooks/hooks.json`: one entry per event, each running the `hooks/run.sh` wrapper from
+section 6. The wrapper finds `dist/pairwire.mjs` relative to its own path. S1 must
+confirm three things: the hook command schema (shell string vs. exec form), the
+`${CLAUDE_PLUGIN_ROOT}` expansion, and the `matcher` value for "all tools"
+**[verify: S1]**.
 
 ```json
 {
   "description": "pairwire: deliver messages from your paired collaborator",
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs", "hook", "session-start"], "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs", "hook", "user-prompt-submit"], "timeout": 10 }] }],
-    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs", "hook", "post-tool-use"], "timeout": 10 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs", "hook", "stop"], "timeout": 10 }] }]
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session-start", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" user-prompt-submit", "timeout": 10 }] }],
+    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" post-tool-use", "timeout": 10 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop", "timeout": 10 }] }]
   }
 }
 ```
@@ -303,7 +354,7 @@ Marketplace (repo root `.claude-plugin/marketplace.json`):
 ```json
 {
   "name": "pairwire",
-  "owner": { "name": "<maintainer>" },
+  "owner": { "name": "Tazo Lezhava" },
   "plugins": [
     { "name": "pairwire", "source": "./plugins/claude-code", "description": "Pair your coding agent with a colleague's agent." }
   ]
@@ -313,15 +364,17 @@ Marketplace (repo root `.claude-plugin/marketplace.json`):
 Install (REQ-INST-1):
 
 ```
-/plugin marketplace add <owner>/pairwire
+/plugin marketplace add tlezhava/pairwire
 /plugin install pairwire@pairwire
 ```
 
 Validate in CI with `claude plugin validate plugins/claude-code --strict`.
 
-Because the marketplace installs straight from the git repository, `dist/pairwire.mjs`
-must be committed. The release script builds it, commits it with the version bump, and
-tags the release; CI fails if the committed bundle doesn't match a fresh build on a tag.
+Because the marketplace installs straight from the git repository's default branch,
+`dist/pairwire.mjs` must be committed and current on `main` at all times, not only on
+releases. Any commit that changes client code also commits the rebuilt bundle. CI fails
+on any push to `main` (and on any tag) if the committed bundle doesn't match a fresh
+build. The release script bumps the version, rebuilds, commits and tags.
 
 ## 10. Other harnesses (M6)
 

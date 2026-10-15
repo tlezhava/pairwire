@@ -14,14 +14,18 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   `UserPromptSubmit` and `SessionStart` reaches the model; `Stop` with
   `decision: "block"` + `reason` keeps the agent working and shows the reason to it; the
   matcher value that means "all tools"; the output field that shows a warning to the
-  human. Measure hook wall time for a no-op Node hook (p50/p95 over 50 runs). If p95 >
-  100 ms, prototype a fallback (e.g. a POSIX `sh` pre-check of a flag file before starting
-  Node) and record the numbers.
+  human; the hook command schema (shell string vs. exec form `args`) and whether
+  `${CLAUDE_PLUGIN_ROOT}` expands in it; the real cap on hook context size (inject
+  12,000 characters). Measure hook wall time for a no-op Node hook and for the
+  `hooks/run.sh` fast path (p50/p95 over 50 runs each). Save the recorded hook inputs as
+  fixtures for the M4-1 hook contract tests.
 - [ ] **S2 Project directory and process tree.** Does `${CLAUDE_PROJECT_DIR}` resolve in a
   plugin `.mcp.json` `env`? What is the MCP server's cwd? Do hook processes get
   `CLAUDE_PROJECT_DIR`? Does it change when the session `cd`s? Is the MCP server's parent
   pid an ancestor of every hook process of the same session (and not of another
-  session's)? This decides ADR-007 and the passive-session hook rule.
+  session's)? Can the MCP server see any session-identifying value (for example a session
+  id in its environment) that hooks could match against their input's `session_id`? This
+  decides ADR-007 and the passive-session hook rule.
 - [ ] **S3 Idle wake via `asyncRewake`.** From a `Stop` hook, launch an async rewake waiter
   that exits 2 after a delay. Does it wake an idle session? What does the agent see?
   What happens if the user types first, or the session ends? Can it re-arm every turn
@@ -41,12 +45,16 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [ ] **S8 `!` execution in plugin commands.** Does a plugin command's `!` line run before
   the model sees the prompt? How is `$ARGUMENTS` substituted and quoted, and is it safe
   for arbitrary text (quotes, `$()`, backticks, newlines)? Does it need a permission
-  prompt? If unsafe, find a safe way to pass the text (stdin, env, temp file) or record
-  that `say`/`continue` move to M5.
+  prompt? Does `${CLAUDE_PLUGIN_ROOT}` expand in a command's `!` line? Does a command's
+  `allowed-tools` pre-approval also let the model run that command itself later in the
+  turn (which would widen residual risk 2)? If unsafe, find a safe way to pass the text
+  (stdin, env, temp file) or record that `say`/`continue` move to M5.
 - [ ] **S9 Plugin monitors** — only if S3 fails: can an experimental plugin monitor wake an
   idle session with a message?
 - [ ] **M0-DONE** Update `04-client.md` D3 choice and remove all M0 **[verify]** markers.
-  Summarize spike results for the human and get a go-ahead before M1.
+  If S8 moved `say`/`continue` to M5, remove them from `06-agent-guide.md` and the command
+  lists. Make sure no spike output (`spikes/out/`, env dumps) is committed. Summarize
+  spike results for the human and get a go-ahead before M1.
 
 ## M1 — Foundations and `packages/core`
 
@@ -93,8 +101,9 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 - [ ] **M4-1 Hook entrypoints** (`04` §6) + hook contract tests.
 - [ ] **M4-2 D3 mechanism** chosen in M0.
-- [ ] **M4-3 Plugin files** (`04` §9): manifest, `.mcp.json`, hooks, seven commands,
-  SKILL.md generated from `06` §2, `npm run build:plugin` bundles `dist/pairwire.mjs`.
+- [ ] **M4-3 Plugin files** (`04` §9): manifest, `.mcp.json`, hooks + `hooks/run.sh`,
+  seven commands, SKILL.md generated from `06` §2, `npm run build:plugin` bundles
+  `dist/pairwire.mjs`; CI fails on any push to `main` whose committed bundle is stale.
 - [ ] **M4-4 Marketplace file**; CI runs `claude plugin validate --strict`.
 - [ ] **M4-5 README:** what it is, quickstart (two commands + start/join), safety notes,
   self-hosting (Deploy button + Docker), live mode if Channels shipped, pre-1.0 notice.

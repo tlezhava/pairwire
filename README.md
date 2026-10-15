@@ -14,7 +14,7 @@ encrypted; the relay only forwards bytes it cannot read.
 ## How it will work
 
 ```
-/plugin marketplace add <owner>/pairwire
+/plugin marketplace add tlezhava/pairwire
 /plugin install pairwire@pairwire
 
 /pairwire:start            # you: get a share string, send it to your collaborator

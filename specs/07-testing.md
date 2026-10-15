@@ -25,6 +25,9 @@ id defined in `00-product.md` or `05-security.md` has no matching test
 - `deferred`: ids belonging to a later milestone, with the milestone (REQ-X-2 → M6).
   The script fails once that milestone's tasks are all checked in `tasks.md`.
 
+The check reports missing ids as **warnings** until task M4-6 is checked in `tasks.md`.
+From then on it fails CI.
+
 ## Required test cases
 
 ### core
@@ -34,19 +37,26 @@ id defined in `00-product.md` or `05-security.md` has no matching test
   relay suffix parsing incl. port; `ws://` only for localhost.
 - Key schedule and session keys match the vectors in `02-protocol.md` section 7.
 - HELLO: valid decrypt; wrong secret fails; tampered byte fails; identical `e_pub`
-  aborts; all-zero DH aborts.
+  aborts; all-zero DH aborts; a second HELLO for the same epoch and a HELLO for an
+  unseen epoch are dropped.
 - MSG: round trip; tamper of each field fails; wrong `sid` dropped; duplicate `seq` acked but not
   delivered twice; out-of-order `seq` dropped without ack; previous-session keys still decrypt buffered frames.
 - Envelope schema: every field's bounds; unknown kinds dropped; `answer` without
-  `reply_to` rejected.
+  `reply_to` rejected; a body under 24 KiB whose serialized envelope exceeds 28 KiB
+  (e.g. all quotes or control characters) is rejected as `too_large`.
 - Sanitizer (INV-3): closing-tag injection, case and whitespace variants, nested tags,
-  `system-reminder` and other denylisted tags, bidi and zero-width characters, attribute
-  quote breaking, NFC normalization, 8,000-character hook threshold.
+  `system-reminder`, `pairwire_notice` and other denylisted tags, bidi and zero-width
+  characters, Unicode tag block (U+E0000–U+E007F), other Cf characters (U+00AD,
+  U+2061–U+2064, U+FFF9–U+FFFB) removed while ZWJ emoji survive, attribute quote
+  breaking, NFC normalization, 8,000-character hook threshold, hook total cap with "*n*
+  more waiting".
 - Secret scanner (INV-5): at least 3 positive and 3 negative samples per rule; never
   returns matched text.
 - Relay room state machine: full membership table from `02-protocol.md` section 5;
-  buffering order; HELLO never buffered; every limit in `03-relay.md`; expiry and max age
-  with a fake clock.
+  buffering order; HELLO never buffered; every limit in `03-relay.md` (rate limit counts
+  binary frames only); expiry and max age with a fake clock; unknown token with a free
+  slot → 4002; any join to an ended room → `peer_left` (if left) then 4003, with or
+  without a token; `joined` carries `expires_at`.
 
 ### relay
 
@@ -63,10 +73,16 @@ id defined in `00-product.md` or `05-security.md` has no matching test
 - Reliability (`02` §6): drop a frame in a test relay → resend after 15 s fills the gap;
   peer offline during a handshake → messages still arrive after reconnect; duplicate
   frames are acked but delivered once; crash after persisting `my_seq` never reuses a seq;
-  acks batch and are never acked; resend pacing stays under relay limits.
+  acks batch and are never acked; resend pacing stays at or below 8 binary frames per
+  10 s.
 - HELLO epochs: a HELLO for an older epoch is ignored; a replaced socket (4007) does not
-  reconnect; five bad HELLOs disconnect with the human-facing warning.
-- Peer `instance` change produces the transcript warning and the delivery notice.
+  reconnect; five bad HELLOs disconnect with the `wrong_key` notice and no
+  auto-reconnect.
+- Peer `instance` change produces the transcript warning and the `peer_changed` notice.
+- Local notices: `peer_joined` reaches the starter's agent through hooks and `inbox`; an
+  incoming ack never produces delivery or a Stop block.
+- 4002 on rejoin and reaching `expires_at` both remove the room locally.
+- `leave` with a message containing a secret is blocked and the room stays open (INV-5).
 - REQ-X-1: two clients reporting different `harness` values interoperate.
 - REQ-MSG-1..8: send/receive, queue while peer offline then flush, acks update status,
   transcript content on both sides.
@@ -90,11 +106,13 @@ id defined in `00-product.md` or `05-security.md` has no matching test
 - REQ-SAFE-1: every delivery path (each hook, `inbox`, Channels if shipped) output passes
   through `render()` — asserted by snapshot and by an injection-corpus sample per path.
 - REQ-SAFE-5: hook with `permission_mode: "bypassPermissions"` and an active room warns
-  once per room, from any hook event.
+  once per session (`session_id`), from any hook event, and warns again for a new
+  session in the same room.
 - REQ-INST-2: share string from a client with a custom relay carries `@host`; joining
   client connects there with no config.
-- REQ-INST-4: `doctor` and the hook wrapper report a missing or old Node clearly (Node
-  version faked in test).
+- REQ-INST-4: `doctor` and `hooks/run.sh` report a missing or old Node clearly (Node
+  version faked in test); `run.sh` exits 0 in every case and starts no Node when the
+  `active` flag is absent.
 - Passive session hooks never mark the owner's messages delivered.
 - `ctl.sock` falls back to a short path when `PAIRWIRE_HOME` is long.
 

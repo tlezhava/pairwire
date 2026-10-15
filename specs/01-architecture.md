@@ -73,8 +73,9 @@ pairwire/
 │       ├── commands/             # start, join, status, say, log, leave, continue
 │       ├── skills/pairwire/SKILL.md   # generated from specs/06-agent-guide.md
 │       ├── hooks/hooks.json
+│       ├── hooks/run.sh          # POSIX hook wrapper (04 §6)
 │       ├── .mcp.json
-│       └── dist/pairwire.mjs     # bundled client (`npm run build:plugin`), committed on release
+│       └── dist/pairwire.mjs     # bundled client (`npm run build:plugin`), kept current on main
 ├── .claude-plugin/marketplace.json
 ├── spikes/                       # M0 throwaway code, never imported
 └── tests/e2e/
@@ -95,8 +96,11 @@ pairwire/
 | WebSocket (Node) | `ws` | Client and relay-node |
 | IDs | `ulid` | Message IDs |
 
-Allowed runtime dependencies are exactly the ones above. Adding another needs the human's
-approval (CLAUDE.md rule 6).
+Allowed **runtime** dependencies are exactly the ones above. Adding another needs the
+human's approval (CLAUDE.md rule 6). Dev dependencies (build, test, lint and deploy
+tooling such as `typescript`, `esbuild`, `vitest`, `eslint`, `wrangler`,
+`@cloudflare/*`) and anything under `spikes/` may be added without asking. They must
+never end up in a published bundle or image.
 
 ## Process model and state
 
