@@ -4,7 +4,9 @@
     "composite": true,
     "rootDir": "src",
     "outDir": "dist",
-    "types": [],
+    "types": [
+      "@cloudflare/workers-types"
+    ],
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": [

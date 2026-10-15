@@ -1,0 +1,14 @@
+# pairwire relay on Cloudflare Workers (specs/03-relay.md). No account id or secrets here:
+# a fresh fork deploys with the Deploy to Cloudflare button.
+name = "pairwire-relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "RoomObject"
+
+# SQLite-backed storage (required on the Workers Free plan).
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RoomObject"]

@@ -444,3 +444,15 @@ describe("token encoding", () => {
     }
   });
 });
+
+describe("memberOf", () => {
+  it("reports the slot a socket joined as, null before join and undefined once gone", () => {
+    const h = harness();
+    h.room.connect("s1");
+    expect(h.room.memberOf("s1")).toBeNull();
+    h.room.text("s1", '{"t":"join","v":1,"token":null}');
+    expect(h.room.memberOf("s1")).toBe("a");
+    h.room.disconnect("s1");
+    expect(h.room.memberOf("s1")).toBeUndefined();
+  });
+});

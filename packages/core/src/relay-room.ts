@@ -103,6 +103,11 @@ export class RelayRoom {
     }
   }
 
+  /** The member a socket has joined as: null if it hasn't joined yet, undefined if unknown. */
+  memberOf(socket: SocketId): Member | null | undefined {
+    return this.#sockets.get(socket)?.member;
+  }
+
   connect(socket: SocketId): Output {
     return this.#run(() => {
       this.#sockets.set(socket, { member: null, deadline: this.#now() + L.joinDeadlineMs });
