@@ -66,7 +66,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   reported as warnings until M4, errors after).
 - [x] **M1-3 Share string + config constants** (`02` §1). Tests first.
 - [x] **M1-4 Key schedule** (`02` §2, §7 vectors).
-- [ ] **M1-5 Handshake + session keys** (`02` §4, §7 vectors).
+- [x] **M1-5 Handshake + session keys** (`02` §4, §7 vectors).
 - [ ] **M1-6 MSG framing + envelope schema** (`02` §3, §6).
 - [ ] **M1-7 Sanitizer + renderer** (`04` §5, INV-3).
 - [ ] **M1-8 Secret scanner** (`04` §7.3, INV-5).
