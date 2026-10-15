@@ -13,3 +13,4 @@ export { appendInbox, readInbox, readOutbox, updateOutbox, type InboxEntry, type
 export { createMcpServer, runMcpServer } from "./mcp.js";
 export { ClientSession, type SessionOptions, type ToolResult } from "./session.js";
 export { CLIENT_VERSION } from "./version.js";
+export { appendTranscript, transcriptTail } from "./transcript.js";

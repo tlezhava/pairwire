@@ -1,67 +1,17 @@
 // MCP tools behind the server (04 §4, §7): two sessions pair through a real relay-node.
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { readBinding } from "../../src/binding.js";
-import { createLogger } from "../../src/log.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { readOutbox } from "../../src/room-files.js";
-import { ClientSession, type SessionOptions } from "../../src/session.js";
 import { listRooms, readState } from "../../src/state.js";
 import { CLIENT_VERSION } from "../../src/version.js";
-import { FAST, startRelay, until } from "../connection/harness.js";
+import { startRelay, until } from "../connection/harness.js";
+import { paired, roomOf, SHARE, side } from "./pairing.js";
 import { tempDir } from "../state/helpers.js";
-
-const SHARE = /pw1_[a-z2-7]{52}@127\.0\.0\.1:\d+/;
-
-interface Side {
-  session: ClientSession;
-  home: string;
-  project: string;
-  opts: SessionOptions;
-}
-
-const sessions: ClientSession[] = [];
-afterEach(() => {
-  for (const s of sessions.splice(0)) s.shutdown();
-});
-
-function side(port: number, name: string, extra: Partial<SessionOptions> & { home?: string; project?: string; config?: object } = {}): Side {
-  const home = extra.home ?? join(tempDir(), ".pairwire");
-  const project = extra.project ?? tempDir();
-  if (extra.config) {
-    mkdirSync(home, { recursive: true, mode: 0o700 });
-    writeFileSync(join(home, "config.json"), JSON.stringify(extra.config));
-  }
-  const opts: SessionOptions = {
-    home,
-    env: { PAIRWIRE_RELAY: `127.0.0.1:${port}`, PAIRWIRE_NAME: name, PAIRWIRE_HARNESS: "claude-code", CLAUDE_CODE_SESSION_ID: `sess-${name}` },
-    cwd: project,
-    log: createLogger({ sink: () => {} }),
-    joinWaitMs: 5000,
-    startWaitMs: 3000,
-    tuning: FAST,
-    ...extra,
-  };
-  const session = new ClientSession(opts);
-  sessions.push(session);
-  session.init();
-  return { session, home, project, opts };
-}
-
-async function paired(config?: object) {
-  const { port } = await startRelay();
-  const a = side(port, "Tazo", config ? { config } : {});
-  const started = await a.session.start({});
-  const share = started.text.match(SHARE)![0];
-  const b = side(port, "Nika", config ? { config } : {});
-  const joined = await b.session.join({ share });
-  return { port, a, b, share, started, joined };
-}
-
-const roomOf = (s: Side) => listRooms(s.home)[0]!;
 
 describe("tools: start and join", () => {
   it("REQ-ROOM-1 start shows the share string once and says it is waiting", async () => {

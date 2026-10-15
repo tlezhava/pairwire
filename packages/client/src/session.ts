@@ -28,6 +28,7 @@ import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
 import { markDelivered, readOutbox, undelivered, type InboxEntry } from "./room-files.js";
 import { createRoom, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
+import { transcriptEvents } from "./transcript.js";
 import { CLIENT_VERSION } from "./version.js";
 
 export interface ToolResult {
@@ -315,7 +316,10 @@ export class ClientSession {
       url,
       hello,
       log: this.#o.log,
-      ...(this.#o.events ? { events: this.#o.events } : {}),
+      events: mergeEvents(
+        transcriptEvents(this.#o.home, roomId, this.#now, (e) => this.#o.log.error("transcript_failed", e), () => !!readState(this.#o.home, roomId)?.sessions.current),
+        this.#o.events,
+      ),
       ...(this.#o.socketFactory ? { socketFactory: this.#o.socketFactory } : {}),
       ...(this.#o.timers ? { timers: this.#o.timers } : {}),
       ...(this.#o.tuning ? { tuning: this.#o.tuning } : {}),
@@ -388,6 +392,17 @@ export class ClientSession {
 }
 
 /** PAIRWIRE_HARNESS from the plugin config (e.g. "claude-code"); anything unknown is "other". */
+/** Calls every handler of each event set, in order. */
+function mergeEvents(...sets: (ConnectionEvents | undefined)[]): ConnectionEvents {
+  const out: ConnectionEvents = {};
+  const keys = ["inbound", "sent", "delivered", "peerChanged", "status", "ended"] as const;
+  for (const key of keys) {
+    const fns = sets.flatMap((s) => (s?.[key] ? [s[key]] : [])) as ((arg: never) => void)[];
+    if (fns.length > 0) (out as Record<string, (arg: never) => void>)[key] = (arg: never) => fns.forEach((fn) => fn(arg));
+  }
+  return out;
+}
+
 function harnessOf(env: NodeJS.ProcessEnv): Harness {
   const h = env.PAIRWIRE_HARNESS?.trim() ?? "";
   return (HARNESSES as readonly string[]).includes(h) ? (h as Harness) : "other";
