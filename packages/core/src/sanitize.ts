@@ -5,8 +5,9 @@
 // eslint-disable-next-line no-control-regex -- matching control characters is the point
 const REMOVE = /(?!\u200D)\p{Cf}|[\u{E0000}-\u{E007F}]|[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-/** Step 3: a `<` that could open or close our wrapper or a harness tag. */
-const TAG_LOOKALIKE = /<(?=\s*\/?\s*(?:pairwire_message|system-reminder|system|channel|function|antml|pairwire))/gi;
+/** Step 3: a `<` that could open or close our wrapper or a harness tag. The lookahead is
+ * unambiguous (one way to split whitespace around `/`), so it stays linear. */
+const TAG_LOOKALIKE = /<(?=\s*(?:\/\s*)?(?:pairwire_message|system-reminder|system|channel|function|antml|pairwire))/gi;
 
 export const NAME_MAX_CHARS = 40;
 export const ANONYMOUS = "anonymous";
@@ -14,7 +15,7 @@ export const ANONYMOUS = "anonymous";
 /** Steps 1–3: for message bodies and as the first stage of every attribute value. */
 export function sanitizeText(text: string): string {
   return text
-    .replace(LONE_SURROGATE, "�")
+    .replace(LONE_SURROGATE, "\uFFFD")
     .normalize("NFC")
     .replace(REMOVE, "")
     .normalize("NFC")

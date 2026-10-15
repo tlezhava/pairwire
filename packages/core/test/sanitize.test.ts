@@ -107,3 +107,28 @@ describe("display names (02 §4.2, 04 §5)", () => {
     for (const empty of ["", "   ", "\u200B\u202E", "\u0000"]) expect(displayName(empty)).toBe("anonymous");
   });
 });
+
+describe("INV-3 sanitizer cost on hostile input", () => {
+  // Peer bodies and HELLO names reach the sanitizer from every hook, so no input may
+  // trigger super-linear backtracking.
+  const N = 24 * 1024;
+  const cases: Record<string, string> = {
+    "< followed by spaces": "<" + " ".repeat(N),
+    "< followed by newlines": "<" + "\n".repeat(N),
+    "< spaces / spaces": "<" + " ".repeat(N / 2) + "/" + " ".repeat(N / 2),
+    "repeated '< '": "< ".repeat(N / 2),
+    "only <": "<".repeat(N),
+    "zero-width run": "\u200B".repeat(N),
+    "combining marks": "e" + "\u0301".repeat(N),
+    "lone surrogates": "\uD800".repeat(N),
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    it(`INV-3 sanitizes 24 KiB of ${name} in under 250 ms`, () => {
+      const start = performance.now();
+      sanitizeText(text);
+      sanitizeAttr(text);
+      displayName(text);
+      expect(performance.now() - start).toBeLessThan(250);
+    });
+  }
+});
