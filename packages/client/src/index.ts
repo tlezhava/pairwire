@@ -15,3 +15,4 @@ export { ClientSession, type SessionOptions, type ToolResult } from "./session.j
 export { CLIENT_VERSION } from "./version.js";
 export { appendTranscript, transcriptTail } from "./transcript.js";
 export { runCtl } from "./ctl.js";
+export { nodeAdvice, runDoctor, runPurge } from "./doctor.js";
