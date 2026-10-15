@@ -36,6 +36,7 @@ import {
   $ZodType,
   $constructor,
   CLIENT_LIMITS,
+  DEFAULT_RELAY_HOST,
   EnvelopeTooLargeError,
   HARNESSES,
   HELLO_TYPE,
@@ -27149,7 +27150,7 @@ ${rendered}` }) + "\n");
   }
   async join(input) {
     return this.#tool(async () => {
-      this.#ready();
+      const config = this.#ready();
       const current = this.#roomState();
       if (current && isOpen(current)) throw new ToolError("This project already has a pairwire room. Run /pairwire:leave first.");
       const parsed = parseShareString(input.share);
@@ -27170,8 +27171,10 @@ ${rendered}` }) + "\n");
         const why = state?.error === "room_full" ? "the room already has two members" : "the room no longer exists";
         throw new ToolError(`Could not join: ${why}. Ask your collaborator to start a new room.`);
       }
-      if (!paired) return "Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.";
-      return `Paired with ${this.#peerLabel(state)}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.`;
+      const ownDefault = config.relay ?? DEFAULT_RELAY_HOST;
+      const via = relay !== null && relay !== ownDefault ? ` This room uses relay ${relay}.` : "";
+      if (!paired) return `Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.${via}`;
+      return `Paired with ${this.#peerLabel(state)}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.${via}`;
     });
   }
   send(input) {

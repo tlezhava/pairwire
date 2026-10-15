@@ -30,6 +30,7 @@ describe("tools: start and join", () => {
     const { a, b, joined, port } = await paired();
     expect(joined.text).toContain("Paired with Tazo (claude-code)");
     expect(readState(b.home, roomOf(b))?.relay).toBe(`127.0.0.1:${port}`);
+    expect(joined.text).not.toContain("This room uses relay"); // same relay as B's own config
     await until(() => a.session.footer().includes("paired with Nika (claude-code)"), 5000, "A sees B");
     const inbox = await a.session.inbox();
     expect(inbox.text).toContain('<pairwire_notice event="peer_joined">Nika (claude-code) joined the room.</pairwire_notice>');
@@ -58,6 +59,17 @@ describe("tools: start and join", () => {
     expect(r.isError).toBe(true);
     expect(r.text).toContain("the room already has two members");
     expect(readBinding(c.home, c.project)).toBeNull();
+  });
+});
+
+describe("tools: relays", () => {
+  it("REQ-INST-2 a joiner with another default relay is told once which relay the room uses", async () => {
+    const { port } = await startRelay();
+    const a = side(port, "Tazo");
+    const share = (await a.session.start({})).text.match(SHARE)![0];
+    const b = side(port, "Nika", { env: { PAIRWIRE_NAME: "Nika", PAIRWIRE_HARNESS: "codex", CLAUDE_CODE_SESSION_ID: "sess-Nika" } });
+    const joined = await b.session.join({ share });
+    expect(joined.text).toContain(`This room uses relay 127.0.0.1:${port}.`);
   });
 });
 

@@ -1,6 +1,7 @@
 // The MCP server's state for one agent session (04 §3–4, §7): project ownership, the room's
 // connection, and the six tools. Tool methods return text for the agent and never throw.
 import {
+  DEFAULT_RELAY_HOST,
   deriveRoomKeys,
   displayName,
   EnvelopeTooLargeError,
@@ -248,7 +249,7 @@ export class ClientSession {
 
   async join(input: z.infer<typeof joinInputSchema>): Promise<ToolResult> {
     return this.#tool(async () => {
-      this.#ready();
+      const config = this.#ready();
       const current = this.#roomState();
       if (current && isOpen(current)) throw new ToolError("This project already has a pairwire room. Run /pairwire:leave first.");
       const parsed = parseShareString(input.share);
@@ -271,8 +272,11 @@ export class ClientSession {
         const why = state?.error === "room_full" ? "the room already has two members" : "the room no longer exists";
         throw new ToolError(`Could not join: ${why}. Ask your collaborator to start a new room.`);
       }
-      if (!paired) return "Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.";
-      return `Paired with ${this.#peerLabel(state)}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.`;
+      // 03 Self-hosting: say once when the room lives on a relay other than ours.
+      const ownDefault = config.relay ?? DEFAULT_RELAY_HOST;
+      const via = relay !== null && relay !== ownDefault ? ` This room uses relay ${relay}.` : "";
+      if (!paired) return `Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.${via}`;
+      return `Paired with ${this.#peerLabel(state)}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.${via}`;
     });
   }
 
