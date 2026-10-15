@@ -149,6 +149,13 @@ they can trigger `Stop` and D3 wake. **Acks never create an inbox entry and neve
 delivery or wake**, so receipts can't cause loops; delivery status shows up only in the
 `inbox` and `status` results and the status footer.
 
+Rendering details:
+
+- The preamble appears once, before the first `<pairwire_message>`, whenever the output
+  contains at least one peer message. Output with only local notices has no preamble.
+- An `answer` carries an extra `reply_to="<id>"` attribute. A `bye` with no body renders
+  as "(no message)". Acks are never rendered.
+
 Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attribute value:
 
 1. Unicode NFC.
@@ -156,20 +163,23 @@ Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attr
    joiner, needed for emoji). This covers bidi controls, zero-width characters, U+00AD,
    U+061C, U+180E, U+2061–U+2064, U+FEFF and U+FFF9–U+FFFB. Also remove the whole tag
    block U+E0000–U+E007F (used for invisible "ASCII smuggling"), and all C0/C1 controls
-   except `\n` and `\t`.
-3. Neutralize tag look-alikes: any `<` followed by optional `/`, optional whitespace and,
-   case-insensitively, `pairwire_message`, `system-reminder`, `system`, `channel`,
-   `function`, `antml` or `pairwire` is replaced by `‹` (U+2039), so the body can never
-   close the wrapper or open a harness tag. Other `<` characters (code, generics, HTML)
-   are left alone.
-4. Attribute values: additionally escape `&`, `"`, `<`, `>`; `from` is truncated to 40
-   characters.
+   except `\n` and `\t`. Replace lone UTF-16 surrogates with U+FFFD. Apply NFC again, so
+   that removing characters cannot leave an unnormalized sequence behind.
+3. Neutralize tag look-alikes: any `<` followed by optional whitespace, optional `/`,
+   optional whitespace and, case-insensitively, `pairwire_message`, `system-reminder`,
+   `system`, `channel`, `function`, `antml` or `pairwire` is replaced by `‹` (U+2039), so
+   the body can never close the wrapper or open a harness tag. Other `<` characters
+   (code, generics, HTML) are left alone.
+4. Attribute values: additionally turn `\n` and `\t` into spaces, collapse runs of
+   whitespace, trim, and escape `&`, `"`, `<`, `>`. `from` is truncated to 40 characters
+   (code points, before escaping); an empty name becomes "anonymous" (`02-protocol.md`
+   §4.2).
 5. Bodies longer than 8,000 characters are not injected through hooks (hook context is
    capped at 10,000 characters **[verify: S1]**); the hook instead says "message #id is
-   long; call the pairwire inbox tool to read it". A hook injects whole items, oldest
-   first, while the rendered total stays within the cap. The rest stay undelivered for
-   the next hook, and the hook adds "*n* more messages waiting; call the pairwire inbox
-   tool".
+   long; call the pairwire inbox tool to read it", and the message stays undelivered
+   until `inbox` returns it. A hook injects whole items, oldest first, while the rendered
+   total stays within the cap. The rest stay undelivered for the next hook, and the hook
+   adds "*n* more messages waiting; call the pairwire inbox tool".
 
 ## 6. Delivery tiers in Claude Code
 
