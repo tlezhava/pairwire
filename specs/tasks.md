@@ -110,7 +110,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] **M4-4 Marketplace file**; CI runs `claude plugin validate --strict`.
 - [x] **M4-5 README:** what it is, quickstart (two commands + start/join), safety notes,
   self-hosting (Deploy button + Docker), live mode if Channels shipped, pre-1.0 notice.
-- [ ] **M4-6 Traceability check switches to errors;** every REQ/INV is covered by a test,
+- [x] **M4-6 Traceability check switches to errors;** every REQ/INV is covered by a test,
   a `manual` entry or a `deferred` entry in `tests/traceability.json`.
 - [ ] **M4-7 Manual acceptance** (`07-testing.md` checklist) on two folders, then 👤 two
   machines; results in `tests/manual/RESULTS.md`.
