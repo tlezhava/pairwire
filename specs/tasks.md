@@ -65,7 +65,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   wired into CI. Done when: CI lists every REQ/INV id lacking a test (expected: all,
   reported as warnings until M4, errors after).
 - [x] **M1-3 Share string + config constants** (`02` §1). Tests first.
-- [ ] **M1-4 Key schedule** (`02` §2, §7 vectors).
+- [x] **M1-4 Key schedule** (`02` §2, §7 vectors).
 - [ ] **M1-5 Handshake + session keys** (`02` §4, §7 vectors).
 - [ ] **M1-6 MSG framing + envelope schema** (`02` §3, §6).
 - [ ] **M1-7 Sanitizer + renderer** (`04` §5, INV-3).
