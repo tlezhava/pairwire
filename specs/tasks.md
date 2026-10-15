@@ -103,7 +103,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 - [x] **M4-1 Hook entrypoints** (`04` §6) + hook contract tests.
 - [x] **M4-2 D3 waiter** (`04` §6 `stop-wait`, chosen in S3) + its tests.
-- [ ] **M4-3 Plugin files** (`04` §9, §8 command rules: `disable-model-invocation`, heredoc,
+- [x] **M4-3 Plugin files** (`04` §9, §8 command rules: `disable-model-invocation`, heredoc,
   narrow `allowed-tools` verified to match): manifest, `.mcp.json`, hooks + `hooks/run.sh`,
   seven commands, SKILL.md generated from `06` §2, `npm run build:plugin` bundles
   `dist/pairwire.mjs`; CI fails on any push to `main` whose committed bundle is stale.

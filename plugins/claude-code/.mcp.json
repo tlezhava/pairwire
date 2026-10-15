@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "pairwire": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs", "mcp"],
+      "env": {
+        "PAIRWIRE_HARNESS": "claude-code",
+        "PAIRWIRE_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

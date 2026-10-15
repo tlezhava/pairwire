@@ -75,7 +75,7 @@ pairwire/
 │       ├── hooks/hooks.json
 │       ├── hooks/run.sh          # POSIX hook wrapper (04 §6)
 │       ├── .mcp.json
-│       └── dist/pairwire.mjs     # bundled client (`npm run build:plugin`), kept current on main
+│       └── dist/                 # bundled client (`npm run build:plugin`), kept current on main
 ├── .claude-plugin/marketplace.json
 ├── spikes/                       # M0 throwaway code, never imported
 └── tests/e2e/

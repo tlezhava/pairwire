@@ -27,6 +27,8 @@ jobs:
       - run: npm run test:e2e
       - run: npm run traceability
       - run: npm run build
+      - name: Committed plugin bundle is current
+        run: npm run build:plugin && git diff --exit-code -- plugins/
 
   relay-image:
     runs-on: ubuntu-latest

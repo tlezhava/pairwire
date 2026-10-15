@@ -53,7 +53,8 @@ export interface Person {
   close(): Promise<void>;
 }
 
-export function person(name: string, relayHost: string, harness = "claude-code"): Person {
+/** `bundle`: run the built plugin bundle instead of the TypeScript sources. */
+export function person(name: string, relayHost: string, harness = "claude-code", bundle?: string): Person {
   const root = tempDir();
   const home = join(root, "home");
   const project = join(root, "project");
@@ -87,7 +88,7 @@ export function person(name: string, relayHost: string, harness = "claude-code")
     async open(sessionId) {
       const transport = new StdioClientTransport({
         command: process.execPath,
-        args: ["--conditions=source", "--import", TSX, MAIN, "mcp"],
+        args: bundle ? [bundle, "mcp"] : ["--conditions=source", "--import", TSX, MAIN, "mcp"],
         env: { ...env, CLAUDE_CODE_SESSION_ID: sessionId ?? `${name}-session-${++sessions}` },
         cwd: project,
         stderr: "pipe",

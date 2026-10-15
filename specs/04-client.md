@@ -447,8 +447,12 @@ output replaces the `!` block in the prompt (S8). Every such command file:
   accepted (`05-security.md`, residual risk 2).
 - declares `allowed-tools` for its `!` line, which is otherwise blocked outright (no
   prompt). That pre-approval also covers the **agent's own** matching Bash calls for the
-  rest of that turn (not later turns), so the pattern must be as narrow as possible: only
-  `pairwire.mjs ctl`, never `Bash(node:*)`. M4-3 verifies the narrow pattern matches.
+  rest of that turn (not later turns), so the pattern must be as narrow as possible: each
+  command allows exactly its own subcommand, e.g.
+  `Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs" ctl say:*)`, never `Bash(node:*)`. M4-3
+  verified in Claude Code 2.1.301 (headless, default mode) that this pattern matches, including
+  the multi-line heredoc form, that `${CLAUDE_PLUGIN_ROOT}` is substituted in `allowed-tools`,
+  and that a non-matching pattern blocks the line before the model runs.
 - relies on `${CLAUDE_PLUGIN_ROOT}`, which Claude Code substitutes into the command text;
   it is not set in the `!` process's environment.
 
@@ -502,7 +506,8 @@ plugins/claude-code/
 ├── hooks/run.sh                      # POSIX wrapper: fast path + Node check (section 6)
 ├── commands/   start.md  join.md  status.md  log.md  say.md  continue.md  leave.md
 ├── skills/pairwire/SKILL.md          # generated from specs/06-agent-guide.md section 2
-└── dist/pairwire.mjs                 # bundled client, produced by `npm run build:plugin`
+└── dist/pairwire.mjs, dist/chunks/   # bundled client, produced by `npm run build:plugin`;
+                                      # subcommands are lazy chunks, so hooks skip the MCP SDK
 ```
 
 `plugin.json`:

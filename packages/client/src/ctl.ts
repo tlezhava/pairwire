@@ -71,7 +71,9 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
 
   switch (op) {
     case "log": {
-      const n = Math.min(MAX_LOG_ENTRIES, Math.max(1, Number.parseInt(arg ?? "", 10) || DEFAULT_LOG_ENTRIES));
+      // The slash command passes the count through a heredoc (04 §8), never on the command line.
+      const given = arg ?? ((io.stdin as { isTTY?: boolean }).isTTY ? "" : await readAll(io.stdin));
+      const n = Math.min(MAX_LOG_ENTRIES, Math.max(1, Number.parseInt(given.trim(), 10) || DEFAULT_LOG_ENTRIES));
       print(renderTranscript(transcriptTail(home, roomId, n)));
       return 0;
     }

@@ -114,10 +114,13 @@ async function checkRelay(host: string, fetcher: typeof fetch): Promise<string |
   }
 }
 
-/** When running as the plugin bundle (`<plugin>/dist/pairwire.mjs`), its `dist/` directory. */
+/** When running from the plugin bundle (`<plugin>/dist/`, or a chunk in `dist/chunks/`), its `dist/`. */
 function defaultBundleDir(): string | null {
   const here = dirname(fileURLToPath(import.meta.url));
-  return here.endsWith("/dist") && existsSync(join(here, "..", ".claude-plugin")) ? here : null;
+  for (const dir of [here, dirname(here)]) {
+    if (dir.endsWith("/dist") && existsSync(join(dir, "..", ".claude-plugin"))) return dir;
+  }
+  return null;
 }
 
 export interface PurgeOptions {

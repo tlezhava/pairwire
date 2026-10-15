@@ -1,0 +1,129 @@
+// The Claude Code plugin as shipped (04 §6, §8, §9): files, hooks/run.sh and the bundle.
+import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { promisify } from "node:util";
+import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { extractSkill } from "../../scripts/build-plugin.js";
+import { person, SHARE, startRelay, tempDir, until } from "./harness.js";
+
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const PLUGIN = join(ROOT, "plugins/claude-code");
+const BUNDLE = join(PLUGIN, "dist/pairwire.mjs");
+const RUN_SH = join(PLUGIN, "hooks/run.sh");
+const read = (p: string) => readFileSync(join(PLUGIN, p), "utf8");
+
+function frontmatter(md: string): Record<string, string> {
+  const m = md.match(/^---\n([\s\S]*?)\n---\n/);
+  return Object.fromEntries((m?.[1] ?? "").split("\n").map((l) => [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 1).trim()]));
+}
+
+describe("plugin files", () => {
+  it("REQ-SAFE-2 INV-4 ship no permission rule that pre-approves send", () => {
+    const all = readdirSync(PLUGIN, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile() && !e.parentPath.includes("/dist"))
+      .map((e) => readFileSync(join(e.parentPath, e.name), "utf8"))
+      .join("\n");
+    expect(all).not.toMatch(/mcp__plugin_pairwire_pairwire__send|"permissions"|"allow"\s*:/);
+    for (const f of readdirSync(join(PLUGIN, "commands"))) {
+      const tools = frontmatter(read(`commands/${f}`))["allowed-tools"];
+      if (tools) expect(tools).toMatch(/^Bash\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/pairwire\.mjs" ctl (say|continue|log):\*\)$/);
+    }
+  });
+
+  it("has the seven commands; human-only ones hide from the model and pass text through a heredoc (S8)", () => {
+    expect(readdirSync(join(PLUGIN, "commands")).sort()).toEqual(["continue.md", "join.md", "leave.md", "log.md", "say.md", "start.md", "status.md"]);
+    for (const f of ["say.md", "continue.md"]) expect(frontmatter(read(`commands/${f}`))["disable-model-invocation"]).toBe("true");
+    for (const f of ["say.md", "log.md"]) {
+      const md = read(`commands/${f}`);
+      expect(md).toContain("<<'PAIRWIRE_SAY_END_b7e1c94d'\n$ARGUMENTS\nPAIRWIRE_SAY_END_b7e1c94d\n");
+      expect(md).not.toMatch(/"\$ARGUMENTS"/);
+    }
+  });
+
+  it("wires every hook through run.sh in exec form, with the D3 waiter async", () => {
+    const hooks = JSON.parse(read("hooks/hooks.json")) as { hooks: Record<string, { hooks: Record<string, unknown>[] }[]> };
+    const entries = Object.entries(hooks.hooks).flatMap(([event, groups]) => groups.flatMap((g) => g.hooks.map((h): Record<string, unknown> => ({ event, ...h }))));
+    expect(entries.map((e) => (e.args as string[])[1])).toEqual(["session-start", "user-prompt-submit", "post-tool-use", "stop", "stop-wait"]);
+    for (const e of entries) expect(e).toMatchObject({ type: "command", command: "sh", args: ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", expect.any(String)] });
+    expect(entries.at(-1)).toMatchObject({ async: true, asyncRewake: true, timeout: 86400 });
+    expect(JSON.parse(read(".mcp.json")).mcpServers.pairwire.env).toEqual({ PAIRWIRE_HARNESS: "claude-code", PAIRWIRE_PROJECT_DIR: "${CLAUDE_PROJECT_DIR}" });
+  });
+
+  it("SKILL.md is section 2 of the agent guide", () => {
+    const skill = extractSkill(readFileSync(join(ROOT, "specs/06-agent-guide.md"), "utf8"));
+    expect(read("skills/pairwire/SKILL.md").replace(/\n<!-- Generated from [^\n]*-->\n/, "")).toBe(skill);
+  });
+});
+
+describe("hooks/run.sh", () => {
+  /** A PATH whose `node` prints `version` and records its arguments. */
+  function fakeNode(version: string | null) {
+    const bin = tempDir();
+    const log = join(bin, "calls");
+    if (version !== null) {
+      writeFileSync(join(bin, "node"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${version}; exit 0; fi\necho "$@" >> "${log}"\n`);
+      chmodSync(join(bin, "node"), 0o755);
+    }
+    const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: tempDir() };
+    return { env, calls: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+  }
+  const run = (event: string, env: Record<string, string>) => spawnSync("sh", [RUN_SH, event], { env, input: "{}", encoding: "utf8" });
+
+  it("exits 0 at once without starting Node when there is no room", () => {
+    const n = fakeNode("v22.0.0");
+    const home = join(tempDir(), "pw");
+    const r = run("post-tool-use", { ...n.env, PAIRWIRE_HOME: home });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("");
+    expect(n.calls()).toBe("");
+  });
+
+  it("REQ-INST-4 tells the human once when Node is missing or too old, and never fails", () => {
+    for (const version of [null, "v18.19.0"]) {
+      const n = fakeNode(version);
+      const home = tempDir();
+      writeFileSync(join(home, "active"), "");
+      expect(run("session-start", { ...n.env, PAIRWIRE_HOME: home }).stdout).toBe("");
+      const first = run("post-tool-use", { ...n.env, PAIRWIRE_HOME: home });
+      expect(first.status).toBe(0);
+      const msg = JSON.parse(first.stdout) as { systemMessage: string };
+      expect(msg.systemMessage).toContain(version ? `Node ${version} is installed` : "Node.js was not found");
+      expect(msg.systemMessage).toContain("needs Node 20 or newer");
+      expect(run("stop", { ...n.env, PAIRWIRE_HOME: home }).stdout).toBe("");
+    }
+  });
+
+  it("execs the bundled client with the event when Node is recent", () => {
+    const n = fakeNode("v20.11.1");
+    const home = tempDir();
+    writeFileSync(join(home, "active"), "");
+    expect(run("stop", { ...n.env, PAIRWIRE_HOME: home }).status).toBe(0);
+    expect(n.calls()).toBe(`${BUNDLE} hook stop\n`);
+  });
+});
+
+describe("the bundle", () => {
+  it("pairs, injects through run.sh, and reports doctor ok, all from plugins/claude-code/dist", async () => {
+    const relay = await startRelay();
+    const a = person("Tazo", relay.host, "claude-code", BUNDLE);
+    const b = person("Nika", relay.host, "codex", BUNDLE);
+    await a.open("sess-a");
+    const share = (await a.call("start")).match(SHARE)![0];
+    await b.open("sess-b");
+    expect(await b.call("join", { share })).toContain("Paired with Tazo (claude-code)");
+    await b.call("send", { kind: "chat", body: "hello through the bundle" });
+    const input = JSON.stringify({ session_id: "sess-a", cwd: a.project, permission_mode: "default", hook_event_name: "PostToolUse" });
+    let out = "";
+    await until(() => {
+      out = execFileSync("sh", [RUN_SH, "post-tool-use"], { env: { ...a.env, CLAUDE_PROJECT_DIR: a.project }, input, encoding: "utf8" });
+      return out.includes("hello through the bundle");
+    }, 10_000, "hook delivery");
+    expect(JSON.parse(out).hookSpecificOutput.hookEventName).toBe("PostToolUse");
+    // Async: the relay runs in this process and must keep answering while doctor checks it.
+    const doctor = { stdout: (await promisify(execFile)(process.execPath, [BUNDLE, "doctor"], { env: a.env, encoding: "utf8" })).stdout };
+    expect(doctor.stdout).toContain(`ok    relay ${relay.host} answers /health`);
+    expect(doctor.stdout).toContain("ok    plugin hooks wired at");
+  });
+});
