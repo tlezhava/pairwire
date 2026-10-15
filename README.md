@@ -137,7 +137,7 @@ relay the room uses. Messages stay end-to-end encrypted whoever runs the relay.
 
 ```
 git clone https://github.com/tlezhava/pairwire && cd pairwire
-npm ci && npm run build
+npm ci
 cd packages/relay-worker && npx wrangler deploy
 ```
 

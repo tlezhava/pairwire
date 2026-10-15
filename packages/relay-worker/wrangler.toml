@@ -12,3 +12,7 @@ class_name = "RoomObject"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RoomObject"]
+
+# Resolve the shared core from source, so deploying needs no prior build (REQ-INST-3).
+[alias]
+"@pairwire/core" = "../core/src/index.ts"

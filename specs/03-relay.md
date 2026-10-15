@@ -101,6 +101,8 @@ above.
   room. That is harmless: the original members are gone, and the room's traffic was
   protected by ephemeral session keys.
 - `wrangler.toml` contains no account id or secrets; a fresh fork deploys with the button.
+  It aliases `@pairwire/core` to `../core/src/index.ts`, so deploying needs only `npm ci`, not a
+  prior build of core.
 - Cost target: one pairing session (2 connections, about 200 messages) uses well under
   1 GB-s of duration. Hibernation is what makes this true. S5 confirmed in workerd that
   pings never invoke the object and that eviction keeps sockets, slots, tokens and
