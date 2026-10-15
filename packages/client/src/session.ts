@@ -30,6 +30,7 @@ import { markDelivered, readOutbox, undelivered, type InboxEntry } from "./room-
 import { createRoom, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
 import { transcriptEvents } from "./transcript.js";
 import { CLIENT_VERSION } from "./version.js";
+import { listenCtl, type CtlReply, type CtlRequest, type CtlServer } from "./ctl-server.js";
 
 export interface ToolResult {
   text: string;
@@ -81,6 +82,7 @@ export class ClientSession {
   #passiveOwner: number | null = null;
   #roomId: string | null = null;
   #conn: RoomConnection | null = null;
+  #ctl: Promise<CtlServer | null> | null = null;
   #sendTimes: number[] = [];
 
   constructor(options: SessionOptions) {
@@ -108,6 +110,53 @@ export class ClientSession {
   shutdown(): void {
     this.#conn?.stop();
     this.#conn = null;
+    this.#closeCtl();
+  }
+
+  // --- human-side control (ctl.sock, 04 §8) ---------------------------------------------
+
+  /** Handles one ctl.sock request. Replies are shown to the human in the prompt. */
+  async ctl(request: CtlRequest): Promise<CtlReply> {
+    try {
+      this.#ready();
+      const state = this.#requireRoom();
+      if (request.op === "resume") {
+        this.#conn?.resume();
+        return { ok: true, text: "pairwire: reconnecting." };
+      }
+      if (request.op === "continue") {
+        updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: 0 }));
+        this.#conn?.resume();
+        return { ok: true, text: "pairwire: hop budget reset; your agent may send again." };
+      }
+      // say: sent as the human, verbatim; resets the hop budget (REQ-MSG-7).
+      this.#checkOutbound(request.text, state, "chat", null);
+      this.#conn?.resume();
+      const sent = this.#conn!.send({ kind: "chat", body: request.text, author: "human" });
+      updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: 0 }));
+      const to = state.peer ? displayName(state.peer.name) : "your collaborator";
+      return {
+        ok: true,
+        text: sent.status === "sent"
+          ? `pairwire: sent your message to ${to} as you (id ${sent.id}). It is already sent; do not send it again.`
+          : `pairwire: queued your message for ${to} (id ${sent.id}); it goes out when they connect. Do not send it again.`,
+      };
+    } catch (e) {
+      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError;
+      if (!known) this.#o.log.error("ctl_failed", e);
+      return { ok: false, text: `pairwire: ${known ? (e as Error).message : "internal error; see the MCP server log."}` };
+    }
+  }
+
+  #closeCtl(): void {
+    const ctl = this.#ctl;
+    this.#ctl = null;
+    void ctl?.then((c) => c?.close());
+  }
+
+  /** Resolves once the control socket listens (or failed to). */
+  async ctlReady(): Promise<void> {
+    await this.#ctl;
   }
 
   // --- tools ---------------------------------------------------------------------------
@@ -325,6 +374,11 @@ export class ClientSession {
       ...(this.#o.tuning ? { tuning: this.#o.tuning } : {}),
     });
     this.#conn.start();
+    this.#closeCtl();
+    this.#ctl = listenCtl(state.ctl_path, (req) => this.ctl(req), this.#o.log).catch((e: unknown) => {
+      this.#o.log.error("ctl_listen_failed", e);
+      return null;
+    });
   }
 
   #roomState(): (RoomState & { roomId: string }) | null {

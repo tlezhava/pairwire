@@ -61,6 +61,8 @@ export {
   noticeWrongKey,
   renderForHook,
   renderItems,
+  renderTranscript,
+  TRANSCRIPT_PREAMBLE,
   type HookRender,
   type Notice,
   type NoticeEvent,

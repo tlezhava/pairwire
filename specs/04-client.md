@@ -92,9 +92,12 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
   input's `cwd` follows the `cd`. The cwd fallback is therefore only for harnesses that set
   neither variable.
 - **Control socket path:** `~/.pairwire/rooms/<room_id>/ctl.sock` if that path is under
-  100 bytes, otherwise `$XDG_RUNTIME_DIR/pairwire-<room_id first 12>.sock`, otherwise
-  `/tmp/pairwire-<uid>/<room_id first 12>.sock` (directory 0700). The chosen path is
-  stored as `ctl_path`. (macOS limits socket paths to 104 bytes.)
+  100 bytes, otherwise `$XDG_RUNTIME_DIR/pairwire-<tag>.sock`, otherwise
+  `/tmp/pairwire-<uid>/<tag>.sock` (directory 0700), where `<tag>` is the first 16 hex
+  characters of `SHA-256(<state dir> \n <room_id>)`. The tag includes the state directory
+  because both members of a room can run on one machine with different `PAIRWIRE_HOME`s, and
+  a name built from the room id alone would collide. The chosen path is stored as
+  `ctl_path`. (macOS limits socket paths to 104 bytes.)
 - **One room per project directory.** The binding records `owner_pid` (the MCP server)
   and `owner_session`: the `CLAUDE_CODE_SESSION_ID` the harness gives the MCP server, or
   `null` in a harness that sets none. When the MCP server starts, it reads the binding:
