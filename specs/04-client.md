@@ -67,6 +67,7 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
     ├── secret                            raw 32 bytes; deleted on leave
     ├── state.json                        relay (host[:port] or null for the default),
     │                                     instance (our HELLO instance id for this room),
+    │                                     name (our display name for this room),
     │                                     member, token, epoch, sessions (current+previous),
     │                                     my_seq, peer_max_seq, peer {name, harness, instance},
     │                                     hop_count, status ("waiting"|"active"|"left"|"ended"),
@@ -119,7 +120,11 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
   default at that time), so a reconnect (REQ-ROOM-6) reaches the same relay. `instance`
   is 16 random bytes in base32, created with the room and sent in every HELLO
   (`02-protocol.md` §4.2), so the peer can tell a restart of the same client from a
-  different client.
+  different client. `name` is the display name chosen at `start`/`join` (the tool's `name`
+  argument, else the configured or derived name), kept so a restart sends the same HELLO
+  name and the peer sees no false `peer_changed`.
+- `delivered.json` is `{"ids": [...]}`: inbox entry ids already shown to the agent by any
+  path. Unread items are inbox entries not listed there.
 - `inbox.jsonl` lines: `{"source":"peer","id","from","harness","received_at","envelope"}`
   for accepted non-ack envelopes (`id` is the envelope id; `from`/`harness` are the peer's
   HELLO values at that time, sanitized only when rendered), and
