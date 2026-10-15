@@ -252,6 +252,31 @@ REQ-INST-4 warnings use `systemMessage` from the first non-`SessionStart` hook t
 (`04` §6). Claude Code also labels a Stop block's reason "Stop hook error", so pairwire's
 blocking reasons start with a plain explanatory line.
 
+### S8 `!` execution in plugin commands (2026-10-15)
+
+Method: a plugin (`spikes/s8/`) whose commands run a recorder script through `!`, used by
+the human in Claude Code 2.1.300 (default mode) in a scratch folder holding a sentinel file.
+
+Answer:
+- A command's `!` line runs before the model sees the prompt, without a permission prompt
+  when `allowed-tools` matches; its output replaces the line. Without `allowed-tools` the
+  line is blocked ("This command requires approval") and nothing runs.
+- `${CLAUDE_PLUGIN_ROOT}` is substituted into the command text, but not set in the
+  process's environment. The process's cwd is the project directory.
+- `$ARGUMENTS` is pasted raw. With `it's "quoted" $(touch PWNED) \`whoami\` ; rm sentinel`
+  as arguments to `"$ARGUMENTS"`, Claude Code refused to run the command ("Quoted text in
+  this command can't be checked before it runs"); nothing ran. Fail-safe, but unusable for
+  ordinary text.
+- A quoted heredoc in a fenced `!` block delivered the same text byte for byte on stdin,
+  with no prompt and no side effects (no `PWNED`, sentinel intact).
+- `allowed-tools: Bash(node:*)` also pre-approved the agent's own `node …` Bash call in the
+  same turn (no prompt); in the next turn the same call prompted again.
+- The agent can run a plugin command itself via the Skill tool, behind a "Use skill?"
+  prompt. With `disable-model-invocation: true` the command is hidden from the agent, and
+  the human can still run it.
+
+Decision: `say` and `continue` stay in M3/M4 using the rules now in `04` §8.
+
 ### S2 Project directory and process tree (2026-10-15)
 
 Answer: `${CLAUDE_PROJECT_DIR}` expands in a plugin `.mcp.json` `env`. Claude Code also sets

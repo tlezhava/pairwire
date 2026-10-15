@@ -42,7 +42,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] **S6 Send approval UX.** Exact name Claude Code gives the plugin MCP tool; what the
   approval prompt shows for a 2,000-character `body`; the permission rule syntax a user
   would add to allow-list it (for the README).
-- [ ] **S8 `!` execution in plugin commands.** Does a plugin command's `!` line run before
+- [x] **S8 `!` execution in plugin commands.** Does a plugin command's `!` line run before
   the model sees the prompt? How is `$ARGUMENTS` substituted and quoted, and is it safe
   for arbitrary text (quotes, `$()`, backticks, newlines)? Does it need a permission
   prompt? Does `${CLAUDE_PLUGIN_ROOT}` expand in a command's `!` line? Does a command's
@@ -93,7 +93,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   handshake, sessions current/previous, outbox flush, acks, `peer_left` handling.
 - [ ] **M3-4 MCP server + tools** (`04` §4) incl. status footer, rate limit, hop budget.
 - [ ] **M3-5 Transcript** writer (REQ-MSG-8).
-- [ ] **M3-6 `ctl.sock`** + `pairwire ctl` (subject to S8).
+- [ ] **M3-6 `ctl.sock`** + `pairwire ctl` (`ctl say` reads its text from stdin; S8).
 - [ ] **M3-7 `pairwire doctor` and `pairwire purge`.**
 - [ ] **M3-8 e2e suite** (`07-testing.md` client and e2e section) green.
 
@@ -101,7 +101,8 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 - [ ] **M4-1 Hook entrypoints** (`04` §6) + hook contract tests.
 - [ ] **M4-2 D3 mechanism** chosen in M0.
-- [ ] **M4-3 Plugin files** (`04` §9): manifest, `.mcp.json`, hooks + `hooks/run.sh`,
+- [ ] **M4-3 Plugin files** (`04` §9, §8 command rules: `disable-model-invocation`, heredoc,
+  narrow `allowed-tools` verified to match): manifest, `.mcp.json`, hooks + `hooks/run.sh`,
   seven commands, SKILL.md generated from `06` §2, `npm run build:plugin` bundles
   `dist/pairwire.mjs`; CI fails on any push to `main` whose committed bundle is stale.
 - [ ] **M4-4 Marketplace file**; CI runs `claude plugin validate --strict`.

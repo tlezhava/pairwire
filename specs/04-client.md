@@ -16,7 +16,7 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 |---|---|
 | `pairwire mcp` | MCP server over stdio. Owns the room connection for one agent session. |
 | `pairwire hook <session-start\|user-prompt-submit\|post-tool-use\|stop>` | Hook entrypoints. Read hook JSON on stdin, print hook JSON on stdout. |
-| `pairwire ctl <continue\|say\|log>` | Human-side control, used by slash commands through `!` execution **[verify: S8]**. Talks to the MCP server over the room's `ctl.sock`. |
+| `pairwire ctl <continue\|say\|log>` | Human-side control, used by slash commands through `!` execution (section 8, verified in S8). Talks to the MCP server over the room's `ctl.sock`. |
 | `pairwire doctor` | Checks Node version, config, state permissions, relay reachability, plugin wiring. |
 | `pairwire install [--codex\|--print-config <harness>]` | M6. Non-plugin installs. |
 | `pairwire purge [--all]` | Deletes left rooms' transcripts and inboxes, or all local state. |
@@ -283,8 +283,37 @@ removes the flag when no such room remains.
 ## 8. Human-only paths
 
 Slash commands that must not be performed by the model run their action through Claude
-Code's `!` command execution, which runs before the model sees the prompt
-**[verify: S8]**:
+Code's `!` command execution, which runs before the model sees the prompt; the command's
+output replaces the `!` block in the prompt (S8). Every such command file:
+
+- sets `disable-model-invocation: true`. Without it the agent can run the command itself
+  through its Skill tool (behind an approval prompt, which auto mode skips), and so send a
+  message marked `author: "human"`. With it the command is hidden from the agent (S8).
+- passes the user's text through a quoted heredoc in a fenced `!` block, never through
+  `"$ARGUMENTS"` on the command line. Claude Code pastes `$ARGUMENTS` into the command as
+  raw text, so quotes, backticks and `$(…)` would be shell syntax; its permission check
+  then refuses the command, which fails safe but breaks ordinary messages. The heredoc
+  delivers the text byte for byte on stdin (`pairwire ctl say` reads stdin):
+
+  ````markdown
+  ```!
+  node "${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs" ctl say <<'PAIRWIRE_SAY_END_b7e1c94d'
+  $ARGUMENTS
+  PAIRWIRE_SAY_END_b7e1c94d
+  ```
+  ````
+
+  A message containing a line equal to the delimiter would end the heredoc early. The
+  delimiter is long and arbitrary, and only the human can trigger this path, so this is
+  accepted (`05-security.md`, residual risk 2).
+- declares `allowed-tools` for its `!` line, which is otherwise blocked outright (no
+  prompt). That pre-approval also covers the **agent's own** matching Bash calls for the
+  rest of that turn (not later turns), so the pattern must be as narrow as possible: only
+  `pairwire.mjs ctl`, never `Bash(node:*)`. M4-3 verifies the narrow pattern matches.
+- relies on `${CLAUDE_PLUGIN_ROOT}`, which Claude Code substitutes into the command text;
+  it is not set in the `!` process's environment.
+
+Commands:
 
 - `/pairwire:say <text>` → `pairwire ctl say` sends `<text>` verbatim with
   `author: "human"` (REQ-MSG-7), resets `hop_count`. Still secret-scanned.
@@ -294,17 +323,13 @@ Display-only commands, which the model may run too:
 
 - `/pairwire:status` → the agent calls the `status` tool and summarizes it.
 - `/pairwire:log [n]` → `pairwire ctl log [n]` (via `!`) prints the last `n` transcript
-  entries (default 30) into the prompt for the agent to show. If S8 rules out `!`, the
-  command asks the agent to read the transcript path returned by `status`.
+  entries (default 30) into the prompt for the agent to show.
 
 `ctl.sock` accepts connections only from the same OS user (socket file mode 0600).
 
 Residual risk, stated in `05-security.md`: an agent with unrestricted Bash permission
 could invoke `pairwire ctl` itself. The protections assume the harness's normal permission
 prompts are on.
-
-If S8 shows `!` execution is unavailable for plugin commands, `say` and `continue` move to
-M5 and the hop budget is reset only by `UserPromptSubmit`.
 
 ## 9. Claude Code plugin
 

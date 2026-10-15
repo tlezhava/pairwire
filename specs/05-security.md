@@ -75,7 +75,10 @@ on while paired.
    the handshake (`02-protocol.md` 4.5). Mitigation later: short authentication string
    comparison (M7 candidate).
 2. **Agent with unrestricted Bash** can invoke `pairwire ctl` to send as "human" or reset
-   the hop budget. Mitigated only by harness permissions.
+   the hop budget. Mitigated only by harness permissions. The agent can't invoke
+   `/pairwire:say` or `/pairwire:continue` (`disable-model-invocation`), but while the
+   human runs one of them, its `allowed-tools` pre-approval also covers matching Bash
+   calls the agent makes in that turn; the pattern is limited to `pairwire.mjs ctl` (S8).
 3. **Metadata** visible to the relay: that two IPs talk, when, how much.
 4. **Share string in agent context.** `/pairwire:join` puts the string in the conversation,
    which the harness may store. Sealed rooms limit what a later holder can do.
