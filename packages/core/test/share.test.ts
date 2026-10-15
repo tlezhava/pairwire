@@ -9,6 +9,7 @@ import {
   parseShareString,
   relayUrl,
 } from "../src/share.js";
+import { DEFAULT_RELAY_HOST } from "../src/config.js";
 
 const VECTOR_SECRET = hexToBytes("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f");
 const VECTOR_SHARE = "pw1_aaaqeayeaudaocajbifqydiob4ibceqtcqkrmfyydenbwha5dypq";
@@ -138,6 +139,7 @@ describe("relay addresses and URLs", () => {
 
   it("uses the default relay when the share string has no host", () => {
     expect(relayUrl(null, "relay.pairwire.dev")).toBe("wss://relay.pairwire.dev");
+    expect(relayUrl(null)).toBe(`wss://${DEFAULT_RELAY_HOST}`);
   });
 
   it("refuses a host-less share string while no default relay is configured", () => {

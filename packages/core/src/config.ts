@@ -9,8 +9,8 @@ export const SHARE_PREFIX = "pw1_";
 export const SECRET_BYTES = 32;
 
 /**
- * Relay used by share strings without an `@host` part. Set before the first release
- * (task M2-6 for development builds). While `null`, such share strings are refused with
- * "no default relay configured; set PAIRWIRE_RELAY".
+ * Relay used by share strings without an `@host` part. Currently the development relay
+ * (task M2-6); the production host is decided before M4-8. If set to `null`, such share
+ * strings are refused with "no default relay configured; set PAIRWIRE_RELAY".
  */
-export const DEFAULT_RELAY_HOST: string | null = null;
+export const DEFAULT_RELAY_HOST: string | null = "pairwire-relay.tazo.workers.dev";

@@ -29,7 +29,9 @@ pw1_<base32(secret)>[@<relay-host>[:<port>]]
 Relay URL derivation:
 
 - No host part → built-in default relay (constant `DEFAULT_RELAY_HOST` in
-  `packages/core/src/config.ts`, set before first release). While it is unset (`null`),
+  `packages/core/src/config.ts`; since M2-6 the development relay
+  `pairwire-relay.tazo.workers.dev`, and the production host is set before M4-8). While it is
+  unset (`null`),
   a share string without a host part is refused with "no default relay configured; set
   PAIRWIRE_RELAY", and `start` requires a configured relay.
 - Host part → `wss://<host>[:<port>]`.

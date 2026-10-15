@@ -88,6 +88,7 @@ npm run build          # build all packages
 npm run build:plugin   # bundle the client into plugins/claude-code/dist and generate SKILL.md (M4-3)
 npm test               # unit + integration tests
 npm run test:e2e       # two-client end-to-end tests against a local relay (M3-8)
+PAIRWIRE_LIVE_RELAY=<host> npm run test:live  # conformance + INV-1 against a deployed relay
 npm run lint           # eslint + hidden-character check + tsc --noEmit
 npm run traceability   # REQ-*/INV-* ids without a test (warnings until M4-6, then errors)
 npm run relay:dev      # Cloudflare relay locally (builds, then wrangler dev on :8787)

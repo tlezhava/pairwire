@@ -1,4 +1,4 @@
-// RelayUnderTest adapter for the Node relay over real sockets on 127.0.0.1.
+// RelayUnderTest adapters over real sockets: the Node relay on 127.0.0.1, or any relay by host.
 import { WebSocket } from "ws";
 import { FrameQueue } from "../../core/test/relay-conformance/frame-queue.js";
 import { UpgradeRefused, type RelayUnderTest, type TestSocket } from "../../core/test/relay-conformance/suite.js";
@@ -11,15 +11,32 @@ export async function startNodeRelay(sink: LogSink = () => {}): Promise<RelayUnd
   const clock = new ManualClock(Date.UTC(2026, 9, 15, 12));
   const server = createRelayServer({ port: 0, host: "127.0.0.1", clock, log: createLogger(sink), version: "0.0.0" });
   const { port } = await server.listen();
-  const base = `127.0.0.1:${port}`;
-  const open = new Set<WebSocket>();
-
+  const remote = relayAt(`127.0.0.1:${port}`, false);
   return {
+    ...remote,
     clock,
     port,
+    async advance(ms) {
+      const settle = () => new Promise((r) => setTimeout(r, 20));
+      await settle(); // let in-flight frames and closes reach the relay first
+      clock.advance(ms);
+      await settle(); // then let the resulting frames cross the socket
+    },
+    async close() {
+      await remote.close();
+      await server.close();
+    },
+  };
+}
+
+/** A relay reached at `host[:port]` over ws/http, or wss/https when `secure`. */
+export function relayAt(base: string, secure: boolean): RelayUnderTest {
+  const s = secure ? "s" : "";
+  const open = new Set<WebSocket>();
+  return {
     connect(roomId) {
       return new Promise<TestSocket>((resolve, reject) => {
-        const ws = new WebSocket(`ws://${base}/v1/rooms/${roomId}`);
+        const ws = new WebSocket(`ws${s}://${base}/v1/rooms/${roomId}`);
         const queue = new FrameQueue();
         ws.on("unexpected-response", (_req, res) => reject(new UpgradeRefused(res.statusCode ?? 0)));
         ws.on("error", (err) => reject(err));
@@ -49,18 +66,11 @@ export async function startNodeRelay(sink: LogSink = () => {}): Promise<RelayUnd
       });
     },
     async get(path) {
-      const res = await fetch(`http://${base}${path}`);
+      const res = await fetch(`http${s}://${base}${path}`);
       return { status: res.status, body: await res.text(), headers: Object.fromEntries(res.headers) };
-    },
-    async advance(ms) {
-      const settle = () => new Promise((r) => setTimeout(r, 20));
-      await settle(); // let in-flight frames and closes reach the relay first
-      clock.advance(ms);
-      await settle(); // then let the resulting frames cross the socket
     },
     async close() {
       for (const ws of open) ws.terminate();
-      await server.close();
     },
   };
 }

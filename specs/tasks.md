@@ -82,7 +82,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   conformance in workerd (`@cloudflare/vitest-plugin`).
 - [x] **M2-4 INV-1 recorder test** against both relays.
 - [x] **M2-5 Dockerfile** for relay-node; CI builds the image.
-- [ ] **M2-6** 👤 Deploy a dev relay to the human's Cloudflare account; set
+- [x] **M2-6** 👤 Deploy a dev relay to the human's Cloudflare account; set
   `DEFAULT_RELAY_HOST` for development builds. Optionally (S5) leave two sockets idle for
   an hour and read the duration usage in the dashboard.
 
