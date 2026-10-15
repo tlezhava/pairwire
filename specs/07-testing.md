@@ -117,6 +117,9 @@ From then on it fails CI.
   `active` flag is absent.
 - Passive session hooks never mark the owner's messages delivered.
 - `ctl.sock` falls back to a short path when `PAIRWIRE_HOME` is long.
+- INV-3: `ctl log` output passes through `renderTranscript()`: wrapped, labeled, and a peer
+  body cannot close the wrapper. `ctl say` sends `author: "human"`, resets the hop budget and
+  is secret-scanned; `ctl.sock` is 0600.
 
 ### hooks
 

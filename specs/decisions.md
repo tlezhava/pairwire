@@ -233,6 +233,17 @@ last 5 delivered entries so the `inbox` tool can report delivery status without 
 the transcript. `peer_joined` fires only for the room's first handshake so routine
 reconnects don't flood the agent with notices.
 
+## ADR-020 /pairwire:log goes through the renderer (M3-6)
+
+Status: accepted (2026-10-16)
+
+`/pairwire:log` runs `pairwire ctl log` through `!`, whose output becomes part of the prompt.
+The transcript holds the peer's message bodies, so printing it raw would be a delivery path
+that bypasses INV-3. The excerpt is therefore rendered by core's `renderTranscript()`:
+sanitized, wrapped in `<pairwire_transcript>` and preceded by a preamble labeling peer messages
+as external input. This tightens `04` §8; INV-3's text is unchanged. The ctl socket protocol
+is defined at the same time (one JSON request and reply per connection).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

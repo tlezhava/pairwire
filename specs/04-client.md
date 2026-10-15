@@ -437,7 +437,29 @@ Display-only commands, which the model may run too:
 
 - `/pairwire:status` → the agent calls the `status` tool and summarizes it.
 - `/pairwire:log [n]` → `pairwire ctl log [n]` (via `!`) prints the last `n` transcript
-  entries (default 30) into the prompt for the agent to show.
+  entries (default 30) into the prompt for the agent to show. Because that puts peer text in
+  front of the agent, the excerpt goes through core's `renderTranscript()` like every other
+  delivery path (INV-3): sanitized again and wrapped in `<pairwire_transcript>` after a
+  preamble that labels the peer's messages as external input. It reads `transcript.md`
+  directly, so it works while no MCP server runs.
+
+**`ctl.sock` protocol.** The owning MCP server listens on the room's `ctl_path` (mode 0600,
+in a 0700 directory) and accepts one request per connection: a single JSON line, at most
+64 KiB, answered by one JSON line `{"ok": bool, "text": string}`.
+
+| Request | Effect |
+|---|---|
+| `{"op":"say","text":…}` | Size limits and secret scan as for `send`; then sends `chat` with `author: "human"` and resets `hop_count`. No hop or rate limit. |
+| `{"op":"continue"}` | Resets `hop_count`. |
+| `{"op":"resume"}` | Clears a `wrong_key` halt and reconnects (`02` §4.2). |
+| `{"op":"wait"…}`, `{"op":"wait_cancel"…}` | D3 waiter (section 6). |
+
+`say` and `continue` also clear a `wrong_key` halt: they are the human running a pairwire
+command. `ctl continue` resets `hop_count` in `state.json` itself when no server is
+running; `ctl say` needs the server and otherwise says that no session is running.
+`ctl say` removes exactly one trailing newline (the heredoc's) and refuses empty text.
+Expected failures are printed as `pairwire: …` on stdout with exit code 0, so the human
+sees them in the prompt.
 
 `ctl.sock` accepts connections only from the same OS user (socket file mode 0600).
 
