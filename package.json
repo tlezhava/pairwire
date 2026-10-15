@@ -19,7 +19,7 @@
     "lint": "eslint . && tsx scripts/check-hidden-chars.ts && npm run typecheck --workspaces && tsc -p scripts/tsconfig.json",
     "traceability": "tsx scripts/check-traceability.ts",
     "relay:dev": "node scripts/not-yet.mjs relay:dev M2-3",
-    "relay:node": "node scripts/not-yet.mjs relay:node M2-2"
+    "relay:node": "tsx packages/relay-node/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -17,8 +17,8 @@ export interface TestSocket {
   next(timeoutMs?: number): Promise<Received>;
   /** Resolves if nothing arrives within `ms`; rejects otherwise. */
   quiet(ms?: number): Promise<void>;
-  /** Client-initiated close (code 1000). */
-  close(): void;
+  /** Client-initiated close (code 1000); resolves once the socket is closed. */
+  close(): Promise<void>;
 }
 
 export interface HttpResponse {
@@ -80,6 +80,11 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
       const ev = await socket.next();
       if (ev.kind !== "close") throw new Error(`expected a close, got ${JSON.stringify(ev)}`);
       return ev.code;
+    }
+    /** Barrier: a pong proves the relay has processed everything sent before the ping. */
+    async function sync(socket: TestSocket): Promise<void> {
+      socket.sendText('{"t":"ping"}');
+      expect(await socket.next()).toEqual({ kind: "text", data: '{"t":"pong"}' });
     }
     async function join(roomId: string, token: string | null = null) {
       const socket = await relay.connect(roomId);
@@ -159,7 +164,7 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
 
       it("tells the peer when a member disconnects, and lets it rejoin with its token", async () => {
         const { roomId, a, b } = await pair();
-        b.socket.close();
+        await b.socket.close();
         expect(await text(a.socket)).toEqual({ t: "peer_left", reason: "disconnected" });
         const back = await member(roomId, b.joined.token);
         expect(back.joined).toMatchObject({ member: "b", token: b.joined.token, peer_present: true });
@@ -248,7 +253,7 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
 
       it("REQ-MSG-5 buffers frames for an offline member and delivers them in order before peer_joined", async () => {
         const { roomId, a, b } = await pair();
-        b.socket.close();
+        await b.socket.close();
         expect(await text(a.socket)).toMatchObject({ t: "peer_left" });
         for (let i = 0; i < 3; i++) a.socket.sendBinary(msg(i));
         await a.socket.quiet();
@@ -262,7 +267,7 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
         const { roomId, a, b } = await pair();
         a.socket.sendBinary(hello());
         expect(await binary(b.socket)).toEqual(hello());
-        b.socket.close();
+        await b.socket.close();
         await text(a.socket);
         a.socket.sendBinary(hello());
         const back = await member(roomId, b.joined.token);
@@ -291,7 +296,7 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
         // Sent in bursts within the rate limit; needs the fake clock to stay fast.
         if (!options.fakeClock) return;
         const { a, b } = await pair();
-        b.socket.close();
+        await b.socket.close();
         await text(a.socket);
         for (let i = 0; i < RELAY_LIMITS.offlineBufferFrames; i++) {
           if (i % 10 === 0) await relay.advance!(10 * S);
@@ -312,8 +317,8 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
 
       it("REQ-ROOM-7 ends a room after 72 h with no connected member and no frame", async () => {
         const { roomId, a, b } = await pair();
-        a.socket.close();
-        b.socket.close();
+        await a.socket.close();
+        await b.socket.close();
         await relay.advance!(RELAY_LIMITS.idleExpiryMs);
         const late = await join(roomId, a.joined.token);
         expect(late.first).toEqual({ kind: "close", code: 4003 });
@@ -338,9 +343,10 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
 
       it("discards buffered frames after 72 h", async () => {
         const { roomId, a, b } = await pair();
-        b.socket.close();
+        await b.socket.close();
         await text(a.socket);
         a.socket.sendBinary(msg(1));
+        await sync(a.socket);
         await relay.advance!(RELAY_LIMITS.bufferedFrameLifetimeMs);
         const back = await member(roomId, b.joined.token);
         expect(back.joined).toMatchObject({ buffered: 0 });

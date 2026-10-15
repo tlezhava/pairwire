@@ -1,2 +1,4 @@
-// relay-node — implemented in later tasks (specs/tasks.md).
-export {};
+// @pairwire/relay-node — the Node relay (specs/03-relay.md).
+export { ManualClock, systemClock, type Clock } from "./clock.js";
+export { createLogger, roomTag, type LogFields, type LogSink, type Logger } from "./log.js";
+export { createRelayServer, type RelayServer, type RelayServerOptions } from "./server.js";

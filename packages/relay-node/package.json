@@ -17,9 +17,14 @@
     "dist"
   ],
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/main.js"
   },
   "dependencies": {
-    "@pairwire/core": "0.0.0"
+    "@pairwire/core": "0.0.0",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2"
   }
 }

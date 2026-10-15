@@ -42,7 +42,7 @@ export function createReferenceRelay(): RelayUnderTest {
         sendBinary: (data) => live() && apply(roomId, room.binary(id, data.slice())),
         next: (ms) => queue.next(ms),
         quiet: (ms) => queue.quiet(ms),
-        close: () => {
+        close: async () => {
           if (!live()) return;
           queues.delete(id);
           apply(roomId, room.disconnect(id));
