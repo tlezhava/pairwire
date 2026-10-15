@@ -209,6 +209,17 @@ Rejected: refusing to send in auto mode until the human opts in (stronger, but a
 step per room); documentation only (too weak). The warning channel is decided by spike S1b,
 because S1 found `systemMessage` from `UserPromptSubmit` reaches no one.
 
+## ADR-018 Room state records its relay; bindings are locked (M3-1)
+
+Status: accepted (2026-10-16)
+
+Writing the state layer showed two gaps in `04` §3. `state.json` didn't record which relay
+the room uses, yet a restarted session must reconnect without the share string
+(REQ-ROOM-6), and the secret file holds only the 32 secret bytes. It now has `relay`. And
+binding updates had no lock: two MCP servers starting together in one project could both
+see a dead owner and both take over. Binding updates now take the same `mkdir` lock as
+`state.json`.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

@@ -46,7 +46,8 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 ├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_session, updated_at}
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
-    ├── state.json                        member, token, epoch, sessions (current+previous),
+    ├── state.json                        relay (host[:port] or null for the default),
+    │                                     member, token, epoch, sessions (current+previous),
     │                                     my_seq, peer_max_seq, peer {name, harness, instance},
     │                                     hop_count, status ("waiting"|"active"|"left"|"ended"),
     │                                     created_at, expires_at, ctl_path, error,
@@ -90,8 +91,12 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
   when the relay closes with 4003 or 4002, when the peer leaves, or at the `expires_at`
   the relay reported in `joined` (`02-protocol.md` §5). Before the first `joined`, a
   `waiting` room uses `created_at` + 7 days.
-- Writes to JSON files are atomic (write temp file, fsync, rename). `delivered.json` and
-  `state.json` updates take a lock (`mkdir <file>.lock`, stale after 5 s).
+- Writes to JSON files are atomic (write temp file, fsync, rename). `delivered.json`,
+  `state.json` and binding updates take a lock (`mkdir <file>.lock`, stale after 5 s), so
+  two MCP servers starting at once can't both take over a dead owner. Times in these files
+  are Unix milliseconds, like the relay's `expires_at`.
+- `relay` is the address the room was started or joined with (`null`: the built-in
+  default at that time), so a reconnect (REQ-ROOM-6) reaches the same relay.
 - Leaving deletes `secret` and the session keys in `state.json`, sets `status: "left"`,
   removes the binding, and keeps `transcript.md` and `inbox.jsonl` until `pairwire purge`.
 - **Peer identity.** The peer's `instance`, `name` and `harness` from the first accepted
