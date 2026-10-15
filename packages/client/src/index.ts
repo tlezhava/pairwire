@@ -3,6 +3,7 @@ export { bindProject, bindingPath, claimProject, isProcessAlive, PassiveSessionE
 export { ConfigError, DEFAULT_CONFIG, loadConfig, resolveDisplayName, type Config, type Delivery, type LoadedConfig } from "./config.js";
 export { LockTimeoutError, withLock, writeFileAtomic } from "./fs-util.js";
 export { closeRoomLocally } from "./lifecycle.js";
+export { createLogger, fileSink, hookErrorLogger, parseLogLevel, roomTag, type LogFields, type Logger, type LogLevel, type LogSink } from "./log.js";
 export { pairwireHome } from "./paths.js";
 export { assertStatePrivate, checkStatePermissions, StatePermissionError, type PermissionProblem } from "./permissions.js";
 export { projectHash, resolveProjectDir } from "./project.js";
