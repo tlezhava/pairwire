@@ -1,6 +1,25 @@
 // @pairwire/core — isomorphic protocol library (specs/02-protocol.md). No I/O.
 export { base32Decode, base32Encode } from "./base32.js";
 export {
+  EnvelopeTooLargeError,
+  KINDS,
+  MAX_BODY_BYTES,
+  MAX_ENVELOPE_BYTES,
+  MSG_TYPE,
+  envelopeSchema,
+  makeAck,
+  msgAad,
+  openMsg,
+  parseEnvelope,
+  receiveDecision,
+  sealMsg,
+  serializeEnvelope,
+  type Envelope,
+  type EnvelopeRejection,
+  type Kind,
+  type OpenMsgResult,
+} from "./envelope.js";
+export {
   HARNESSES,
   HELLO_TYPE,
   Handshake,
