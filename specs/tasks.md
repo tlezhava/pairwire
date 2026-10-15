@@ -61,7 +61,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] **M1-1 Scaffold.** npm workspaces, `tsconfig` base (strict, ESM), eslint, vitest,
   the scripts listed in CLAUDE.md, GitHub Actions CI (lint, test, build) on Node 20 and 22.
   Done when: `npm run lint && npm test && npm run build` pass on an empty skeleton in CI.
-- [ ] **M1-2 Traceability check.** `scripts/check-traceability.ts` per `07-testing.md`,
+- [x] **M1-2 Traceability check.** `scripts/check-traceability.ts` per `07-testing.md`,
   wired into CI. Done when: CI lists every REQ/INV id lacking a test (expected: all,
   reported as warnings until M4, errors after).
 - [ ] **M1-3 Share string + config constants** (`02` §1). Tests first.

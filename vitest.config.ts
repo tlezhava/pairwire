@@ -9,9 +9,12 @@ export default defineConfig({
   ssr: { resolve: { conditions, externalConditions: conditions } },
   test: {
     passWithNoTests: true,
-    projects: ["core", "relay-node", "relay-worker", "client"].map((name) => ({
-      extends: true,
-      test: { name, root: `packages/${name}`, include: ["test/**/*.test.ts"] },
-    })),
+    projects: [
+      ...["core", "relay-node", "relay-worker", "client"].map((name) => ({
+        extends: true,
+        test: { name, root: `packages/${name}`, include: ["test/**/*.test.ts"] },
+      })),
+      { extends: true, test: { name: "scripts", root: "scripts", include: ["test/**/*.test.ts"] } },
+    ],
   },
 });

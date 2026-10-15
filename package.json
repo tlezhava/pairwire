@@ -16,7 +16,8 @@
     "build:plugin": "node scripts/not-yet.mjs build:plugin M4-3",
     "test": "vitest run",
     "test:e2e": "node scripts/not-yet.mjs test:e2e M3-8",
-    "lint": "eslint . && npm run typecheck --workspaces",
+    "lint": "eslint . && npm run typecheck --workspaces && tsc -p scripts/tsconfig.json",
+    "traceability": "tsx scripts/check-traceability.ts",
     "relay:dev": "node scripts/not-yet.mjs relay:dev M2-3",
     "relay:node": "node scripts/not-yet.mjs relay:node M2-2"
   },
@@ -24,6 +25,7 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^20.19.0",
     "eslint": "^10.12.0",
+    "tsx": "^4.23.15",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.71.2",
     "vite": "^7.3.7",

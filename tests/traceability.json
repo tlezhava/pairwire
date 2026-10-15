@@ -1,0 +1,10 @@
+{
+  "manual": {
+    "REQ-INST-1": 1,
+    "REQ-MSG-4": 4,
+    "REQ-INST-3": 8
+  },
+  "deferred": {
+    "REQ-X-2": "M6"
+  }
+}
