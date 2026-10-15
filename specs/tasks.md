@@ -19,7 +19,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   12,000 characters). Measure hook wall time for a no-op Node hook and for the
   `hooks/run.sh` fast path (p50/p95 over 50 runs each). Save the recorded hook inputs as
   fixtures for the M4-1 hook contract tests.
-- [ ] **S2 Project directory and process tree.** Does `${CLAUDE_PROJECT_DIR}` resolve in a
+- [x] **S2 Project directory and process tree.** Does `${CLAUDE_PROJECT_DIR}` resolve in a
   plugin `.mcp.json` `env`? What is the MCP server's cwd? Do hook processes get
   `CLAUDE_PROJECT_DIR`? Does it change when the session `cd`s? Is the MCP server's parent
   pid an ancestor of every hook process of the same session (and not of another
@@ -39,7 +39,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   `wrangler dev` that pings don't invoke handlers and attachments survive hibernation.
   👤 Optionally deploy to the human's free account and read duration usage after an
   hour of idle connections.
-- [ ] **S6 Send approval UX.** Exact name Claude Code gives the plugin MCP tool; what the
+- [x] **S6 Send approval UX.** Exact name Claude Code gives the plugin MCP tool; what the
   approval prompt shows for a 2,000-character `body`; the permission rule syntax a user
   would add to allow-list it (for the README).
 - [ ] **S8 `!` execution in plugin commands.** Does a plugin command's `!` line run before

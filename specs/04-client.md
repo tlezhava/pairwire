@@ -43,7 +43,7 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 ├── config.json
 ├── active                                empty flag file; exists iff some room on this machine
 │                                         is "waiting" or "active" (hook fast path, section 6)
-├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_ppid, updated_at}
+├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_session, updated_at}
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
     ├── state.json                        member, token, epoch, sessions (current+previous),
@@ -64,24 +64,28 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 - **Project directory** comes from one shared function, `resolveProjectDir()`, used by the
   MCP server and every hook: `PAIRWIRE_PROJECT_DIR`, else `CLAUDE_PROJECT_DIR`, else the
   git root of the cwd (hooks use the hook input's `cwd`), else that cwd. The plugin sets
-  `PAIRWIRE_PROJECT_DIR` from `${CLAUDE_PROJECT_DIR}` in its MCP config **[verify: S2]**.
+  `PAIRWIRE_PROJECT_DIR` from `${CLAUDE_PROJECT_DIR}` in its MCP config. S2 confirmed that
+  this expands, that Claude Code also sets `CLAUDE_PROJECT_DIR` for the MCP server and
+  every hook, and that it stays at the project root when the agent `cd`s, while the hook
+  input's `cwd` follows the `cd`. The cwd fallback is therefore only for harnesses that set
+  neither variable.
 - **Control socket path:** `~/.pairwire/rooms/<room_id>/ctl.sock` if that path is under
   100 bytes, otherwise `$XDG_RUNTIME_DIR/pairwire-<room_id first 12>.sock`, otherwise
   `/tmp/pairwire-<uid>/<room_id first 12>.sock` (directory 0700). The chosen path is
   stored as `ctl_path`. (macOS limits socket paths to 104 bytes.)
 - **One room per project directory.** The binding records `owner_pid` (the MCP server)
-  and `owner_ppid` (its parent, the harness process). When the MCP server starts, it reads
-  the binding:
+  and `owner_session`: the `CLAUDE_CODE_SESSION_ID` the harness gives the MCP server, or
+  `null` in a harness that sets none. When the MCP server starts, it reads the binding:
   - no binding → idle, ready for `start`/`join`;
   - binding whose `owner_pid` is alive and isn't this process → **passive mode**: every
     tool returns "Another session in this project (pid N) owns the pairwire room";
-  - binding with a dead owner → take ownership and reconnect (REQ-ROOM-6).
-- Hooks deliver only for the owning session: a hook walks its own ancestor process chain
-  and acts only if `owner_ppid` is in it; otherwise it exits 0 with no output, so a
-  passive session never consumes the owner's messages **[verify: S2 — process tree; also
-  look for a session id visible to the MCP server, which would let hooks compare the hook
-  input's `session_id` instead of walking processes (spawning `ps` costs 20–50 ms on
-  macOS)]**.
+  - binding with a dead owner → take ownership, record this server's session, and
+    reconnect (REQ-ROOM-6).
+- Hooks deliver only for the owning session: a hook acts only if its input's `session_id`
+  equals the binding's `owner_session`; otherwise it exits 0 with no output, so a passive
+  session never consumes the owner's messages. With `owner_session: null`, hooks never
+  deliver and the room relies on D1 (pull). S2 showed each session has its own id, shared
+  by its MCP server and its hooks only, so no process-tree walk is needed.
 - A room is removed locally (status `ended`, secret and keys deleted, binding removed)
   when the relay closes with 4003 or 4002, when the peer leaves, or at the `expires_at`
   the relay reported in `joined` (`02-protocol.md` §5). Before the first `joined`, a
@@ -99,7 +103,12 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 ## 4. MCP tools
 
 Server name `pairwire`. Tool names below are the MCP names; the harness adds its own
-prefix **[verify: S6 — record the exact Claude Code name for permission rules]**.
+prefix. In Claude Code (S6) the full name is `mcp__plugin_pairwire_pairwire__<tool>`, shown
+in prompts as "plugin:pairwire:pairwire – <Tool>". A user who wants to allow-list `send`
+adds `mcp__plugin_pairwire_pairwire__send` to `permissions.allow`; choosing "Yes, and don't
+ask again" writes exactly that rule to the project's `.claude/settings.local.json`. The
+approval prompt shows the whole `body` (scrollable) and the tool's description, so the
+`send` description must say plainly that it sends the text to the paired collaborator.
 
 Every tool result ends with a status footer line, for example
 `[pairwire] paired with Nika (codex) · 2 unread · hop budget 6/8`, so the agent notices
@@ -175,7 +184,8 @@ Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attr
    (code points, before escaping); an empty name becomes "anonymous" (`02-protocol.md`
    §4.2).
 5. Bodies longer than 8,000 characters are not injected through hooks (hook context is
-   capped at 10,000 characters **[verify: S1]**); the hook instead says "message #id is
+   capped at 10,000 characters, confirmed in S1: anything longer is saved to a file and the
+   model sees only a 2,000-character preview); the hook instead says "message #id is
    long; call the pairwire inbox tool to read it", and the message stays undelivered
    until `inbox` returns it. A hook injects whole items, oldest first, while the rendered
    total stays within the cap. The rest stay undelivered for the next hook, and the hook
@@ -186,13 +196,15 @@ Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attr
 | Tier | Mechanism | Covers | Status |
 |---|---|---|---|
 | D1 Pull | `inbox` tool, status footer, skill tells the agent when to check | All harnesses | MVP |
-| D2 Hooks | `PostToolUse`, `Stop`, `UserPromptSubmit`, `SessionStart` hooks inject undelivered messages | Mid-turn and end-of-turn (REQ-MSG-2, REQ-MSG-3) | MVP **[verify: S1]** |
+| D2 Hooks | `PostToolUse`, `Stop`, `UserPromptSubmit`, `SessionStart` hooks inject undelivered messages | Mid-turn and end-of-turn (REQ-MSG-2, REQ-MSG-3) | MVP (verified in S1) |
 | D3 Wake | Wake an idle session when a message arrives (REQ-MSG-4) | Idle sessions | Mechanism chosen by spikes S3/S4 |
 
 ### D2 hook behavior
 
-All hooks: exit 0 with empty output in under 100 ms p95 when there is nothing to deliver
-**[verify: S1 — measure Node start-up cost]**. Hooks never fail the harness: any internal
+All hooks: exit 0 with empty output in under 100 ms p95 when there is nothing to deliver.
+S1 measured a cold no-op Node hook at 27 ms p50 / 32 ms p95 and the `run.sh` fast path at
+about 4 ms (M4 re-measures with the real bundle). Hooks for the same event run in
+parallel, in no fixed order. Hooks never fail the harness: any internal
 error → exit 0, no output, error logged to `~/.pairwire/hook-errors.log`.
 
 Every hook runs through a POSIX wrapper, `hooks/run.sh <event>`, so the "never fail"
@@ -212,10 +224,10 @@ removes the flag when no such room remains.
 | Hook | Behavior |
 |---|---|
 | `SessionStart` (all sources) | If the project has an active room: `additionalContext` = one-paragraph reminder (paired with whom, how messages arrive, follow the pairwire skill). This re-orients the agent after `compact`/`resume`. |
-| every hook | REQ-SAFE-5: if a room is active, the hook input's `permission_mode` is `bypassPermissions`, and the hook input's `session_id` is not in `bypass_warned_sessions`, show the human a warning and add the `session_id` (once per session, so a restart in bypass mode warns again) **[verify: S1 — user-visible message field]**. Checked in every hook because pairing and mode changes happen mid-session. |
+| every hook | REQ-SAFE-5: if a room is active, the hook input's `permission_mode` is `bypassPermissions`, and the hook input's `session_id` is not in `bypass_warned_sessions`, show the human a warning and add the `session_id` (once per session, so a restart in bypass mode warns again) **[open: S1 found that `systemMessage` from `UserPromptSubmit` is shown to neither the human nor the model; the warning channel is undecided]**. Checked in every hook because pairing and mode changes happen mid-session. |
 | `UserPromptSubmit` | Reset `hop_count` to 0 (human input). Inject undelivered messages as `additionalContext`. |
 | `PostToolUse` (all tools) | Inject undelivered messages as `additionalContext`. Mark them delivered. |
-| `Stop` | If there are undelivered items (messages or local notices, section 5) and `auto_continue` is true: `{"decision":"block","reason": <rendered messages>}` so the agent handles them before stopping. Mark them delivered. Otherwise exit 0. Blocks only for **new** messages, so it cannot loop on its own; cross-agent ping-pong is bounded by both sides' hop budgets. |
+| `Stop` | Claude Code shows a blocking reason to the human as "Stop hook error: <reason>" (S1), so the reason starts with a plain line such as "pairwire: new message(s) from your collaborator; handling them before stopping." If there are undelivered items (messages or local notices, section 5) and `auto_continue` is true: `{"decision":"block","reason": <rendered messages>}` so the agent handles them before stopping. Mark them delivered. Otherwise exit 0. Blocks only for **new** messages, so it cannot loop on its own; cross-agent ping-pong is bounded by both sides' hop budgets. |
 
 ### D3 candidates (decided by spikes)
 
@@ -339,19 +351,19 @@ plugins/claude-code/
 ```
 
 `hooks/hooks.json`: one entry per event, each running the `hooks/run.sh` wrapper from
-section 6. The wrapper finds `dist/pairwire.mjs` relative to its own path. S1 must
-confirm three things: the hook command schema (shell string vs. exec form), the
-`${CLAUDE_PLUGIN_ROOT}` expansion, and the `matcher` value for "all tools"
-**[verify: S1]**.
+section 6 in exec form (no shell quoting). The wrapper finds `dist/pairwire.mjs` relative
+to its own path. S1 confirmed that both the shell-string and exec (`args`) forms work, that
+`${CLAUDE_PLUGIN_ROOT}` expands inside `args`, and that a matcher of `"*"`, `""` or none
+matches every tool, MCP tools included.
 
 ```json
 {
   "description": "pairwire: deliver messages from your paired collaborator",
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session-start", "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" user-prompt-submit", "timeout": 10 }] }],
-    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" post-tool-use", "timeout": 10 }] }],
-    "Stop":             [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop", "timeout": 10 }] }]
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "session-start"], "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "user-prompt-submit"], "timeout": 10 }] }],
+    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "post-tool-use"], "timeout": 10 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop"], "timeout": 10 }] }]
   }
 }
 ```

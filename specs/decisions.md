@@ -52,11 +52,13 @@ before an MCP tool runs, showing its input. The plugin simply never pre-approves
 
 ## ADR-007 One room per project directory
 
-Status: proposed — confirm after S2
+Status: accepted (2026-10-15, after S2)
 
 Hooks and the MCP server are separate processes; tying a room to the project directory
-gives both a shared key (`project_hash`) without needing the harness session id. Cost:
-two sessions in the same directory can't both hold rooms (the second runs passive).
+gives both a shared key (`project_hash`). Cost: two sessions in the same directory can't
+both hold rooms (the second runs passive). S2 showed Claude Code gives the MCP server
+`CLAUDE_CODE_SESSION_ID`, equal to its hooks' `session_id`, so hooks tell the owning
+session apart by session id rather than by walking the process tree.
 
 ## ADR-008 State in `~/.pairwire`, not the harness plugin data dir
 
@@ -196,4 +198,54 @@ must come with such a case.
 
 ## Spike findings
 
-(Add S1–S9 results here.)
+### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
+
+Question: do hook outputs reach the model and the human, which matcher means "all tools",
+and how fast is a Node hook? Method: a throwaway plugin (`spikes/s1/`) whose hooks log
+their input and inject unique canaries, run by the human in Claude Code 2.1.300 in auto
+and default permission modes; a benchmark of 50 cold spawns.
+
+Answer:
+- `additionalContext` from `SessionStart`, `UserPromptSubmit` and `PostToolUse` reaches the
+  model. `PostToolUse` fires after every tool, built-in and MCP alike.
+- A `Stop` hook with `decision: "block"` keeps the agent working and shows it the reason.
+  The human sees it as "Stop hook error: <reason>".
+- Matchers `"*"`, `""` and none all match every tool. Exec form (`command` + `args`) works,
+  with `${CLAUDE_PLUGIN_ROOT}` expanded in `args`.
+- Hook context is capped at 10,000 characters. An 11.7 KB injection was saved to a file,
+  and the model got a 2,000-character preview plus the path.
+- Hooks for one event run in parallel, in no fixed order.
+- Timing: cold no-op Node hook 27 ms p50 / 32 ms p95; `sh` fast path about 4 ms; a hook's own
+  work about 2 ms.
+- **Open:** `systemMessage` returned from `UserPromptSubmit` was shown to neither the human
+  nor the model, so the human-visible warning channel (REQ-SAFE-5, REQ-INST-4) is unresolved.
+
+Evidence: `spikes/s1/out/hooks.jsonl` (local, gitignored) and the session transcripts
+pasted by the human.
+
+### S2 Project directory and process tree (2026-10-15)
+
+Answer: `${CLAUDE_PROJECT_DIR}` expands in a plugin `.mcp.json` `env`. Claude Code also sets
+`CLAUDE_PROJECT_DIR` for the MCP server and every hook, and it stays at the project root
+after the agent `cd`s, while the hook input's `cwd` follows the `cd`. The MCP server's cwd
+is the project directory. The MCP server and all hooks are direct children of the
+`claude` process. The MCP server's environment contains `CLAUDE_CODE_SESSION_ID`, equal to
+the `session_id` in its own session's hook input. Across four sessions in the same folder,
+each hook's `session_id` matched exactly one MCP server, and the parent-process test agreed.
+Decision: hooks gate on session id (ADR-007, `04` §3). The server's environment also holds
+`CLAUDE_CODE_MESSAGING_TOKEN`, a credential: pairwire must never log or forward its
+environment.
+
+### S6 Send approval UX (2026-10-15)
+
+Answer: Claude Code names the tool `mcp__plugin_pairwire_pairwire__send` and displays it as
+"plugin:pairwire:pairwire – Send". The approval prompt shows the full `body` (scrollable,
+down to the last line of a 2,000-character message) and the tool's description. Options
+are "Yes", "Yes, and don't ask again for plugin:pairwire:pairwire – Send commands in
+<project>" and "No". The second writes `"mcp__plugin_pairwire_pairwire__send"` to the
+project's `.claude/settings.local.json` `permissions.allow`.
+
+Finding with security impact: in **auto** permission mode (the human's own default),
+and whenever that allow rule exists, `send` runs with no prompt at all. Other approval
+prompts offer "Yes, and switch to auto mode". INV-4 ("human approves outbound by
+default") holds only in default mode; see the open REQ-SAFE-5 question.
