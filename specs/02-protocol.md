@@ -109,6 +109,12 @@ ciphertext    = XChaCha20-Poly1305(key = hello_key, nonce, aad).seal(hello_paylo
 }
 ```
 
+`harness` is informational (REQ-X-1). A receiver reads any value outside the list as
+`"other"` instead of rejecting the HELLO, so a newer client's harness never breaks the
+handshake. A HELLO whose decrypted payload fails the schema in any other way (`v` != 1,
+missing field, `instance` not 26 base32 characters, invalid JSON) is dropped, but not
+counted as a decrypt failure.
+
 A HELLO that fails to decrypt is dropped and counted. After 5 failures on one connection
 the client disconnects and tells its human "someone with the wrong key is in this room"
 (a local notice, `04-client.md` section 5). It then stops reconnecting to this room until
