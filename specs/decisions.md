@@ -220,6 +220,19 @@ binding updates had no lock: two MCP servers starting together in one project co
 see a dead owner and both take over. Binding updates now take the same `mkdir` lock as
 `state.json`.
 
+## ADR-019 Connection-manager details (M3-3)
+
+Status: accepted (2026-10-16)
+
+Implementing the connection manager needed four details `04` §3 left open: the room's own
+HELLO `instance` must be stored (`02` §4.2 says it is stable for the life of the room), the
+line formats of `inbox.jsonl` and `outbox.jsonl`, and when `peer_joined` fires once
+reconnects start. Inbox appends are idempotent by id because the inbox append and the
+`peer_max_seq` update are two files and can't be one atomic write; the outbox keeps the
+last 5 delivered entries so the `inbox` tool can report delivery status without reading
+the transcript. `peer_joined` fires only for the room's first handshake so routine
+reconnects don't flood the agent with notices.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

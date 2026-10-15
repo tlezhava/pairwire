@@ -66,6 +66,7 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
     ├── state.json                        relay (host[:port] or null for the default),
+    │                                     instance (our HELLO instance id for this room),
     │                                     member, token, epoch, sessions (current+previous),
     │                                     my_seq, peer_max_seq, peer {name, harness, instance},
     │                                     hop_count, status ("waiting"|"active"|"left"|"ended"),
@@ -115,7 +116,23 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
   two MCP servers starting at once can't both take over a dead owner. Times in these files
   are Unix milliseconds, like the relay's `expires_at`.
 - `relay` is the address the room was started or joined with (`null`: the built-in
-  default at that time), so a reconnect (REQ-ROOM-6) reaches the same relay.
+  default at that time), so a reconnect (REQ-ROOM-6) reaches the same relay. `instance`
+  is 16 random bytes in base32, created with the room and sent in every HELLO
+  (`02-protocol.md` §4.2), so the peer can tell a restart of the same client from a
+  different client.
+- `inbox.jsonl` lines: `{"source":"peer","id","from","harness","received_at","envelope"}`
+  for accepted non-ack envelopes (`id` is the envelope id; `from`/`harness` are the peer's
+  HELLO values at that time, sanitized only when rendered), and
+  `{"source":"local","id","event","text","received_at"}` for local notices (`id` is a new
+  ULID). Appends are idempotent by `id`, so a crash between the append and the
+  `peer_max_seq` update can't deliver a message twice.
+- `outbox.jsonl` holds one line per envelope we sent: `{"envelope","status","sent_at",
+  "delivered_at"}` with `status` `queued` (no session yet), `sent` or `delivered`. It is
+  rewritten atomically on every change. Unacked entries are resent (`02` §6.2); delivered
+  ones are kept only as the 5 most recent, for the `inbox` tool's delivery status.
+- Local notice `peer_joined` is queued when the room's **first** handshake completes
+  (REQ-ROOM-3). Later handshakes after reconnects queue nothing unless the peer's
+  `instance` or name changed (`peer_changed`).
 - Leaving deletes `secret` and the session keys in `state.json`, sets `status: "left"`,
   removes the binding, and keeps `transcript.md` and `inbox.jsonl` until `pairwire purge`.
 - **Peer identity.** The peer's `instance`, `name` and `harness` from the first accepted
