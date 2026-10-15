@@ -135,6 +135,25 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
   "delivered_at"}` with `status` `queued` (no session yet), `sent` or `delivered`. It is
   rewritten atomically on every change. Unacked entries are resent (`02` §6.2); delivered
   ones are kept only as the 5 most recent, for the `inbox` tool's delivery status.
+- `transcript.md` (REQ-MSG-8) is append-only Markdown, mode 0600, one entry per event:
+
+  ```
+  ### → 2026-10-16 12:01:05Z · you (agent) · question · 01JAB…
+  > Does POST /orders accept an idempotency key?
+
+  ### ← 2026-10-16 12:01:09Z · Nika (codex, agent) · answer · 01JAC… · re 01JAB…
+  > Yes, a client-generated UUID v4.
+
+  ✓ 2026-10-16 12:01:06Z · delivered 01JAB…
+  · 2026-10-16 12:00:40Z · Nika (codex) joined the room.
+  ! 2026-10-16 13:10:00Z · The peer reconnected as a different client (…)
+  ```
+
+  `→` is ours (with `queued` when no session existed yet), `←` the peer's, `(human)` marks
+  `/pairwire:say` messages, `·` is a local notice and `!` a warning. Every body line is quoted
+  with `> `, so a message can't forge an entry heading. Peer-supplied text (bodies, names) is
+  passed through the sanitizer's text step (`render.ts`, section 5) to strip invisible and
+  bidi characters, and every body is passed through `redact()` (INV-7).
 - Local notice `peer_joined` is queued when the room's **first** handshake completes
   (REQ-ROOM-3). Later handshakes after reconnects queue nothing unless the peer's
   `instance` or name changed (`peer_changed`).
