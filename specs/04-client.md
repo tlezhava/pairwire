@@ -248,7 +248,15 @@ removes the flag when no such room remains.
    tokens (`ghp_`, `gho_`, `ghs_`, `github_pat_`), Slack tokens (`xox[abprs]-`), Anthropic
    (`sk-ant-`) and OpenAI (`sk-`) style keys, Stripe live keys, Google API keys (`AIza`),
    JWTs, and `key|secret|token|password = <16+ high-entropy chars>` assignments. Rule set
-   is versioned and unit-tested with positive and negative samples.
+   is versioned and unit-tested with positive and negative samples. GitHub's `ghu_` and
+   `ghr_` tokens belong to the same family and are matched too. An assignment value
+   counts as high-entropy when it has at least 16 characters, contains both a letter and a
+   digit, and has at least 3.0 bits of Shannon entropy per character. The scanner also
+   checks a copy of the body with format (Cf) characters removed, mapping offsets back,
+   so zero-width characters can't split a secret past it.
+   The same module exports `redact(text)`, which every logger uses (INV-7). It replaces
+   share strings (including any `@host` suffix) and every scanner match with
+   `[redacted:<rule id>]`.
 4. Hop budget: `hop_count` increments on every agent `send`; at `hop_budget` the tool
    fails with "Hop budget reached. Ask your human whether to continue." Reset by
    `UserPromptSubmit`, `/pairwire:continue`, `/pairwire:say`.
