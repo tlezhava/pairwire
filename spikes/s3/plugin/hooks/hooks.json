@@ -1,0 +1,37 @@
+{
+  "description": "pairwire spike S3",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PLUGIN_ROOT}/waiter.mjs",
+              "900"
+            ],
+            "async": true,
+            "asyncRewake": true,
+            "timeout": 1000
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "-e",
+              "require(\"fs\").appendFileSync(process.env.CLAUDE_PLUGIN_ROOT+\"/../out/waiters.jsonl\", JSON.stringify({t:new Date().toISOString(),event:\"user-prompt\"})+\"\\n\")"
+            ],
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

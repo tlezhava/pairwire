@@ -1,0 +1,5 @@
+{
+  "name": "s3",
+  "version": "0.0.0-spike.s3",
+  "description": "pairwire spike S3: idle wake via an asyncRewake Stop hook. Throwaway."
+}
