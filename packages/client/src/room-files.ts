@@ -1,6 +1,6 @@
 // inbox.jsonl and outbox.jsonl of a room (04 §3, ADR-019).
 import { appendFileSync, readFileSync } from "node:fs";
-import { envelopeSchema } from "@pairwire/core";
+import { envelopeSchema, type RenderItem } from "@pairwire/core";
 import { z } from "zod";
 import { errorCode, PRIVATE_FILE_MODE, withLock, writeFileAtomic } from "./fs-util.js";
 import { roomFile } from "./paths.js";
@@ -123,4 +123,28 @@ export function markDelivered(home: string, roomId: string, ids: readonly string
 export function undelivered(home: string, roomId: string): InboxEntry[] {
   const seen = readDelivered(home, roomId);
   return readInbox(home, roomId).filter((e) => !seen.has(e.id));
+}
+
+/**
+ * Atomically picks undelivered items to show and marks exactly those delivered, under the
+ * delivered.json lock, so two delivery paths (a hook and the inbox tool) never show one item
+ * twice. `pick` returns the ids it rendered.
+ */
+export function claimUndelivered<T>(home: string, roomId: string, pick: (items: InboxEntry[]) => { ids: readonly string[]; result: T }): T {
+  const path = roomFile(home, roomId, "delivered.json");
+  return withLock(path, () => {
+    const seen = readDelivered(home, roomId);
+    const { ids, result } = pick(readInbox(home, roomId).filter((e) => !seen.has(e.id)));
+    if (ids.length > 0) {
+      for (const id of ids) seen.add(id);
+      writeFileAtomic(path, JSON.stringify({ ids: [...seen] }) + "\n");
+    }
+    return result;
+  });
+}
+
+/** The renderer's view of an inbox entry (core render.ts). */
+export function toRenderItem(e: InboxEntry): RenderItem {
+  if (e.source === "local") return { source: "local", id: e.id, event: e.event, text: e.text };
+  return { source: "peer", id: e.id, from: e.from, harness: e.harness, receivedAt: new Date(e.received_at).toISOString(), envelope: e.envelope };
 }

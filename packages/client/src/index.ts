@@ -16,3 +16,4 @@ export { CLIENT_VERSION } from "./version.js";
 export { appendTranscript, transcriptTail } from "./transcript.js";
 export { runCtl } from "./ctl.js";
 export { nodeAdvice, runDoctor, runPurge } from "./doctor.js";
+export { HOOK_EVENTS, runHook, type HookEvent } from "./hooks.js";

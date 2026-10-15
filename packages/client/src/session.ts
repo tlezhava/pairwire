@@ -16,7 +16,6 @@ import {
   serializeEnvelope,
   type Harness,
   type HelloPayload,
-  type RenderItem,
 } from "@pairwire/core";
 import { z } from "zod";
 import { bindProject, claimProject, isProcessAlive, PassiveSessionError } from "./binding.js";
@@ -26,7 +25,7 @@ import type { Logger } from "./log.js";
 import { roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
-import { markDelivered, readOutbox, undelivered, type InboxEntry } from "./room-files.js";
+import { claimUndelivered, readOutbox, toRenderItem, undelivered } from "./room-files.js";
 import { createRoom, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
 import { transcriptEvents } from "./transcript.js";
 import { CLIENT_VERSION } from "./version.js";
@@ -250,9 +249,10 @@ export class ClientSession {
       // An ended room's last messages (the bye, the notice) must stay readable.
       const state = this.#roomState();
       if (!state) throw new ToolError("No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
-      const items = undelivered(this.#o.home, state.roomId);
-      const text = items.length > 0 ? renderItems(items.map(toRenderItem)) : "No new messages.";
-      markDelivered(this.#o.home, state.roomId, items.map((i) => i.id));
+      const text = claimUndelivered(this.#o.home, state.roomId, (items) => ({
+        ids: items.map((i) => i.id),
+        result: items.length > 0 ? renderItems(items.map(toRenderItem)) : "No new messages.",
+      }));
       return `${text}\n\n${this.#recentSends(state.roomId)}`.trimEnd();
     });
   }
@@ -460,9 +460,4 @@ function mergeEvents(...sets: (ConnectionEvents | undefined)[]): ConnectionEvent
 function harnessOf(env: NodeJS.ProcessEnv): Harness {
   const h = env.PAIRWIRE_HARNESS?.trim() ?? "";
   return (HARNESSES as readonly string[]).includes(h) ? (h as Harness) : "other";
-}
-
-function toRenderItem(e: InboxEntry): RenderItem {
-  if (e.source === "local") return { source: "local", id: e.id, event: e.event, text: e.text };
-  return { source: "peer", id: e.id, from: e.from, harness: e.harness, receivedAt: new Date(e.received_at).toISOString(), envelope: e.envelope };
 }

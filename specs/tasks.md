@@ -101,7 +101,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 ## M4 — Claude Code plugin and MVP release 0.1.0
 
-- [ ] **M4-1 Hook entrypoints** (`04` §6) + hook contract tests.
+- [x] **M4-1 Hook entrypoints** (`04` §6) + hook contract tests.
 - [ ] **M4-2 D3 waiter** (`04` §6 `stop-wait`, chosen in S3) + its tests.
 - [ ] **M4-3 Plugin files** (`04` §9, §8 command rules: `disable-model-invocation`, heredoc,
   narrow `allowed-tools` verified to match): manifest, `.mcp.json`, hooks + `hooks/run.sh`,

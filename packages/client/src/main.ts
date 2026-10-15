@@ -2,11 +2,11 @@
 // The `pairwire` executable (04 §1). Subcommands land with their tasks in specs/tasks.md.
 import { runCtl } from "./ctl.js";
 import { runDoctor, runPurge } from "./doctor.js";
+import { HOOK_EVENTS, runHook, type HookEvent } from "./hooks.js";
 import { pairwireHome } from "./paths.js";
 import { runMcpServer } from "./mcp.js";
 
 const NOT_YET: Record<string, string> = {
-  hook: "M4-1",
   install: "M6",
 };
 
@@ -19,6 +19,16 @@ async function main(argv: string[]): Promise<number> {
   if (command === "ctl") {
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
+  if (command === "hook") {
+    // Hooks never fail the harness (04 §6): always exit 0.
+    const event = argv[1] as HookEvent;
+    if (!(HOOK_EVENTS as readonly string[]).includes(event)) return 0;
+    let stdin = "";
+    for await (const chunk of process.stdin) stdin += String(chunk);
+    const out = runHook(event, stdin, { home: pairwireHome(), env: process.env, cwd: process.cwd() });
+    if (out) process.stdout.write(out + "\n");
+    return 0;
+  }
   if (command === "doctor") return runDoctor({ home: pairwireHome(), env: process.env, out: process.stdout });
   if (command === "purge") {
     const flags = new Set(argv.slice(1));
@@ -26,8 +36,7 @@ async function main(argv: string[]): Promise<number> {
   }
   if (command && NOT_YET[command]) {
     process.stderr.write(`pairwire ${command}: not implemented yet (task ${NOT_YET[command]}).\n`);
-    // Hooks must never fail the harness (04 §6).
-    return command === "hook" ? 0 : 1;
+    return 1;
   }
   process.stderr.write("usage: pairwire <mcp|hook|ctl|doctor|purge|install> ...\n");
   return 2;
