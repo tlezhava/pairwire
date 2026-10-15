@@ -174,6 +174,19 @@ Status: accepted (2026-10-15)
   `lib: ES2022` and `types: []` (no Node, no DOM), and ESLint forbids Node built-in
   imports and the `process`/`Buffer` globals there.
 
+## ADR-016 Secret scanner must be linear-time (M1-8 finding)
+
+Status: accepted (2026-10-15)
+
+The first version of the `key|secret|token|password = value` rule was a single regex with
+unbounded, overlapping name quantifiers. It took **212 seconds** to scan 24 KiB of
+`token-x` repeated. `send` runs the scanner on agent-written bodies, and `redact()` runs it
+on log lines that can contain peer text, so that is a denial-of-service vector. The rule is
+now a hand-written scan around each `:` or `=` (name up to 64 characters back, value up to
+256 forward), and the other rules have bounded or unambiguous quantifiers. A test suite
+times every rule on adversarial 24 KiB inputs (budget 250 ms each). Any future scanner rule
+must come with such a case.
+
 ## Spike findings
 
 (Add S1–S9 results here.)

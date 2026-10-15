@@ -254,6 +254,9 @@ removes the flag when no such room remains.
    digit, and has at least 3.0 bits of Shannon entropy per character. The scanner also
    checks a copy of the body with format (Cf) characters removed, mapping offsets back,
    so zero-width characters can't split a secret past it.
+   The scan must stay linear on a 24 KiB body: assignment names are examined up to 64
+   characters and values up to 256, every regex quantifier is bounded or unambiguous,
+   and tests time each rule on adversarial input (ADR-016).
    The same module exports `redact(text)`, which every logger uses (INV-7). It replaces
    share strings (including any `@host` suffix) and every scanner match with
    `[redacted:<rule id>]`.
