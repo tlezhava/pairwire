@@ -196,6 +196,19 @@ now a hand-written scan around each `:` or `=` (name up to 64 characters back, v
 times every rule on adversarial 24 KiB inputs (budget 250 ms each). Any future scanner rule
 must come with such a case.
 
+## ADR-017 Auto mode counts as "no approval" for REQ-SAFE-5
+
+Status: accepted (2026-10-15, human decision after S6)
+
+S6 showed that in auto mode, the human's own default, Claude Code runs `send` with no
+approval prompt, and approval prompts offer "switch to auto mode". INV-4 (the plugin never
+pre-approves `send`) still holds, but the human-approves-by-default promise then only holds
+in default mode. Decision: warn and keep sending. REQ-SAFE-5 now covers `auto` as well as
+`bypassPermissions`; the README says that auto mode and "don't ask again" skip approval.
+Rejected: refusing to send in auto mode until the human opts in (stronger, but an extra
+step per room); documentation only (too weak). The warning channel is decided by spike S1b,
+because S1 found `systemMessage` from `UserPromptSubmit` reaches no one.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

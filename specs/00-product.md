@@ -112,8 +112,9 @@ client unless stated otherwise. Each requirement has at least one test (see
 - **REQ-SAFE-4** WHEN an agent has sent `hop_budget` (default 8) consecutive messages
   without its own human giving input THE SYSTEM SHALL refuse further sends until the human
   responds or runs `/pairwire:continue`.
-- **REQ-SAFE-5** WHEN a session is paired and its permission mode bypasses prompts
-  THE SYSTEM SHALL warn the human once per session.
+- **REQ-SAFE-5** WHEN a session is paired and its permission mode runs `send` without an
+  approval prompt (`bypassPermissions` or `auto`) THE SYSTEM SHALL warn the human once
+  per session that outbound messages are not being approved.
 
 ### Installation and hosting
 
