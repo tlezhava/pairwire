@@ -13,7 +13,7 @@ short-lived membership tokens and a small buffer of opaque frames for an offline
 
 | Route | Behavior |
 |---|---|
-| `GET /v1/rooms/:room_id` (Upgrade: websocket) | Room connection. `room_id` must match `^[a-z2-7]{26}$`, otherwise HTTP 400. |
+| `GET /v1/rooms/:room_id` (Upgrade: websocket) | Room connection. `room_id` must match `^[a-z2-7]{26}$`, otherwise HTTP 400. Without an `Upgrade: websocket` header: HTTP 426. |
 | `GET /v1/info` | `{"protocol":[1],"relay":"<semver>","limits":{...}}` — the limits table below as JSON. |
 | `GET /health` | `200 ok` |
 | anything else | 404 |
