@@ -1,0 +1,29 @@
+line 01: the quick brown fox checks the approval prompt for truncation.
+line 02: the quick brown fox checks the approval prompt for truncation.
+line 03: the quick brown fox checks the approval prompt for truncation.
+line 04: the quick brown fox checks the approval prompt for truncation.
+line 05: the quick brown fox checks the approval prompt for truncation.
+line 06: the quick brown fox checks the approval prompt for truncation.
+line 07: the quick brown fox checks the approval prompt for truncation.
+line 08: the quick brown fox checks the approval prompt for truncation.
+line 09: the quick brown fox checks the approval prompt for truncation.
+line 10: the quick brown fox checks the approval prompt for truncation.
+line 11: the quick brown fox checks the approval prompt for truncation.
+line 12: the quick brown fox checks the approval prompt for truncation.
+line 13: the quick brown fox checks the approval prompt for truncation.
+line 14: the quick brown fox checks the approval prompt for truncation.
+line 15: the quick brown fox checks the approval prompt for truncation.
+line 16: the quick brown fox checks the approval prompt for truncation.
+line 17: the quick brown fox checks the approval prompt for truncation.
+line 18: the quick brown fox checks the approval prompt for truncation.
+line 19: the quick brown fox checks the approval prompt for truncation.
+line 20: the quick brown fox checks the approval prompt for truncation.
+line 21: the quick brown fox checks the approval prompt for truncation.
+line 22: the quick brown fox checks the approval prompt for truncation.
+line 23: the quick brown fox checks the approval prompt for truncation.
+line 24: the quick brown fox checks the approval prompt for truncation.
+line 25: the quick brown fox checks the approval prompt for truncation.
+line 26: the quick brown fox checks the approval prompt for truncation.
+line 27: the quick brown fox checks the approval prompt for truncation.
+line 28: the quick brown fox checks the a
+END-OF-BODY
