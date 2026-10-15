@@ -4,11 +4,11 @@ import {
   errorCode,
   listRooms,
   readState
-} from "./chunk-H4ULF7HQ.mjs";
+} from "./chunk-WHFFQDID.mjs";
 import {
   bindingsDir,
   roomsDir
-} from "./chunk-A6UKVX6D.mjs";
+} from "./chunk-AOSSRO7Z.mjs";
 
 // packages/client/src/permissions.ts
 import { lstatSync, readdirSync, statSync } from "node:fs";

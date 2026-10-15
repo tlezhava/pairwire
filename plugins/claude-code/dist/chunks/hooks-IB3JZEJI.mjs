@@ -3,27 +3,30 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   claimUndelivered,
   toRenderItem
-} from "./chunk-EUBT3E4X.mjs";
+} from "./chunk-7VP4OKGQ.mjs";
 import {
   hookErrorLogger
-} from "./chunk-ASJ2FU3V.mjs";
+} from "./chunk-LDWSRL3V.mjs";
 import {
   readBinding,
   resolveProjectDir,
   sessionOwnsBinding
-} from "./chunk-S7BK5NUX.mjs";
+} from "./chunk-BMM36N6F.mjs";
 import {
   DEFAULT_CONFIG,
   loadConfig
-} from "./chunk-BKYCT5SU.mjs";
+} from "./chunk-QURWOD6W.mjs";
 import {
-  displayName,
   isOpen,
   readState,
-  renderForHook,
   updateState
-} from "./chunk-H4ULF7HQ.mjs";
-import "./chunk-A6UKVX6D.mjs";
+} from "./chunk-WHFFQDID.mjs";
+import "./chunk-AOSSRO7Z.mjs";
+import {
+  displayName,
+  renderForHook
+} from "./chunk-5TF4YXFP.mjs";
+import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/hooks.ts
 var HOOK_EVENTS = ["session-start", "user-prompt-submit", "post-tool-use", "stop"];

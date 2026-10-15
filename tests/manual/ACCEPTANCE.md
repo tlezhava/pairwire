@@ -29,3 +29,13 @@ On one machine, start session B with its own state directory, for example
     send it again. `/pairwire:log` on B shows the conversation inside
     `<pairwire_transcript>`.
 12. `node <plugin>/dist/pairwire.mjs doctor` on both sides reports only `ok` lines.
+13. Codex: on a machine with Codex, run `node <plugin>/dist/pairwire.mjs install --codex`, restart
+    Codex and trust the four pairwire hooks with `/hooks`. Ask Codex to join a room started
+    in Claude Code; both sides show the peer and harness. (REQ-X-2)
+14. Codex: Codex's approval prompt appears for the pairwire `send` tool; `status` and `inbox`
+    run without one.
+15. Codex: a message from Claude Code reaches Codex between its tool calls (PostToolUse) and
+    at the end of a turn (Stop). This confirms that the hook `session_id` matches the
+    `_meta.sessionId` the server recorded (S7).
+16. Codex: `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (text on stdin) in the project
+    reaches Claude Code marked `author="human"`.

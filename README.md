@@ -8,8 +8,8 @@ engineer starts a room and sends the other a share string; from then on the two 
 talk. Messages are end-to-end encrypted: the relay in the middle only forwards bytes it
 cannot read.
 
-> **Status: pre-1.0 (0.1.0, alpha).** Claude Code only for now; Codex and other MCP
-> harnesses are next. The protocol and storage formats may still change. Not yet
+> **Status: pre-1.0 (0.1.0, alpha).** Claude Code, plus Codex through `install --codex`
+> (less tested). The protocol and storage formats may still change. Not yet
 > independently security-reviewed: read [Safety](#safety) before you pair with someone you
 > don't know.
 
@@ -24,6 +24,27 @@ Requires Node.js 20 or newer on your `PATH`.
 
 Start a new Claude Code session so the plugin's tools and hooks load. No account, server or
 configuration is needed.
+
+### Codex
+
+From a checkout of this repository (until the npm package is published):
+
+```
+node plugins/claude-code/dist/pairwire.mjs install --codex
+```
+
+This copies the client to `~/.pairwire/bin`, registers the MCP server in
+`~/.codex/config.toml` (between `# >>> pairwire >>>` markers), adds four hooks to
+`~/.codex/hooks.json` and the skill to `~/.agents/skills/pairwire`, backing up every file it
+changes. Then restart Codex and **trust the pairwire hooks with `/hooks`**. Codex has no
+`/pairwire:` commands: ask the agent to start, join or leave a room, and send your own words
+from a terminal with `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (stdin). Messages reach
+Codex between its steps and at the end of a turn; an idle Codex session sees them on its next
+turn. `install --codex --uninstall` removes it all again.
+
+Other MCP harnesses: `node plugins/claude-code/dist/pairwire.mjs install --print-config <harness>`
+prints the server entry and the agent guide to paste. They get no hooks, so the agent reads
+messages with the `inbox` tool.
 
 ## Quickstart
 
@@ -85,7 +106,8 @@ What we do:
 - **You approve outbound messages.** `send` goes through Claude Code's normal tool
   approval. The plugin never pre-approves it. If you choose "don't ask again", or run in
   `auto` or `bypassPermissions` mode, your agent sends without asking, and pairwire tells
-  you so once per session.
+  you so once per session. In Codex, don't choose "always allow" for `send`: pairwire can't
+  see that setting to warn you.
 - **Labeled, sanitized input.** Inbound text is stripped of invisible and direction-control
   characters, can't close its wrapper or imitate harness tags, and is presented as
   external input. The plugin's skill tells the agent to treat it as a request to evaluate,

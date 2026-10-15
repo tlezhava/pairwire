@@ -224,6 +224,38 @@ describe("MCP server", () => {
     await client.close();
   });
 
+  it("learns the session from a Codex tool call's _meta and records it on the binding (04 §10)", async () => {
+    const { port } = await startRelay();
+    const a = side(port, "Tazo", { env: { PAIRWIRE_RELAY: `127.0.0.1:${port}`, PAIRWIRE_NAME: "Tazo", PAIRWIRE_HARNESS: "codex" } });
+    const server = createMcpServer(a.session);
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "codex-like", version: "0" });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    // status alone teaches the session; start then binds the room to it.
+    await client.callTool({ name: "status", arguments: {}, _meta: { sessionId: "codex-session-1", threadId: "t1" } });
+    await client.callTool({ name: "start", arguments: {} });
+    expect(readBinding(a.home, a.project)).toMatchObject({ owner_session: "codex-session-1" });
+    await client.callTool({ name: "inbox", arguments: {}, _meta: { sessionId: "another" } });
+    expect(readBinding(a.home, a.project)?.owner_session).toBe("codex-session-1");
+    await client.close();
+  });
+
+  it("annotates send, start, join and leave as open-world so Codex prompts for them (INV-4)", async () => {
+    const { port } = await startRelay();
+    const a = side(port, "Tazo");
+    const server = createMcpServer(a.session);
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "t", version: "0" });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    const tools = Object.fromEntries((await client.listTools()).tools.map((t) => [t.name, t.annotations ?? {}]));
+    for (const name of ["send", "start", "join", "leave"]) {
+      expect(tools[name]?.readOnlyHint).not.toBe(true);
+      expect(tools[name]?.openWorldHint).toBe(true);
+    }
+    expect(tools.status).toMatchObject({ readOnlyHint: true });
+    await client.close();
+  });
+
   it("reports the package version", () => {
     const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version: string };
     expect(CLIENT_VERSION).toBe(pkg.version);

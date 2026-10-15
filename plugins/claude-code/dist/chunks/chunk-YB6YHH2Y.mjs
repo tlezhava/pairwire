@@ -2,16 +2,18 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   PRIVATE_FILE_MODE,
-  displayName,
   ensurePrivateDir,
   errorCode,
-  redact,
-  removeFile,
-  sanitizeText
-} from "./chunk-H4ULF7HQ.mjs";
+  removeFile
+} from "./chunk-WHFFQDID.mjs";
 import {
   roomFile
-} from "./chunk-A6UKVX6D.mjs";
+} from "./chunk-AOSSRO7Z.mjs";
+import {
+  displayName,
+  redact,
+  sanitizeText
+} from "./chunk-5TF4YXFP.mjs";
 
 // packages/client/src/transcript.ts
 import { appendFileSync, readFileSync } from "node:fs";

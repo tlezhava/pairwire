@@ -2,26 +2,29 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   loadConfig
-} from "./chunk-BKYCT5SU.mjs";
+} from "./chunk-QURWOD6W.mjs";
 import {
   StatePermissionError,
   checkStatePermissions
-} from "./chunk-RLWKG6QV.mjs";
+} from "./chunk-OGGIIAMI.mjs";
 import {
-  DEFAULT_RELAY_HOST,
-  displayName,
   expiresAt,
   isOpen,
   listRooms,
-  parseRelayAddress,
   readState,
-  refreshActiveFlag,
-  relayUrl
-} from "./chunk-H4ULF7HQ.mjs";
+  refreshActiveFlag
+} from "./chunk-WHFFQDID.mjs";
 import {
   activeFlagPath,
   roomDir
-} from "./chunk-A6UKVX6D.mjs";
+} from "./chunk-AOSSRO7Z.mjs";
+import {
+  DEFAULT_RELAY_HOST,
+  displayName,
+  parseRelayAddress,
+  relayUrl
+} from "./chunk-5TF4YXFP.mjs";
+import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/doctor.ts
 import { existsSync, rmSync } from "node:fs";

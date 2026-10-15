@@ -2,12 +2,14 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   PRIVATE_FILE_MODE,
-  ensurePrivateDir,
-  redact
-} from "./chunk-H4ULF7HQ.mjs";
+  ensurePrivateDir
+} from "./chunk-WHFFQDID.mjs";
 import {
   hookErrorsPath
-} from "./chunk-A6UKVX6D.mjs";
+} from "./chunk-AOSSRO7Z.mjs";
+import {
+  redact
+} from "./chunk-5TF4YXFP.mjs";
 
 // packages/client/src/log.ts
 import { appendFileSync, renameSync, statSync } from "node:fs";

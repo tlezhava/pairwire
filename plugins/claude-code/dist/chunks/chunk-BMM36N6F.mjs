@@ -3,20 +3,24 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   ensurePrivateDir,
   errorCode,
-  external_exports,
   isOpen,
   readState,
   removeFile,
   withLock,
   writeFileAtomic
-} from "./chunk-H4ULF7HQ.mjs";
+} from "./chunk-WHFFQDID.mjs";
 import {
   ROOM_ID_PATTERN,
-  bindingsDir,
+  bindingsDir
+} from "./chunk-AOSSRO7Z.mjs";
+import {
+  external_exports
+} from "./chunk-5TF4YXFP.mjs";
+import {
   bytesToHex,
   sha256,
   utf8ToBytes
-} from "./chunk-A6UKVX6D.mjs";
+} from "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/project.ts
 import { existsSync, realpathSync } from "node:fs";
@@ -147,6 +151,15 @@ function removeBindingFor(home, roomId) {
 function sessionOwnsBinding(binding, sessionId) {
   return binding !== null && binding.owner_session !== null && binding.owner_session === sessionId;
 }
+function adoptOwnerSession(home, projectDir, roomId, pid, session) {
+  const path = bindingPath(home, projectDir);
+  return withLock(path, () => {
+    const b = readBindingFile(path);
+    if (!b || b.room_id !== roomId || b.owner_pid !== pid || b.owner_session !== null) return false;
+    writeBinding(path, { ...b, owner_session: session });
+    return true;
+  });
+}
 
 export {
   resolveProjectDir,
@@ -156,5 +169,6 @@ export {
   claimProject,
   bindProject,
   removeBindingFor,
-  sessionOwnsBinding
+  sessionOwnsBinding,
+  adoptOwnerSession
 };

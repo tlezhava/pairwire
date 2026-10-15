@@ -3,10 +3,6 @@
 // finish in well under 100 ms, never loads the MCP SDK.
 import { pairwireHome } from "./paths.js";
 
-const NOT_YET: Record<string, string> = {
-  install: "M6",
-};
-
 async function readStdin(): Promise<string> {
   let text = "";
   for await (const chunk of process.stdin) text += String(chunk);
@@ -54,9 +50,32 @@ async function main(argv: string[]): Promise<number> {
     const flags = new Set(argv.slice(1));
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }
-  if (command && NOT_YET[command]) {
-    process.stderr.write(`pairwire ${command}: not implemented yet (task ${NOT_YET[command]}).\n`);
-    return 1;
+  if (command === "install") {
+    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./install.js");
+    const args = argv.slice(1);
+    try {
+      const printFor = args.indexOf("--print-config");
+      if (printFor >= 0) {
+        const root = runningPluginRoot();
+        if (!root) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
+        printConfig(args[printFor + 1] ?? "", root, process.stdout);
+        return 0;
+      }
+      if (args.includes("--codex")) {
+        const opts = defaultInstallOptions(process.env, process.stdout, pairwireHome());
+        if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
+        const installer = new Installer(opts);
+        if (args.includes("--uninstall")) installer.uninstallCodex();
+        else installer.installCodex();
+        return 0;
+      }
+    } catch (e) {
+      if (!(e instanceof InstallError)) throw e;
+      process.stderr.write(`pairwire install: ${e.message}\n`);
+      return 1;
+    }
+    process.stderr.write("usage: pairwire install --codex [--uninstall] | --print-config <harness>\n");
+    return 2;
   }
   process.stderr.write("usage: pairwire <mcp|hook|ctl|doctor|purge|install> ...\n");
   return 2;

@@ -3,23 +3,26 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   CTL_MAX_REQUEST,
   transcriptTail
-} from "./chunk-EQVX44FC.mjs";
+} from "./chunk-YB6YHH2Y.mjs";
 import {
   readBinding,
   resolveProjectDir
-} from "./chunk-S7BK5NUX.mjs";
+} from "./chunk-BMM36N6F.mjs";
 import {
   assertStatePrivate
-} from "./chunk-RLWKG6QV.mjs";
+} from "./chunk-OGGIIAMI.mjs";
 import {
   isOpen,
   readState,
-  renderTranscript,
   updateState
-} from "./chunk-H4ULF7HQ.mjs";
+} from "./chunk-WHFFQDID.mjs";
 import {
   pairwireHome
-} from "./chunk-A6UKVX6D.mjs";
+} from "./chunk-AOSSRO7Z.mjs";
+import {
+  renderTranscript
+} from "./chunk-5TF4YXFP.mjs";
+import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/ctl.ts
 import { createConnection } from "node:net";

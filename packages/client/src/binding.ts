@@ -146,3 +146,17 @@ export function removeBindingFor(home: string, roomId: string): void {
 export function sessionOwnsBinding(binding: Binding | null, sessionId: string | undefined): boolean {
   return binding !== null && binding.owner_session !== null && binding.owner_session === sessionId;
 }
+
+/**
+ * Records the harness session that owns the room when the binding has none yet: Codex gives
+ * the MCP server no session variable, only `_meta.sessionId` on each tool call (04 §10).
+ */
+export function adoptOwnerSession(home: string, projectDir: string, roomId: string, pid: number, session: string): boolean {
+  const path = bindingPath(home, projectDir);
+  return withLock(path, () => {
+    const b = readBindingFile(path);
+    if (!b || b.room_id !== roomId || b.owner_pid !== pid || b.owner_session !== null) return false;
+    writeBinding(path, { ...b, owner_session: session });
+    return true;
+  });
+}

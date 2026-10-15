@@ -128,8 +128,8 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 - [x] **S7 Codex spike:** confirm MCP config, skills location, hooks schema and feature
   flag, env available to hooks. Update `04` §10.
-- [ ] Codex adapter + `pairwire install --codex`.
-- [ ] `pairwire install --print-config <harness>`.
+- [x] Codex adapter + `pairwire install --codex`.
+- [x] `pairwire install --print-config <harness>`.
 - [ ] Mixed-harness e2e (Claude Code ↔ Codex) and manual acceptance (REQ-X-1, REQ-X-2).
 
 ## M7 — Hardening toward 1.0

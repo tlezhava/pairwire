@@ -20,7 +20,7 @@ import {
   type HelloPayload,
 } from "@pairwire/core";
 import { z } from "zod";
-import { bindProject, claimProject, isProcessAlive, PassiveSessionError } from "./binding.js";
+import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, PassiveSessionError } from "./binding.js";
 import { loadConfig, resolveDisplayName, type Config } from "./config.js";
 import { RoomConnection, type ConnectionEvents, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 import type { Logger } from "./log.js";
@@ -91,6 +91,8 @@ export class ClientSession {
   /** D3 waiters by harness session id: at most one each (04 §6). */
   #waiters = new Map<string, Socket>();
   #sendTimes: number[] = [];
+  /** A session id learned from a tool call's _meta (Codex), when the env gives none. */
+  #learnedSession: string | null = null;
 
   constructor(options: SessionOptions) {
     this.#o = options;
@@ -163,7 +165,7 @@ export class ClientSession {
   // --- D3 waiter (04 §6) ----------------------------------------------------------------
 
   #onWait(session: string, socket: Socket): void {
-    const own = this.#o.env.CLAUDE_CODE_SESSION_ID || null;
+    const own = this.#session();
     const config = this.#config;
     const state = this.#roomState();
     const send = (frame: WaitFrame) => void socket.end(JSON.stringify(frame) + "\n");
@@ -398,8 +400,23 @@ export class ClientSession {
     }
   }
 
+  /** The harness session this server belongs to, if known (04 §3, §10). */
+  #session(): string | null {
+    return this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession;
+  }
+
   #claimant() {
-    return { pid: this.#pid, session: this.#o.env.CLAUDE_CODE_SESSION_ID || null, now: this.#now() };
+    return { pid: this.#pid, session: this.#session(), now: this.#now() };
+  }
+
+  /**
+   * Codex passes the session only as `_meta.sessionId` on tool calls (04 §10). The first one
+   * seen becomes this server's session, and is recorded on a binding that has none.
+   */
+  noteHarnessSession(id: unknown): void {
+    if (this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession || typeof id !== "string" || id === "" || id.length > 200) return;
+    this.#learnedSession = id;
+    if (this.#roomId && this.#passiveOwner === null) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
   }
 
   #open(roomId: string): void {

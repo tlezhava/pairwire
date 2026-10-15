@@ -40,19 +40,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// packages/client/src/paths.ts
-import { homedir } from "node:os";
-
-// node_modules/@noble/hashes/_u64.js
-var fromNumH = (n) => n / 2 ** 32 | 0;
-var fromNumL = (n) => n >>> 0;
-function setU64FromNum(view, byteOffset, n, isLE) {
-  const h = fromNumH(n);
-  const l = fromNumL(n);
-  view.setUint32(byteOffset, isLE ? l : h, isLE);
-  view.setUint32(byteOffset + 4, isLE ? h : l, isLE);
-}
-
 // node_modules/@noble/hashes/utils.js
 function isBytes(a) {
   return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
@@ -227,6 +214,16 @@ var oidNist = (suffix) => ({
   // Larger suffix values would need base-128 OID encoding and a different length byte.
   oid: Uint8Array.from([6, 9, 96, 134, 72, 1, 101, 3, 4, 2, suffix])
 });
+
+// node_modules/@noble/hashes/_u64.js
+var fromNumH = (n) => n / 2 ** 32 | 0;
+var fromNumL = (n) => n >>> 0;
+function setU64FromNum(view, byteOffset, n, isLE) {
+  const h = fromNumH(n);
+  const l = fromNumL(n);
+  view.setUint32(byteOffset, isLE ? l : h, isLE);
+  view.setUint32(byteOffset + 4, isLE ? h : l, isLE);
+}
 
 // node_modules/@noble/hashes/_md.js
 function Chi(a, b, c) {
@@ -506,37 +503,6 @@ var sha256 = /* @__PURE__ */ createHasher(
   /* @__PURE__ */ oidNist(1)
 );
 
-// packages/client/src/paths.ts
-import { join, resolve } from "node:path";
-var ROOM_ID_PATTERN = /^[a-z2-7]{26}$/;
-function pairwireHome(env = process.env) {
-  return env.PAIRWIRE_HOME ? resolve(env.PAIRWIRE_HOME) : join(homedir(), ".pairwire");
-}
-var configPath = (home) => join(home, "config.json");
-var activeFlagPath = (home) => join(home, "active");
-var hookErrorsPath = (home) => join(home, "hook-errors.log");
-var bindingsDir = (home) => join(home, "bindings");
-var roomsDir = (home) => join(home, "rooms");
-function assertRoomId(roomId) {
-  if (!ROOM_ID_PATTERN.test(roomId)) throw new Error("Invalid room id.");
-}
-function roomDir(home, roomId) {
-  assertRoomId(roomId);
-  return join(roomsDir(home), roomId);
-}
-function roomFile(home, roomId, file) {
-  return join(roomDir(home, roomId), file);
-}
-var MAX_SOCKET_PATH_BYTES = 100;
-function chooseCtlPath(home, roomId, env = process.env, uid = process.getuid?.() ?? 0) {
-  const inRoom = join(roomDir(home, roomId), "ctl.sock");
-  if (Buffer.byteLength(inRoom) < MAX_SOCKET_PATH_BYTES) return inRoom;
-  const tag = bytesToHex(sha256(utf8ToBytes(`${home}
-${roomId}`))).slice(0, 16);
-  if (env.XDG_RUNTIME_DIR) return join(env.XDG_RUNTIME_DIR, `pairwire-${tag}.sock`);
-  return join("/tmp", `pairwire-${uid}`, `${tag}.sock`);
-}
-
 export {
   __require,
   __commonJS,
@@ -554,15 +520,5 @@ export {
   utf8ToBytes,
   concatBytes,
   randomBytes,
-  sha256,
-  ROOM_ID_PATTERN,
-  pairwireHome,
-  configPath,
-  activeFlagPath,
-  hookErrorsPath,
-  bindingsDir,
-  roomsDir,
-  roomDir,
-  roomFile,
-  chooseCtlPath
+  sha256
 };

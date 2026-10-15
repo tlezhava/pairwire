@@ -18,3 +18,4 @@ export { runCtl } from "./ctl.js";
 export { nodeAdvice, runDoctor, runPurge } from "./doctor.js";
 export { HOOK_EVENTS, runHook, type HookEvent } from "./hooks.js";
 export { cancelWaiter, runStopWait } from "./waiter.js";
+export { Installer, InstallError, printConfig } from "./install.js";
