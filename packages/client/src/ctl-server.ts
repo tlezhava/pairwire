@@ -11,14 +11,28 @@ export interface CtlReply {
   text: string;
 }
 
-export type CtlRequest = { op: "say"; text: string } | { op: "continue" } | { op: "resume" };
+export type CtlRequest =
+  | { op: "say"; text: string }
+  | { op: "continue" }
+  | { op: "resume" }
+  | { op: "wait_cancel"; session: string };
 
-export type CtlHandler = (request: CtlRequest, socket: Socket) => Promise<CtlReply>;
+/** The D3 waiter's long-lived request (04 §6): the handler owns the socket from then on. */
+export interface WaitRequest {
+  op: "wait";
+  session: string;
+}
+
+/** Frames the server sends a waiter; each ends the connection. */
+export type WaitFrame = { t: "wake"; text: string } | { t: "superseded" } | { t: "cancelled" } | { t: "refused" };
+
+export type CtlHandler = (request: CtlRequest) => Promise<CtlReply>;
+export type WaitHandler = (request: WaitRequest, socket: Socket) => void;
 
 export const CTL_MAX_REQUEST = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 
-export function parseCtlRequest(line: string): CtlRequest | null {
+export function parseCtlRequest(line: string): CtlRequest | WaitRequest | null {
   let v: unknown;
   try {
     v = JSON.parse(line);
@@ -29,6 +43,7 @@ export function parseCtlRequest(line: string): CtlRequest | null {
   const r = v as Record<string, unknown>;
   if (r.op === "say" && typeof r.text === "string") return { op: "say", text: r.text };
   if (r.op === "continue" || r.op === "resume") return { op: r.op };
+  if ((r.op === "wait" || r.op === "wait_cancel") && typeof r.session === "string") return { op: r.op, session: r.session };
   return null;
 }
 
@@ -47,7 +62,7 @@ export interface CtlServer {
 }
 
 /** Listens on `path` (mode 0600). A stale socket file from a dead server is replaced. */
-export async function listenCtl(path: string, handle: CtlHandler, log: Logger): Promise<CtlServer> {
+export async function listenCtl(path: string, handle: CtlHandler, log: Logger, wait?: WaitHandler): Promise<CtlServer> {
   preparePrivateDir(dirname(path));
   removeFile(path);
   const server: Server = createServer((socket) => {
@@ -68,7 +83,12 @@ export async function listenCtl(path: string, handle: CtlHandler, log: Logger): 
       const request = parseCtlRequest(buf.slice(0, nl));
       if (!request) return reply({ ok: false, text: "pairwire: bad control request." });
       socket.setTimeout(0);
-      handle(request, socket).then(reply, (e: unknown) => {
+      if (request.op === "wait") {
+        done = true;
+        if (wait) return wait(request, socket);
+        return void socket.end(JSON.stringify({ t: "refused" } satisfies WaitFrame) + "\n");
+      }
+      handle(request).then(reply, (e: unknown) => {
         log.error("ctl_failed", e);
         reply({ ok: false, text: "pairwire: internal error; see the MCP server log." });
       });

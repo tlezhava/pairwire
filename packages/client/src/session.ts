@@ -11,6 +11,7 @@ import {
   parseRelayAddress,
   parseShareString,
   relayUrl,
+  renderForHook,
   renderItems,
   scanSecrets,
   serializeEnvelope,
@@ -29,7 +30,8 @@ import { claimUndelivered, readOutbox, toRenderItem, undelivered } from "./room-
 import { createRoom, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
 import { transcriptEvents } from "./transcript.js";
 import { CLIENT_VERSION } from "./version.js";
-import { listenCtl, type CtlReply, type CtlRequest, type CtlServer } from "./ctl-server.js";
+import { listenCtl, type CtlReply, type CtlRequest, type CtlServer, type WaitFrame } from "./ctl-server.js";
+import type { Socket } from "node:net";
 
 export interface ToolResult {
   text: string;
@@ -54,6 +56,9 @@ export interface SessionOptions {
   tuning?: Partial<Tuning>;
   events?: ConnectionEvents;
 }
+
+/** First line of a D3 wake (04 §6). */
+export const WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";
 
 /** 04 §7 step 5. */
 const SENDS_PER_MINUTE = 20;
@@ -82,6 +87,8 @@ export class ClientSession {
   #roomId: string | null = null;
   #conn: RoomConnection | null = null;
   #ctl: Promise<CtlServer | null> | null = null;
+  /** D3 waiters by harness session id: at most one each (04 §6). */
+  #waiters = new Map<string, Socket>();
   #sendTimes: number[] = [];
 
   constructor(options: SessionOptions) {
@@ -107,6 +114,7 @@ export class ClientSession {
   }
 
   shutdown(): void {
+    for (const session of [...this.#waiters.keys()]) this.#endWaiter(session, { t: "cancelled" });
     this.#conn?.stop();
     this.#conn = null;
     this.#closeCtl();
@@ -116,6 +124,10 @@ export class ClientSession {
 
   /** Handles one ctl.sock request. Replies are shown to the human in the prompt. */
   async ctl(request: CtlRequest): Promise<CtlReply> {
+    if (request.op === "wait_cancel") {
+      this.#endWaiter(request.session, { t: "cancelled" });
+      return { ok: true, text: "" };
+    }
     try {
       this.#ready();
       const state = this.#requireRoom();
@@ -144,6 +156,49 @@ export class ClientSession {
       const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError;
       if (!known) this.#o.log.error("ctl_failed", e);
       return { ok: false, text: `pairwire: ${known ? (e as Error).message : "internal error; see the MCP server log."}` };
+    }
+  }
+
+  // --- D3 waiter (04 §6) ----------------------------------------------------------------
+
+  #onWait(session: string, socket: Socket): void {
+    const own = this.#o.env.CLAUDE_CODE_SESSION_ID || null;
+    const config = this.#config;
+    const state = this.#roomState();
+    const send = (frame: WaitFrame) => void socket.end(JSON.stringify(frame) + "\n");
+    // Only the owning session waits, and only when messages are pushed at all.
+    if (!own || session !== own || this.#passiveOwner !== null || !config || config.delivery !== "auto" || !config.autoContinue || !state || !isOpen(state)) {
+      return send({ t: "refused" });
+    }
+    this.#endWaiter(session, { t: "superseded" });
+    this.#waiters.set(session, socket);
+    socket.on("close", () => {
+      if (this.#waiters.get(session) === socket) this.#waiters.delete(session);
+    });
+    socket.on("error", () => {});
+    this.#wake(); // items that arrived before the waiter did
+  }
+
+  #endWaiter(session: string, frame: WaitFrame): void {
+    const socket = this.#waiters.get(session);
+    if (!socket) return;
+    this.#waiters.delete(session);
+    socket.end(JSON.stringify(frame) + "\n");
+  }
+
+  /** Hands undelivered items to a pending waiter, which wakes the session with them. */
+  #wake(): void {
+    const state = this.#roomState();
+    if (this.#waiters.size === 0 || !state) return;
+    for (const [session, socket] of this.#waiters) {
+      const rendered = claimUndelivered(this.#o.home, state.roomId, (items) => {
+        const r = renderForHook(items.map(toRenderItem));
+        return { ids: r.deliveredIds, result: r.text };
+      });
+      if (rendered === null) return;
+      this.#waiters.delete(session);
+      socket.end(JSON.stringify({ t: "wake", text: `${WAKE_LEAD}\n\n${rendered}` } satisfies WaitFrame) + "\n");
+      return;
     }
   }
 
@@ -366,6 +421,8 @@ export class ClientSession {
       hello,
       log: this.#o.log,
       events: mergeEvents(
+        // Messages and notices (never acks) wake an idle session (D3).
+        { inbound: () => this.#wake() },
         transcriptEvents(this.#o.home, roomId, this.#now, (e) => this.#o.log.error("transcript_failed", e), () => !!readState(this.#o.home, roomId)?.sessions.current),
         this.#o.events,
       ),
@@ -375,7 +432,7 @@ export class ClientSession {
     });
     this.#conn.start();
     this.#closeCtl();
-    this.#ctl = listenCtl(state.ctl_path, (req) => this.ctl(req), this.#o.log).catch((e: unknown) => {
+    this.#ctl = listenCtl(state.ctl_path, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e: unknown) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });

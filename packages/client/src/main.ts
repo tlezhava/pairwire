@@ -4,6 +4,7 @@ import { runCtl } from "./ctl.js";
 import { runDoctor, runPurge } from "./doctor.js";
 import { HOOK_EVENTS, runHook, type HookEvent } from "./hooks.js";
 import { pairwireHome } from "./paths.js";
+import { cancelWaiter, runStopWait } from "./waiter.js";
 import { runMcpServer } from "./mcp.js";
 
 const NOT_YET: Record<string, string> = {
@@ -20,13 +21,20 @@ async function main(argv: string[]): Promise<number> {
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "hook") {
-    // Hooks never fail the harness (04 §6): always exit 0.
-    const event = argv[1] as HookEvent;
-    if (!(HOOK_EVENTS as readonly string[]).includes(event)) return 0;
+    // Hooks never fail the harness (04 §6): exit 0, except a D3 wake (2).
+    const event = argv[1];
     let stdin = "";
     for await (const chunk of process.stdin) stdin += String(chunk);
-    const out = runHook(event, stdin, { home: pairwireHome(), env: process.env, cwd: process.cwd() });
+    const opts = { home: pairwireHome(), env: process.env, cwd: process.cwd() };
+    if (event === "stop-wait") {
+      for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"] as const) process.once(sig, () => process.exit(0));
+      return runStopWait(stdin, { ...opts, stderr: process.stderr });
+    }
+    if (!(HOOK_EVENTS as readonly string[]).includes(event ?? "")) return 0;
+    const out = runHook(event as HookEvent, stdin, opts);
     if (out) process.stdout.write(out + "\n");
+    // The session is busy: end a pending D3 waiter (04 §6 step 5).
+    if (event === "user-prompt-submit" || event === "post-tool-use") await cancelWaiter(stdin, opts);
     return 0;
   }
   if (command === "doctor") return runDoctor({ home: pairwireHome(), env: process.env, out: process.stdout });
