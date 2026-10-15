@@ -69,7 +69,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] **M1-5 Handshake + session keys** (`02` §4, §7 vectors).
 - [x] **M1-6 MSG framing + envelope schema** (`02` §3, §6).
 - [x] **M1-7 Sanitizer + renderer** (`04` §5, INV-3).
-- [ ] **M1-8 Secret scanner** (`04` §7.3, INV-5).
+- [x] **M1-8 Secret scanner** (`04` §7.3, INV-5).
 - [ ] **M1-9 Limits + relay room state machine** (`03`, `02` §5) with fake clock.
 
 ## M2 — Relay

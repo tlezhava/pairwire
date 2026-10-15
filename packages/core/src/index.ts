@@ -53,6 +53,7 @@ export {
   type NoticeEvent,
   type RenderItem,
 } from "./render.js";
+export { SECRET_RULES_VERSION, redact, scanSecrets, type SecretFinding, type SecretRuleId } from "./secrets.js";
 export { ANONYMOUS, NAME_MAX_CHARS, displayName, escapeAttr, sanitizeAttr, sanitizeText } from "./sanitize.js";
 export { DEFAULT_RELAY_HOST, PROTOCOL_VERSION, SECRET_BYTES, SHARE_PREFIX } from "./config.js";
 export {
