@@ -9,11 +9,11 @@
             "command": "node",
             "args": [
               "${CLAUDE_PLUGIN_ROOT}/waiter.mjs",
-              "900"
+              "0"
             ],
             "async": true,
             "asyncRewake": true,
-            "timeout": 1000
+            "timeout": 86400
           }
         ]
       }
@@ -25,8 +25,7 @@
             "type": "command",
             "command": "node",
             "args": [
-              "-e",
-              "require(\"fs\").appendFileSync(process.env.CLAUDE_PLUGIN_ROOT+\"/../out/waiters.jsonl\", JSON.stringify({t:new Date().toISOString(),event:\"user-prompt\"})+\"\\n\")"
+              "${CLAUDE_PLUGIN_ROOT}/ups.mjs"
             ],
             "timeout": 10
           }

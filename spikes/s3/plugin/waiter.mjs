@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const out = join(dirname(fileURLToPath(import.meta.url)), "..", "out");
 mkdirSync(out, { recursive: true });
 const TRIGGER = "/tmp/pw-s3/WAKE";
-const LIMIT_S = Number(process.argv[2] ?? 900);
+const LIMIT_S = Number(process.argv[2] ?? 900); // 0 = wait forever
 const log = (event, extra = {}) =>
   appendFileSync(join(out, "waiters.jsonl"), JSON.stringify({ t: new Date().toISOString(), pid: process.pid, ppid: process.ppid, event, ...extra }) + "\n");
 
@@ -35,7 +35,7 @@ process.stdin.on("end", () => {
       process.stderr.write(`S3-WAKE: a pairwire message arrived at ${new Date().toISOString()}. Tell the user the canary S3-WAKE-OK.\n`);
       process.exit(2);
     }
-    if (Date.now() - started > LIMIT_S * 1000) {
+    if (LIMIT_S > 0 && Date.now() - started > LIMIT_S * 1000) {
       clearInterval(timer);
       log("timeout");
       process.exit(0);
