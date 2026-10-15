@@ -209,7 +209,8 @@ Membership rules:
 4. Ordering on (re)join: the relay sends `joined`, then any buffered binary frames in
    order, then `peer_joined` to the other member.
 5. HELLO frames (first byte 0x01) are never buffered; they are dropped if the peer is not
-   connected.
+   connected. Binary frames sent while the other slot has never been taken are dropped too:
+   compliant clients send no MSG before a session exists (§6.2), which needs both members.
 6. Open sockets count as activity: a room with at least one connected member never hits
    idle expiry.
 
