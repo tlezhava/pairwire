@@ -29,6 +29,10 @@ jobs:
       - run: npm run build
       - name: Committed plugin bundle is current
         run: npm run build:plugin && git diff --exit-code -- plugins/
+      - name: Validate the marketplace and plugin
+        run: |
+          npx -y @anthropic-ai/claude-code@2.1.300 plugin validate . --strict
+          npx -y @anthropic-ai/claude-code@2.1.300 plugin validate plugins/claude-code --strict
 
   relay-image:
     runs-on: ubuntu-latest

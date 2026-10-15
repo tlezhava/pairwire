@@ -51,6 +51,13 @@ describe("plugin files", () => {
     expect(JSON.parse(read(".mcp.json")).mcpServers.pairwire.env).toEqual({ PAIRWIRE_HARNESS: "claude-code", PAIRWIRE_PROJECT_DIR: "${CLAUDE_PROJECT_DIR}" });
   });
 
+  it("the repo root is a marketplace whose one plugin is plugins/claude-code", () => {
+    const market = JSON.parse(readFileSync(join(ROOT, ".claude-plugin/marketplace.json"), "utf8")) as { name: string; plugins: { name: string; source: string }[] };
+    const manifest = JSON.parse(read(".claude-plugin/plugin.json")) as { name: string; version: string };
+    expect(market.plugins).toEqual([expect.objectContaining({ name: manifest.name, source: "./plugins/claude-code" })]);
+    expect(market.name).toBe("pairwire"); // install: /plugin install pairwire@pairwire (REQ-INST-1)
+  });
+
   it("SKILL.md is section 2 of the agent guide", () => {
     const skill = extractSkill(readFileSync(join(ROOT, "specs/06-agent-guide.md"), "utf8"));
     expect(read("skills/pairwire/SKILL.md").replace(/\n<!-- Generated from [^\n]*-->\n/, "")).toBe(skill);

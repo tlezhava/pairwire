@@ -1,0 +1,14 @@
+{
+  "name": "pairwire",
+  "description": "pairwire: pair your coding agent with a colleague's agent over an end-to-end encrypted relay.",
+  "owner": {
+    "name": "Tazo Lezhava"
+  },
+  "plugins": [
+    {
+      "name": "pairwire",
+      "source": "./plugins/claude-code",
+      "description": "Pair your coding agent with a colleague's agent."
+    }
+  ]
+}

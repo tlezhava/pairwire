@@ -107,7 +107,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   narrow `allowed-tools` verified to match): manifest, `.mcp.json`, hooks + `hooks/run.sh`,
   seven commands, SKILL.md generated from `06` §2, `npm run build:plugin` bundles
   `dist/pairwire.mjs`; CI fails on any push to `main` whose committed bundle is stale.
-- [ ] **M4-4 Marketplace file**; CI runs `claude plugin validate --strict`.
+- [x] **M4-4 Marketplace file**; CI runs `claude plugin validate --strict`.
 - [ ] **M4-5 README:** what it is, quickstart (two commands + start/join), safety notes,
   self-hosting (Deploy button + Docker), live mode if Channels shipped, pre-1.0 notice.
 - [ ] **M4-6 Traceability check switches to errors;** every REQ/INV is covered by a test,

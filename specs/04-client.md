@@ -582,6 +582,7 @@ Marketplace (repo root `.claude-plugin/marketplace.json`):
 ```json
 {
   "name": "pairwire",
+  "description": "pairwire: pair your coding agent with a colleague's agent over an end-to-end encrypted relay.",
   "owner": { "name": "Tazo Lezhava" },
   "plugins": [
     { "name": "pairwire", "source": "./plugins/claude-code", "description": "Pair your coding agent with a colleague's agent." }
@@ -596,7 +597,8 @@ Install (REQ-INST-1):
 /plugin install pairwire@pairwire
 ```
 
-Validate in CI with `claude plugin validate plugins/claude-code --strict`.
+Validate in CI with `claude plugin validate . --strict` (the marketplace) and
+`claude plugin validate plugins/claude-code --strict`, using a pinned Claude Code version.
 
 Because the marketplace installs straight from the git repository's default branch,
 `dist/pairwire.mjs` must be committed and current on `main` at all times, not only on
