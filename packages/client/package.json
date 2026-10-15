@@ -13,6 +13,9 @@
       "default": "./dist/index.js"
     }
   },
+  "bin": {
+    "pairwire": "dist/main.js"
+  },
   "files": [
     "dist"
   ],
@@ -20,6 +23,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@noble/hashes": "^2.4.0",
     "@pairwire/core": "0.0.0",
     "ulid": "^3.0.2",

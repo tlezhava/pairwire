@@ -23,7 +23,7 @@ function newHome() {
 describe("room state", () => {
   it("creates a waiting room: 0700 directories, 0600 secret and state, the active flag", () => {
     const home = newHome();
-    const state = createRoom(home, { roomId: ROOM, secret: secret(), relay: "relay.example.com", now: NOW }, {});
+    const state = createRoom(home, { roomId: ROOM, secret: secret(), relay: "relay.example.com", name: "Tazo", now: NOW }, {});
     expect(state).toMatchObject({ status: "waiting", relay: "relay.example.com", member: null, my_seq: 0, hop_count: 0, created_at: NOW, expires_at: null });
     expect(state.ctl_path).toBe(chooseCtlPath(home, ROOM, {}));
     expect(mode(home)).toBe(0o700);
@@ -38,13 +38,13 @@ describe("room state", () => {
 
   it("refuses to create a room that is already stored", () => {
     const home = newHome();
-    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
-    expect(() => createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {})).toThrow(StateError);
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
+    expect(() => createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {})).toThrow(StateError);
   });
 
   it("updates state under its lock and refuses an invalid result without touching the file", () => {
     const home = newHome();
-    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
     const next = updateState(home, ROOM, (s) => ({ ...s, status: "active", member: "a", epoch: 1, my_seq: 4 }));
     expect(readState(home, ROOM)).toEqual(next);
     expect(() => updateState(home, ROOM, (s) => ({ ...s, my_seq: -1 }))).toThrow();
@@ -55,7 +55,7 @@ describe("room state", () => {
 
   it("reports a corrupt state file without quoting it", () => {
     const home = newHome();
-    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
     writeFileSync(roomFile(home, ROOM, "state.json"), '{"token":"pw1_leak');
     expect(() => readState(home, ROOM)).toThrow(StateError);
     expect(() => readState(home, ROOM)).not.toThrow(/pw1_/);
@@ -63,7 +63,7 @@ describe("room state", () => {
 
   it("expires at the relay-reported time, else 7 days after creation", () => {
     const home = newHome();
-    const state = createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
+    const state = createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
     expect(expiresAt(state)).toBe(NOW + RELAY_LIMITS.maxAgeMs);
     expect(expiresAt({ ...state, expires_at: NOW + 1000 })).toBe(NOW + 1000);
   });
@@ -71,7 +71,7 @@ describe("room state", () => {
   it("REQ-ROOM-5 closing a room deletes the secret, keys and token and the binding, but keeps the transcript", () => {
     const home = newHome();
     const project = tempDir();
-    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
     updateState(home, ROOM, (s) => ({
       ...s,
       status: "active",
@@ -91,8 +91,8 @@ describe("room state", () => {
 
   it("keeps the active flag while any room is open", () => {
     const home = newHome();
-    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
-    createRoom(home, { roomId: ROOM2, secret: secret(), relay: null, now: NOW }, {});
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
+    createRoom(home, { roomId: ROOM2, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
     closeRoomLocally(home, ROOM, "ended", "room expired");
     expect(readState(home, ROOM)?.error).toBe("room expired");
     expect(existsSync(activeFlagPath(home))).toBe(true);
@@ -108,7 +108,7 @@ describe("bindings: one room per project directory", () => {
   function boundHome(ownerPid: number) {
     const home = newHome();
     const project = tempDir();
-    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
     bindProject(home, project, ROOM, { pid: ownerPid, session: `session-${ownerPid}`, now: NOW }, alive([]));
     return { home, project };
   }
@@ -161,7 +161,7 @@ describe("bindings: one room per project directory", () => {
 describe("INV-9 local state is private", () => {
   function homeWithRoom() {
     const home = newHome();
-    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, now: NOW }, {});
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
     bindProject(home, tempDir(), ROOM, { pid: process.pid, session: null, now: NOW });
     return home;
   }

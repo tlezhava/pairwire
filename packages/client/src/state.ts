@@ -19,6 +19,7 @@ export type RoomStatus = (typeof ROOM_STATUSES)[number];
 export const roomStateSchema = z.strictObject({
   relay: z.string().nullable(),
   instance: z.string().regex(ROOM_ID_PATTERN),
+  name: z.string(),
   member: z.enum(["a", "b"]).nullable(),
   token: z.string().nullable(),
   epoch: counter.nullable(),
@@ -45,6 +46,8 @@ export interface NewRoom {
   secret: Uint8Array;
   /** host[:port], or null for the built-in default relay. */
   relay: string | null;
+  /** Our display name for this room (HELLO). */
+  name: string;
   now: number;
 }
 
@@ -63,6 +66,7 @@ export function createRoom(home: string, room: NewRoom, env: NodeJS.ProcessEnv =
   const state: RoomState = {
     relay: room.relay,
     instance: base32Encode(randomBytes(16)),
+    name: room.name,
     member: null,
     token: null,
     epoch: null,

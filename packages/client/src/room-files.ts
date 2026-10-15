@@ -96,3 +96,31 @@ export function updateOutbox(home: string, roomId: string, change: (entries: Out
 }
 
 export const unacked = (entries: readonly OutboxEntry[]) => entries.filter((e) => e.status !== "delivered");
+
+const deliveredSchema = z.strictObject({ ids: z.array(z.string()) });
+
+/** Ids of inbox entries already shown to the agent (04 §3). */
+export function readDelivered(home: string, roomId: string): Set<string> {
+  try {
+    return new Set(deliveredSchema.parse(JSON.parse(readFileSync(roomFile(home, roomId, "delivered.json"), "utf8"))).ids);
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return new Set();
+    return new Set(); // corrupt: worst case the agent sees an item twice
+  }
+}
+
+export function markDelivered(home: string, roomId: string, ids: readonly string[]): void {
+  if (ids.length === 0) return;
+  const path = roomFile(home, roomId, "delivered.json");
+  withLock(path, () => {
+    const all = readDelivered(home, roomId);
+    for (const id of ids) all.add(id);
+    writeFileAtomic(path, JSON.stringify({ ids: [...all] }) + "\n");
+  });
+}
+
+/** Inbox entries the agent hasn't seen yet, oldest first. */
+export function undelivered(home: string, roomId: string): InboxEntry[] {
+  const seen = readDelivered(home, roomId);
+  return readInbox(home, roomId).filter((e) => !seen.has(e.id));
+}

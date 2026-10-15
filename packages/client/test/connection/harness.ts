@@ -72,7 +72,7 @@ export function makeClient(name: string, port: number, secret: Uint8Array, opts:
   const realKeys = deriveRoomKeys(secret);
   const keys = opts.keys ?? realKeys;
   const home = opts.home ?? join(tempDir(), ".pairwire");
-  if (!opts.home) createRoom(home, { roomId: realKeys.roomId, secret, relay: `127.0.0.1:${port}`, now: Date.now() }, {});
+  if (!opts.home) createRoom(home, { roomId: realKeys.roomId, secret, relay: `127.0.0.1:${port}`, name, now: Date.now() }, {});
   const instance = readState(home, realKeys.roomId)!.instance;
   const events: Client["events"] = { inbound: [], delivered: [], ended: [] };
   const frames: Client["frames"] = { sent: [] };

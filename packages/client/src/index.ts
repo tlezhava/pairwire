@@ -10,3 +10,6 @@ export { projectHash, resolveProjectDir } from "./project.js";
 export { createRoom, expiresAt, isOpen, listRooms, readSecret, readState, refreshActiveFlag, StateError, updateState, type RoomState, type RoomStatus } from "./state.js";
 export { DEFAULT_TUNING, RoomConnection, realTimers, wsSocketFactory, type ConnectionEvents, type ConnectionOptions, type ConnectionStatus, type EndReason, type SendInput, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 export { appendInbox, readInbox, readOutbox, updateOutbox, type InboxEntry, type OutboxEntry } from "./room-files.js";
+export { createMcpServer, runMcpServer } from "./mcp.js";
+export { ClientSession, type SessionOptions, type ToolResult } from "./session.js";
+export { CLIENT_VERSION } from "./version.js";
