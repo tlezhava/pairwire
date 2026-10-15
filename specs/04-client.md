@@ -21,6 +21,24 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 | `pairwire install [--codex\|--print-config <harness>]` | M6. Non-plugin installs. |
 | `pairwire purge [--all]` | Deletes left rooms' transcripts and inboxes, or all local state. |
 
+### Logging (INV-7)
+
+Diagnostics go through one logger, `packages/client/src/log.ts`:
+
+- Each line is JSON: `{t, level, event, ...fields}`. Field values are strings, numbers or
+  booleans. Levels are `debug`, `info`, `warn` and `error`; `PAIRWIRE_LOG=debug` turns on
+  debug lines, and the default is `info`.
+- Every line passes through core's `redact()`, which removes share strings and anything
+  the secret scanner matches. In addition, a field whose name contains `secret`, `token`,
+  `key`, `psk`, `share` or `password` is written as `[redacted]` whatever its value,
+  because raw keys and member tokens look like random text that no scanner recognizes.
+- Rooms appear only as a tag, the first 4 hex characters of `SHA-256(room_id)`, as in the
+  relays. Message bodies are never logged; the transcript (REQ-MSG-8) is their record.
+- An error is logged with its name, code, message and stack, each redacted.
+- The MCP server logs to stderr (stdout carries MCP), which Claude Code keeps with the
+  server's logs. Hooks log only errors, appended to `~/.pairwire/hook-errors.log` (0600);
+  above 1 MiB that file is moved to `hook-errors.log.1`, replacing the previous one.
+
 ## 2. Configuration
 
 `~/.pairwire/config.json` (all optional), overridable by environment variables:
@@ -32,6 +50,7 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 | `auto_continue` | — | `true` | Stop hook keeps the agent working when new messages arrive, and D3 wakes an idle session for them |
 | `hop_budget` | — | `8` | Max consecutive agent sends without human input (REQ-SAFE-4) |
 | `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `auto` = hooks inject messages; `pull` = agent must call `inbox` |
+| — | `PAIRWIRE_LOG` | `info` | Log level: `debug`, `info`, `warn` or `error` (section 1, Logging) |
 | `channels` | `PAIRWIRE_CHANNELS` | `false` | Later milestone, not in the MVP: use Claude Code Channels for push instead of hooks (section 6, D3) |
 
 `PAIRWIRE_HOME` moves the whole state directory (tests use this).
