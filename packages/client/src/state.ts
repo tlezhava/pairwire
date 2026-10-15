@@ -1,6 +1,7 @@
 // Per-room local state (04 §3): rooms/<room_id>/{secret, state.json}, plus the `active` flag.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { RELAY_LIMITS, SECRET_BYTES } from "@pairwire/core";
+import { randomBytes } from "@noble/hashes/utils.js";
+import { base32Encode, RELAY_LIMITS, SECRET_BYTES } from "@pairwire/core";
 import { z } from "zod";
 import { ensurePrivateDir, errorCode, PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, removeFile, withLock, writeFileAtomic } from "./fs-util.js";
 import { activeFlagPath, chooseCtlPath, ROOM_ID_PATTERN, roomDir, roomFile, roomsDir } from "./paths.js";
@@ -17,6 +18,7 @@ export type RoomStatus = (typeof ROOM_STATUSES)[number];
 
 export const roomStateSchema = z.strictObject({
   relay: z.string().nullable(),
+  instance: z.string().regex(ROOM_ID_PATTERN),
   member: z.enum(["a", "b"]).nullable(),
   token: z.string().nullable(),
   epoch: counter.nullable(),
@@ -60,6 +62,7 @@ export function createRoom(home: string, room: NewRoom, env: NodeJS.ProcessEnv =
   writeFileAtomic(roomFile(home, room.roomId, "secret"), room.secret);
   const state: RoomState = {
     relay: room.relay,
+    instance: base32Encode(randomBytes(16)),
     member: null,
     token: null,
     epoch: null,
