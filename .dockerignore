@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.wrangler
+.git
+spikes
+tests
+specs
+plugins
+coverage
+*.md
+!packages/*/package.json

@@ -26,3 +26,18 @@ jobs:
       - run: npm test
       - run: npm run traceability
       - run: npm run build
+
+  relay-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the relay-node image
+        run: docker build -f packages/relay-node/Dockerfile -t pairwire-relay:ci .
+      - name: Smoke-test the image
+        run: |
+          docker run -d --name relay -p 8787:8787 pairwire-relay:ci
+          for i in $(seq 1 20); do curl -fs localhost:8787/health && break; sleep 1; done
+          test "$(curl -fs localhost:8787/health)" = ok
+          curl -fs localhost:8787/v1/info | grep -q '"protocol":\[1\]'
+          test "$(docker exec relay id -un)" = node
+          docker rm -f relay
