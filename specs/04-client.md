@@ -21,6 +21,28 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 | `pairwire install [--codex\|--print-config <harness>]` | M6. Non-plugin installs. |
 | `pairwire purge [--all]` | Deletes left rooms' transcripts and inboxes, or all local state. |
 
+### `doctor` and `purge`
+
+`pairwire doctor` prints one line per check, `ok`, `warn` or `FAIL`, and exits 1 if any check
+fails:
+
+1. Node version is at least 20 (REQ-INST-4); otherwise it says exactly what to install.
+2. `config.json` and the `PAIRWIRE_*` variables parse; unknown keys are warnings.
+3. State permissions (INV-9), with the fix command.
+4. Relay reachability: `GET https://<host>/health` (http for loopback hosts) answers `ok`
+   within 5 s, for the configured relay and the relay of every open room.
+5. Rooms: each stored room's status, peer and expiry, and whether the `active` flag
+   matches (it is repaired if not).
+6. Plugin wiring, when run from a plugin bundle: `hooks/run.sh` and `hooks/hooks.json` exist
+   next to `dist/`.
+
+It never prints secrets, tokens or share strings.
+
+`pairwire purge` deletes the directories of rooms whose status is `left` or `ended`
+(transcript, inbox and everything else). `pairwire purge --all` deletes the whole state
+directory, but refuses while any room is open (`waiting` or `active`) unless `--force` is
+also given, because that abandons the peer without a `leave`. Both print what they deleted.
+
 ### Logging (INV-7)
 
 Diagnostics go through one logger, `packages/client/src/log.ts`:
