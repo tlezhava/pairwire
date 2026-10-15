@@ -166,7 +166,7 @@ Client → relay:
 |---|---|
 | `{"t":"join","v":1,"token":null}` | First frame on a new connection, within 10 s. `token` is `null` on first join, or the token the relay issued earlier. |
 | `{"t":"leave"}` | User ended the room. The room is over for both members. |
-| `{"t":"ping"}` | Keepalive every 30 s, exact bytes. Answered with `{"t":"pong"}` by auto-response. |
+| `{"t":"ping"}` | Keepalive every 30 s, exact bytes. Answered with `{"t":"pong"}` by auto-response, at any time (also before `join`). It is not activity and does not count as the first frame for the join rule. |
 
 Relay → client:
 

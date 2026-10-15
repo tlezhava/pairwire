@@ -60,7 +60,7 @@ State per room:
 
 ```ts
 interface RoomState {
-  createdAt: number;               // ms
+  createdAt: number;               // ms; the first accepted join creates the room
   lastActivityAt: number;          // ms; any frame, connect or disconnect
   epoch: number;                   // +1 on every accepted socket (02 §4.1)
   ended: null | { at: number; reason: "left" | "expired" };   // tombstone: no tokens, no buffers
