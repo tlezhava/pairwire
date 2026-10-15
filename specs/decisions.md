@@ -230,11 +230,27 @@ Answer:
 - Hooks for one event run in parallel, in no fixed order.
 - Timing: cold no-op Node hook 27 ms p50 / 32 ms p95; `sh` fast path about 4 ms; a hook's own
   work about 2 ms.
-- **Open:** `systemMessage` returned from `UserPromptSubmit` was shown to neither the human
-  nor the model, so the human-visible warning channel (REQ-SAFE-5, REQ-INST-4) is unresolved.
+- `systemMessage` returned from `UserPromptSubmit` was not seen, in a run where two hooks
+  (shell and exec copies) served that event. S1b settled the warning channel.
 
 Evidence: `spikes/s1/out/hooks.jsonl` (local, gitignored) and the session transcripts
 pasted by the human.
+
+### S1b Which hook output does the human see? (2026-10-15)
+
+Method: a plugin (`spikes/s1b/`) with one hook per event, each returning `systemMessage`
+with a numbered marker, plus a `PostToolUse` `additionalContext` asking the agent to repeat
+a marker. The human ran one prompt in Claude Code 2.1.300 (default mode) and reported what
+appeared on screen.
+
+Answer: `systemMessage` is shown to the human as a grey line "<Event> says: <text>" under
+the prompt, tool call or reply for `UserPromptSubmit`, `PostToolUse` and `Stop` (a `Stop`
+hook can show one without blocking). It is **not** shown for `SessionStart`. The model
+doesn't see `systemMessage`. An instruction in `additionalContext` was relayed by the agent
+word for word, but that depends on the model's cooperation. Decision: REQ-SAFE-5 and
+REQ-INST-4 warnings use `systemMessage` from the first non-`SessionStart` hook that notices
+(`04` §6). Claude Code also labels a Stop block's reason "Stop hook error", so pairwire's
+blocking reasons start with a plain explanatory line.
 
 ### S2 Project directory and process tree (2026-10-15)
 
@@ -261,4 +277,4 @@ project's `.claude/settings.local.json` `permissions.allow`.
 Finding with security impact: in **auto** permission mode (the human's own default),
 and whenever that allow rule exists, `send` runs with no prompt at all. Other approval
 prompts offer "Yes, and switch to auto mode". INV-4 ("human approves outbound by
-default") holds only in default mode; see the open REQ-SAFE-5 question.
+default") holds only in default mode; REQ-SAFE-5 now covers it (ADR-017).

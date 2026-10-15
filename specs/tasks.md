@@ -9,7 +9,7 @@ deploy or a publish); prepare everything, then stop and ask.
 Each spike ends with: a `decisions.md` entry (question, method, answer, evidence) and the
 affected spec updated (remove the matching **[verify: Sn]** marker).
 
-- [ ] **S1 Hook delivery in Claude Code.** Build a throwaway plugin with the four hooks from
+- [x] **S1 Hook delivery in Claude Code.** Build a throwaway plugin with the four hooks from
   `04-client.md` section 9. Confirm: `additionalContext` from `PostToolUse`,
   `UserPromptSubmit` and `SessionStart` reaches the model; `Stop` with
   `decision: "block"` + `reason` keeps the agent working and shows the reason to it; the

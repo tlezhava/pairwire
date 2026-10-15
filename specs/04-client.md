@@ -213,7 +213,8 @@ rule also holds when Node is missing:
 1. If `${PAIRWIRE_HOME:-$HOME/.pairwire}/active` does not exist (no room on this
    machine), exit 0 immediately without starting Node.
 2. If `node` is missing or older than 20: print a one-time notice telling the human what
-   to install (REQ-INST-4), using the user-visible output field from S1. Record that it
+   to install (REQ-INST-4) as `{"systemMessage": …}` on stdout (S1b: shown to the human from
+   every event except `SessionStart`, which therefore skips this step). Record that it
    was shown in `hook-node-warned` under the state dir, then exit 0.
 3. Otherwise `exec node "<plugin root>/dist/pairwire.mjs" hook <event>`, with stdin
    passed through. The wrapper derives the plugin root from its own path.
@@ -224,7 +225,7 @@ removes the flag when no such room remains.
 | Hook | Behavior |
 |---|---|
 | `SessionStart` (all sources) | If the project has an active room: `additionalContext` = one-paragraph reminder (paired with whom, how messages arrive, follow the pairwire skill). This re-orients the agent after `compact`/`resume`. |
-| every hook | REQ-SAFE-5: if a room is active, the hook input's `permission_mode` is `bypassPermissions` or `auto` (S6: both run `send` without a prompt), and the hook input's `session_id` is not in `bypass_warned_sessions`, show the human a warning and add the `session_id` (once per session, so a restart in bypass mode warns again) **[open: S1 found that `systemMessage` from `UserPromptSubmit` is shown to neither the human nor the model; the warning channel is undecided]**. Checked in every hook because pairing and mode changes happen mid-session. |
+| every hook | REQ-SAFE-5: if a room is active, the hook input's `permission_mode` is `bypassPermissions` or `auto` (S6: both run `send` without a prompt), and the hook input's `session_id` is not in `bypass_warned_sessions`, show the human a warning and add the `session_id` (once per session, so a restart in bypass mode warns again) The warning is a `systemMessage`, which Claude Code shows the human as a grey "<Event> says: …" line from `UserPromptSubmit`, `PostToolUse` and `Stop` hooks, but not from `SessionStart` (S1b); the model doesn't see it. So `SessionStart` never warns; the next other hook does. Checked in every hook because pairing and mode changes happen mid-session. |
 | `UserPromptSubmit` | Reset `hop_count` to 0 (human input). Inject undelivered messages as `additionalContext`. |
 | `PostToolUse` (all tools) | Inject undelivered messages as `additionalContext`. Mark them delivered. |
 | `Stop` | Claude Code shows a blocking reason to the human as "Stop hook error: <reason>" (S1), so the reason starts with a plain line such as "pairwire: new message(s) from your collaborator; handling them before stopping." If there are undelivered items (messages or local notices, section 5) and `auto_continue` is true: `{"decision":"block","reason": <rendered messages>}` so the agent handles them before stopping. Mark them delivered. Otherwise exit 0. Blocks only for **new** messages, so it cannot loop on its own; cross-agent ping-pong is bounded by both sides' hop budgets. |
