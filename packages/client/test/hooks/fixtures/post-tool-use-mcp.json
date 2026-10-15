@@ -1,0 +1,29 @@
+{
+  "session_id": "b8212206-03e4-465e-b902-18e10f390cb0",
+  "transcript_path": "/Users/tamazlezhava/.claude/projects/-private-tmp-pw-s1/b8212206-03e4-465e-b902-18e10f390cb0.jsonl",
+  "cwd": "/private/tmp/pw-s1",
+  "scratchpad_dir": "/private/tmp/claude-501/-private-tmp-pw-s1/b8212206-03e4-465e-b902-18e10f390cb0/scratchpad",
+  "prompt_id": "f2f893f3-ba11-42da-bc47-22d4d5c6ed15",
+  "permission_mode": "default",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "mcp__plugin_pairwire_pairwire__send",
+  "tool_input": {
+    "kind": "chat",
+    "body": "line 01: the quick brown fox checks the approval prompt for truncation.\nline 02: the quick brown fox checks the approval prompt for truncation.\nline 03: the quick brown fox checks the approval prompt for truncation.\nline 04: the quick brown fox checks the approval prompt for truncation.\nline 05: the quick brown fox checks the approval prompt for truncation.\nline 06: the quick brown fox checks the approval prompt for truncation.\nline 07: the quick brown fox checks the approval prompt for truncation.\nline 08: the quick brown fox checks the approval prompt for truncation.\nline 09: the quick brown fox checks the approval prompt for truncation.\nline 10: the quick brown fox checks the approval prompt for truncation.\nline 11: the quick brown fox checks the approval prompt for truncation.\nline 12: the quick brown fox checks the approval prompt for truncation.\nline 13: the quick brown fox checks the approval prompt for truncation.\nline 14: the quick brown fox checks the approval prompt for truncation.\nline 15: the quick brown fox checks the approval prompt for truncation.\nline 16: the quick brown fox checks the approval prompt for truncation.\nline 17: the quick brown fox checks the approval prompt for truncation.\nline 18: the quick brown fox checks the approval prompt for truncation.\nline 19: the quick brown fox checks the approval prompt for truncation.\nline 20: the quick brown fox checks the approval prompt for truncation.\nline 21: the quick brown fox checks the approval prompt for truncation.\nline 22: the quick brown fox checks the approval prompt for truncation.\nline 23: the quick brown fox checks the approval prompt for truncation.\nline 24: the quick brown fox checks the approval prompt for truncation.\nline 25: the quick brown fox checks the approval prompt for truncation.\nline 26: the quick brown fox checks the approval prompt for truncation.\nline 27: the quick brown fox checks the approval prompt for truncation.\nline 28: the quick brown fox checks the a\nEND-OF-BODY"
+  },
+  "tool_response": [
+    {
+      "type": "text",
+      "text": "spike send received: kind=chat, 1997 characters, ends with \"ks the a\nEND-OF-BODY\""
+    }
+  ],
+  "tool_use_id": "toolu_01M4evDjCgEsX9dVKHTzFz4S",
+  "duration_ms": 17,
+  "mcp_server": {
+    "name": "plugin:pairwire:pairwire",
+    "source": "plugin"
+  }
+}

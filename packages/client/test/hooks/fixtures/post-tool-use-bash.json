@@ -1,0 +1,26 @@
+{
+  "session_id": "dfa84efc-8931-453d-9140-1cf7198144de",
+  "transcript_path": "/Users/tamazlezhava/.claude/projects/-private-tmp-pw-s1/dfa84efc-8931-453d-9140-1cf7198144de.jsonl",
+  "cwd": "/private/tmp/pw-s1",
+  "scratchpad_dir": "/private/tmp/claude-501/-private-tmp-pw-s1/dfa84efc-8931-453d-9140-1cf7198144de/scratchpad",
+  "prompt_id": "512d18e6-5e55-47f8-9a90-7e39a6e1d812",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls -a",
+    "description": "List all files including hidden"
+  },
+  "tool_response": {
+    "stdout": ".\n..\n.git\nsub",
+    "stderr": "",
+    "interrupted": false,
+    "isImage": false,
+    "noOutputExpected": false
+  },
+  "tool_use_id": "toolu_01RvdYb71DtAcv9hYGYBUXLU",
+  "duration_ms": 549
+}

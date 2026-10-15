@@ -1,0 +1,16 @@
+{
+  "session_id": "dfa84efc-8931-453d-9140-1cf7198144de",
+  "transcript_path": "/Users/tamazlezhava/.claude/projects/-private-tmp-pw-s1/dfa84efc-8931-453d-9140-1cf7198144de.jsonl",
+  "cwd": "/private/tmp/pw-s1",
+  "scratchpad_dir": "/private/tmp/claude-501/-private-tmp-pw-s1/dfa84efc-8931-453d-9140-1cf7198144de/scratchpad",
+  "prompt_id": "685a06b5-0cb9-495f-adcc-826da7d79ba4",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "Stop",
+  "stop_hook_active": false,
+  "last_assistant_message": "I found three strings that start with `CANARY-`:\n\n1. **`CANARY-SS-startup-vbd0`**: in a \"SessionStart hook additional context\" line. It came in the system-injected block after your message, just before the Environment section.\n2. **`CANARY-UPS-EXEC-r5da`**: in a \"UserPromptSubmit hook additional context\" line, after the Environment, skills and auto-mode sections.\n3. **`CANARY-UPS-tjz4`**: in a second \"UserPromptSubmit hook additional context\" line, right after #2 and just before the \"Today's date is 2026-10-15\" line.\n\nAll three came from hooks, not from your typed text. Nothing in the main system prompt or the earlier system-reminder blocks (git status, email, commit attribution) starts with `CANARY-`.\n\n**SYSMSG:** I don't see `SYSMSG` in uppercase anywhere in my context. The only match is the lowercase \"sysmsg test\" at the start of your own message. If the test injected a SYSMSG marker through some other channel, it didn't reach me.",
+  "background_tasks": [],
+  "session_crons": []
+}

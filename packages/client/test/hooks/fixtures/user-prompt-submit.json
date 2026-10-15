@@ -1,0 +1,10 @@
+{
+  "session_id": "b8212206-03e4-465e-b902-18e10f390cb0",
+  "transcript_path": "/Users/tamazlezhava/.claude/projects/-private-tmp-pw-s1/b8212206-03e4-465e-b902-18e10f390cb0.jsonl",
+  "cwd": "/private/tmp/pw-s1",
+  "scratchpad_dir": "/private/tmp/claude-501/-private-tmp-pw-s1/b8212206-03e4-465e-b902-18e10f390cb0/scratchpad",
+  "prompt_id": "f2f893f3-ba11-42da-bc47-22d4d5c6ed15",
+  "permission_mode": "default",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Call the pairwire send tool with kind \"chat\" and body set to the exact contents of /Users/tamazlezhava/Projects/pairwire/spikes/s1/body-2000.txt"
+}

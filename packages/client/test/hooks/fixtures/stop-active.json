@@ -1,0 +1,16 @@
+{
+  "session_id": "dfa84efc-8931-453d-9140-1cf7198144de",
+  "transcript_path": "/Users/tamazlezhava/.claude/projects/-private-tmp-pw-s1/dfa84efc-8931-453d-9140-1cf7198144de.jsonl",
+  "cwd": "/private/tmp/pw-s1",
+  "scratchpad_dir": "/private/tmp/claude-501/-private-tmp-pw-s1/dfa84efc-8931-453d-9140-1cf7198144de/scratchpad",
+  "prompt_id": "685a06b5-0cb9-495f-adcc-826da7d79ba4",
+  "permission_mode": "auto",
+  "effort": {
+    "level": "high"
+  },
+  "hook_event_name": "Stop",
+  "stop_hook_active": true,
+  "last_assistant_message": "CANARY-STOP-ji1k\n\nThat's the fourth canary. It came from Stop hook feedback (`hook.mjs stop`) after my last reply, which the hook blocked once.",
+  "background_tasks": [],
+  "session_crons": []
+}
