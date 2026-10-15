@@ -1,0 +1,32 @@
+{
+  "name": "pairwire-monorepo",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/relay-node",
+    "packages/relay-worker",
+    "packages/client"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "build:plugin": "node scripts/not-yet.mjs build:plugin M4-3",
+    "test": "vitest run",
+    "test:e2e": "node scripts/not-yet.mjs test:e2e M3-8",
+    "lint": "eslint . && npm run typecheck --workspaces",
+    "relay:dev": "node scripts/not-yet.mjs relay:dev M2-3",
+    "relay:node": "node scripts/not-yet.mjs relay:node M2-2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^20.19.0",
+    "eslint": "^10.12.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.2",
+    "vite": "^7.3.7",
+    "vitest": "^4.1.11"
+  }
+}

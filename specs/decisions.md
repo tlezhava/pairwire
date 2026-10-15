@@ -151,6 +151,29 @@ approved the fixes and the defaults for the open questions. What changed:
 Still open: the hosted relay host (`workers.dev` vs. own domain), decided before M4-8;
 repo visibility, decided before M4-7.
 
+## ADR-015 Toolchain pins (M1-1)
+
+Status: accepted (2026-10-15)
+
+- **TypeScript ~5.9.3.** The latest release is 7.x (the native port), but
+  `01-architecture.md` specifies 5.x, and `typescript-eslint` 8 supports only `<6.1`.
+  Revisit together with `typescript-eslint`.
+- **vitest ^4.1.** `@cloudflare/vitest-pool-workers` (needed in M2-3) requires vitest
+  4.1, so we don't take vitest 5.
+- **vite ^7.3, pinned explicitly.** Vite 8 declares an optional `@vitejs/devtools` peer,
+  which resolves to `vitest@*` (5.x) and collides with vitest 4.1.
+- **npm 11 for dependency changes.** npm 10.9.3, which ships with Node 20 and 22, crashes
+  while resolving vitest's optional peers (`Cannot read properties of null (reading
+  'edgesOut')` in `#loadPeerSet`). npm 11.21 resolves the same tree. The lockfile was
+  generated with npm 11 and normalized by npm 10, which drops npm 11's `libc` metadata.
+  `npm ci` and `npm install` against it work with npm 10, so CI uses the bundled npm.
+- **Workspace sources.** Packages export their TypeScript sources under the `source`
+  condition. Typecheck (`customConditions`) and vitest resolve those, so tests never
+  need a prior build. `dist/` is used only by builds.
+- **Core isomorphism, enforced twice.** `packages/core/tsconfig.json` checks `src` with
+  `lib: ES2022` and `types: []` (no Node, no DOM), and ESLint forbids Node built-in
+  imports and the `process`/`Buffer` globals there.
+
 ## Spike findings
 
 (Add S1–S9 results here.)

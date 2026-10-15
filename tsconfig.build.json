@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core/tsconfig.build.json" },
+    { "path": "packages/relay-node/tsconfig.build.json" },
+    { "path": "packages/relay-worker/tsconfig.build.json" },
+    { "path": "packages/client/tsconfig.build.json" }
+  ]
+}

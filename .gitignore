@@ -1,2 +1,6 @@
 KICKOFF.md
 spikes/*/out/
+node_modules/
+packages/*/dist/
+coverage/
+*.tsbuildinfo

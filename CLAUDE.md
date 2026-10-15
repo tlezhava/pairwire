@@ -83,10 +83,16 @@ These are created in task M1-1; keep this list in sync with `package.json`.
 ```bash
 npm install
 npm run build          # build all packages
-npm run build:plugin   # bundle the client into plugins/claude-code/dist and generate SKILL.md
+npm run build:plugin   # bundle the client into plugins/claude-code/dist and generate SKILL.md (M4-3)
 npm test               # unit + integration tests
-npm run test:e2e       # two-client end-to-end tests against a local relay
+npm run test:e2e       # two-client end-to-end tests against a local relay (M3-8)
 npm run lint           # eslint + tsc --noEmit
-npm run relay:dev      # Cloudflare relay locally (wrangler dev)
-npm run relay:node     # Node relay locally
+npm run relay:dev      # Cloudflare relay locally (wrangler dev) (M2-3)
+npm run relay:node     # Node relay locally (M2-2)
 ```
+
+Scripts marked with a task exit with "not implemented yet" until that task lands.
+
+Adding or upgrading a dependency: use `npx npm@11 install <pkg>`. npm 10.9, which ships
+with Node 20 and 22, crashes while resolving vitest's optional peers (ADR-015).
+`npm install` and `npm ci` against the committed lockfile work with npm 10.
