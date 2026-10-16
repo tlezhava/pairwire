@@ -356,6 +356,41 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
+const slotSchema = z.strictObject({
+  token: z.string(),
+  connected: z.boolean(),
+  buffer: z.array(z.strictObject({ at: z.number().int(), bytes: z.string() })),
+});
+const roomStateSchema = z.strictObject({
+  createdAt: z.number().int(),
+  lastActivityAt: z.number().int(),
+  epoch: z.number().int().nonnegative(),
+  ended: z.strictObject({ at: z.number().int(), reason: z.enum(["left", "expired"]) }).nullable(),
+  slots: z.strictObject({ a: slotSchema.optional(), b: slotSchema.optional() }),
+});
+
+/** RoomState as JSON text, frame bytes as base64url (03, Room state machine). */
+export function encodeRoomState(state: RoomState): string {
+  const slot = (s: Slot) => ({ ...s, buffer: s.buffer.map((f) => ({ at: f.at, bytes: base64url(f.bytes) })) });
+  return JSON.stringify({
+    ...state,
+    slots: { ...(state.slots.a && { a: slot(state.slots.a) }), ...(state.slots.b && { b: slot(state.slots.b) }) },
+  });
+}
+
+/** Inverse of encodeRoomState; throws on anything that isn't a valid encoded RoomState. */
+export function decodeRoomState(text: string): RoomState {
+  const parsed = roomStateSchema.parse(JSON.parse(text));
+  const slot = (s: z.infer<typeof slotSchema>): Slot => ({
+    ...s,
+    buffer: s.buffer.map((f) => ({ at: f.at, bytes: base64urlDecode(f.bytes) })),
+  });
+  const slots: RoomState["slots"] = {};
+  if (parsed.slots.a) slots.a = slot(parsed.slots.a);
+  if (parsed.slots.b) slots.b = slot(parsed.slots.b);
+  return { ...parsed, slots };
+}
+
 const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /** base64url without padding. */
@@ -366,5 +401,26 @@ export function base64url(bytes: Uint8Array): string {
     const chars = Math.min(4, Math.ceil(((bytes.length - i) * 8) / 6));
     for (let k = 0; k < chars; k++) out += B64URL[(n >> (18 - 6 * k)) & 63];
   }
+  return out;
+}
+
+/** Inverse of base64url; throws on padding, foreign characters or a non-canonical tail. */
+export function base64urlDecode(text: string): Uint8Array {
+  if (text.length % 4 === 1) throw new Error("bad base64url length");
+  const out = new Uint8Array(Math.floor((text.length * 6) / 8));
+  let acc = 0;
+  let bits = 0;
+  let o = 0;
+  for (const ch of text) {
+    const v = B64URL.indexOf(ch);
+    if (v < 0) throw new Error("bad base64url character");
+    acc = ((acc << 6) | v) & 0xffff;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out[o++] = (acc >> bits) & 0xff;
+    }
+  }
+  if ((acc & ((1 << bits) - 1)) !== 0) throw new Error("non-canonical base64url");
   return out;
 }
