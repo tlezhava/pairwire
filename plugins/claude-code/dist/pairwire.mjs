@@ -7,6 +7,8 @@ import {
 import "./chunks/chunk-KARZWXGF.mjs";
 
 // packages/client/src/main.ts
+import nodeModule from "node:module";
+nodeModule.enableCompileCache?.();
 async function readStdin() {
   let text = "";
   for await (const chunk of process.stdin) text += String(chunk);

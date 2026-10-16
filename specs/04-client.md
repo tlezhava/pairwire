@@ -391,7 +391,9 @@ With `hold` on (section 2), the human sees peer messages before their agent does
 
 All hooks: exit 0 with empty output in under 100 ms p95 when there is nothing to deliver.
 S1 measured a cold no-op Node hook at 27 ms p50 / 32 ms p95 and the `run.sh` fast path at
-about 4 ms (M4 re-measures with the real bundle). Hooks for the same event run in
+about 4 ms. With a room active, the real hook (`run.sh` → bundle) measured about 75 ms p50 in
+0.1.0; remembering the Node check and Node's compile cache bring it to about 53 ms (M7
+single-binary spike, which found a binary not worth its size for this). Hooks for the same event run in
 parallel, in no fixed order. Hooks never fail the harness: any internal
 error → exit 0, no output, error logged to `~/.pairwire/hook-errors.log`.
 
@@ -400,12 +402,17 @@ rule also holds when Node is missing:
 
 1. If `${PAIRWIRE_HOME:-$HOME/.pairwire}/active` does not exist (no room on this
    machine), exit 0 immediately without starting Node.
-2. If `node` is missing or older than 20: print a one-time notice telling the human what
+2. Check Node: `node --version` costs a process start, so a Node binary that passed is
+   remembered in `node-ok` under the state dir (its path) and checked again only when that
+   binary is newer than the file (shell builtins only). If `node` is missing or older than
+   20: print a one-time notice telling the human what
    to install (REQ-INST-4) as `{"systemMessage": …}` on stdout (S1b: shown to the human from
    every event except `SessionStart`, which therefore skips this step). Record that it
    was shown in `hook-node-warned` under the state dir, then exit 0.
 3. Otherwise `exec node "<plugin root>/dist/pairwire.mjs" hook <event>`, with stdin
-   passed through. The wrapper derives the plugin root from its own path.
+   passed through. The wrapper derives the plugin root from its own path. The client turns on
+   Node's compile cache (`module.enableCompileCache()`, Node >= 22.1) before loading anything
+   else.
 
 **On native Windows** `run.sh` stays the single entry point; there is no PowerShell or
 `.cmd` variant, so pairwire's hooks need Git for Windows, whose `sh` runs the wrapper. Git for
