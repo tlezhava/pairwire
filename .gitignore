@@ -6,3 +6,4 @@ packages/*/dist/
 coverage/
 *.tsbuildinfo
 .wrangler/
+build/
