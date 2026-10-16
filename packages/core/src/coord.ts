@@ -3,9 +3,9 @@
 import type { BasicEnvelope, CollabEnvelope, Envelope } from "./envelope.js";
 import { isCollabKind } from "./envelope.js";
 
-/** Active claims that count per side, and contract names the view keeps (02 §6.3.4). */
+/** Active claims that count per side, and new contract names per side (02 §6.3.4). */
 export const MAX_ACTIVE_CLAIMS = 16;
-export const MAX_CONTRACT_NAMES = 50;
+export const MAX_CONTRACT_NAMES_PER_SIDE = 25;
 
 const MINUTE = 60_000;
 
@@ -17,6 +17,7 @@ export type Match =
   | "not_their_claim"
   | "already_released"
   | "stale_version"
+  | "version_gap"
   | "unknown_proposal"
   | "not_your_proposal"
   | "hash_mismatch"
@@ -83,8 +84,10 @@ export interface CoordView {
   info(side: Side, id: string): MessageInfo | undefined;
   claim(side: Side, id: string): ClaimRecord | undefined;
   proposal(side: Side, id: string): ProposalRecord | undefined;
-  /** The highest version proposed for `name` by either side, 0 if none. */
+  /** The highest version proposed for `name` by either side, 0 if none (`version_gap` ones left out). */
   maxVersion(name: string): number;
+  /** How many contract names each side has proposed under (`over_limit` and `version_gap` left out). */
+  contractNames: Record<Side, number>;
 }
 
 const other = (side: Side): Side => (side === "peer" ? "ours" : "peer");
@@ -101,13 +104,16 @@ export function coordView(input: CoordInput): CoordView {
   const proposals = new Map<string, ProposalRecord>();
   const live = new Map<string, ProposalRecord>();
   const maxVersion = new Map<string, number>();
+  const names: Record<Side, Set<string>> = { peer: new Set(), ours: new Set() };
+  // Claims that counted and may still be active, per side: never more than MAX_ACTIVE_CLAIMS,
+  // so each claim costs O(1) however many the peer sends (02 §6.3.4).
+  const active: Record<Side, ClaimRecord[]> = { peer: [], ours: [] };
 
   const collab = input.messages
     .filter((m): m is CoordMessage & { envelope: CollabEnvelope } => isCollabKind(m.envelope.kind))
     .sort((a, b) => a.at - b.at || a.side.localeCompare(b.side) || a.envelope.id.localeCompare(b.envelope.id));
 
-  const activeAt = (side: Side, t: number) =>
-    [...claims.values()].filter((c) => c.side === side && c.counted && c.releasedAt === null && c.expiresAt > t);
+  const isActive = (c: ClaimRecord, t: number) => c.counted && c.releasedAt === null && c.expiresAt > t;
 
   for (const { side, envelope: env, at } of collab) {
     const k = key(side, env.id);
@@ -116,9 +122,13 @@ export function coordView(input: CoordInput): CoordView {
       case "heads_up":
         break;
       case "claim": {
-        const counted = activeAt(side, at).length < MAX_ACTIVE_CLAIMS;
+        // Messages come in time order, so a claim that ended before `at` stays ended.
+        active[side] = active[side].filter((c) => isActive(c, at));
+        const counted = active[side].length < MAX_ACTIVE_CLAIMS;
         const expiresAt = Math.min(at + env.data.ttl_min * MINUTE, input.roomExpiresAt);
-        claims.set(k, { side, id: env.id, paths: env.data.paths, at, expiresAt, counted, releasedAt: null });
+        const record: ClaimRecord = { side, id: env.id, paths: env.data.paths, at, expiresAt, counted, releasedAt: null };
+        claims.set(k, record);
+        if (counted) active[side].push(record);
         infos.set(k, counted ? { match: "yes", expiresAt } : { match: "over_limit" });
         break;
       }
@@ -153,17 +163,29 @@ export function coordView(input: CoordInput): CoordView {
           answer: null,
         };
         proposals.set(k, record);
-        if (current && (current.version > d.version || (current.version === d.version && current.id >= env.id))) {
-          infos.set(k, { match: "stale_version" });
-        } else if (!current && live.size >= MAX_CONTRACT_NAMES) {
+        // Past the next version: a concurrent proposal still fits in +1, a squat doesn't.
+        if (d.version > (maxVersion.get(d.name) ?? 0) + 1) {
+          infos.set(k, { match: "version_gap" });
+          break;
+        }
+        // A new name counts against the side proposing it; a name stays live once it is.
+        if (!current && names[side].size >= MAX_CONTRACT_NAMES_PER_SIDE) {
           infos.set(k, { match: "over_limit" });
           break;
-        } else {
-          record.counted = true;
-          live.set(d.name, record);
-          infos.set(k, { match: "yes" });
         }
+        names[side].add(d.name);
         maxVersion.set(d.name, Math.max(maxVersion.get(d.name) ?? 0, d.version));
+        // Equal versions go by id only while the live one is unanswered (proposed at once);
+        // an answered version is never replaced at that version.
+        const replaces =
+          !current || current.version < d.version || (current.version === d.version && current.state === "pending" && current.id < env.id);
+        if (!replaces) {
+          infos.set(k, { match: "stale_version" });
+          break;
+        }
+        record.counted = true;
+        live.set(d.name, record);
+        infos.set(k, { match: "yes" });
         break;
       }
       case "contract_response": {
@@ -194,7 +216,8 @@ export function coordView(input: CoordInput): CoordView {
     if (info?.match === "yes") info.status = live.get(p.name) === p ? p.state : "superseded";
   }
 
-  const activeNow = (side: Side) => (input.roomOpen ? activeAt(side, input.now) : []);
+  const all = [...claims.values()];
+  const activeNow = (side: Side) => (input.roomOpen ? all.filter((c) => c.side === side && isActive(c, input.now)) : []);
   return {
     claims: { peer: activeNow("peer"), ours: activeNow("ours") },
     contracts: [...live.values()].sort((a, b) => a.name.localeCompare(b.name)),
@@ -202,6 +225,7 @@ export function coordView(input: CoordInput): CoordView {
     claim: (side, id) => claims.get(key(side, id)),
     proposal: (side, id) => proposals.get(key(side, id)),
     maxVersion: (name) => maxVersion.get(name) ?? 0,
+    contractNames: { peer: names.peer.size, ours: names.ours.size },
   };
 }
 

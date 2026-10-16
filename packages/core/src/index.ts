@@ -40,7 +40,7 @@ export {
 } from "./envelope.js";
 export {
   MAX_ACTIVE_CLAIMS,
-  MAX_CONTRACT_NAMES,
+  MAX_CONTRACT_NAMES_PER_SIDE,
   coordView,
   fallbackBody,
   fallbackEnvelope,

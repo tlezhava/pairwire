@@ -1,6 +1,6 @@
 // The coordination view (02 §6.3.4, 04 §3 Coordination state): a pure function with a fake clock.
 import { describe, expect, it } from "vitest";
-import { coordView, MAX_ACTIVE_CLAIMS, MAX_CONTRACT_NAMES, type CoordMessage, type Side } from "../src/coord.js";
+import { coordView, MAX_ACTIVE_CLAIMS, MAX_CONTRACT_NAMES_PER_SIDE, type CoordMessage, type Side } from "../src/coord.js";
 import type { Envelope } from "../src/envelope.js";
 
 const MIN = 60_000;
@@ -118,8 +118,8 @@ describe("coordView: contracts (REQ-COLLAB-3)", () => {
   });
 
   it("REQ-COLLAB-3 records nothing for a response whose name, version or hash differ", () => {
-    const p = propose("orders-api", 2);
-    for (const over of [{ sha256: SHA_B }, { version: 3 }, { name: "events" }]) {
+    const p = propose("orders-api", 1);
+    for (const over of [{ sha256: SHA_B }, { version: 2 }, { name: "events" }]) {
       const r = respond(p, "accept", over);
       const v = view([at("ours", p), at("peer", r, 1)], 2);
       expect(v.info("peer", r.id)?.match, JSON.stringify(over)).toBe("hash_mismatch");
@@ -152,8 +152,8 @@ describe("coordView: contracts (REQ-COLLAB-3)", () => {
   });
 
   it("orders equal versions by id, so both sides compute the same live proposal", () => {
-    const fromA = propose("orders-api", 3);
-    const fromB = propose("orders-api", 3, SHA_B); // higher id
+    const fromA = propose("orders-api", 1);
+    const fromB = propose("orders-api", 1, SHA_B); // higher id
     const viewA = view([at("ours", fromA), at("peer", fromB, 1)], 2);
     const viewB = view([at("ours", fromB), at("peer", fromA, 1)], 2);
     expect(viewA.contracts[0]?.id).toBe(fromB.id);
@@ -162,13 +162,60 @@ describe("coordView: contracts (REQ-COLLAB-3)", () => {
     expect(viewB.info("peer", fromA.id)).toEqual({ match: "stale_version" });
   });
 
-  it(`keeps at most ${MAX_CONTRACT_NAMES} contract names`, () => {
-    const props = Array.from({ length: MAX_CONTRACT_NAMES + 1 }, (_, i) => propose(`c${i}`, 1));
-    const v = view(props.map((p) => at("peer", p)), 1);
-    expect(v.contracts).toHaveLength(MAX_CONTRACT_NAMES);
-    expect(v.info("peer", props[MAX_CONTRACT_NAMES]!.id)).toEqual({ match: "over_limit" });
-    const next = propose("c0", 2);
-    expect(view([...props.map((p) => at("peer", p)), at("peer", next, 1)], 2).info("peer", next.id)?.match).toBe("yes");
+  it("REQ-COLLAB-3 an answered proposal can't be replaced at its version, whatever the id", () => {
+    const ours = propose("api", 1);
+    const accepted = respond(ours);
+    const swap = propose("api", 1, SHA_B, { id: "7ZZZZZZZZZZZZZZZZZZZZZZZZZ" });
+    const v = view([at("ours", ours), at("peer", accepted, 1), at("peer", swap, 2)], 3);
+    expect(v.info("peer", swap.id)).toEqual({ match: "stale_version" });
+    expect(v.info("ours", ours.id)).toEqual({ match: "yes", status: "accepted" });
+    expect(v.contracts.map((c) => [c.id, c.sha256, c.state])).toEqual([[ours.id, SHA_A, "accepted"]]);
+    // a rejected one too; a new version still goes live
+    const theirs = propose("events", 1);
+    const no = respond(theirs, "reject");
+    const same = propose("events", 1, SHA_B, { id: "7ZZZZZZZZZZZZZZZZZZZZZZZZY" });
+    const next = propose("events", 2, SHA_B);
+    const w = view([at("peer", theirs), at("ours", no, 1), at("peer", same, 2), at("peer", next, 3)], 4);
+    expect(w.info("peer", same.id)).toEqual({ match: "stale_version" });
+    expect(w.info("peer", next.id)).toEqual({ match: "yes", status: "pending" });
+    expect(w.info("peer", theirs.id)).toEqual({ match: "yes", status: "superseded" });
+  });
+
+  it("REQ-COLLAB-6 a version past the next one is version_gap and doesn't raise the version", () => {
+    const squat = propose("api", 1_000_000);
+    const v = view([at("peer", squat)], 1);
+    expect(v.info("peer", squat.id)).toEqual({ match: "version_gap" });
+    expect(v.contracts).toEqual([]);
+    expect(v.maxVersion("api")).toBe(0);
+    // after v1 from either side, the next version from either side fits, and the one after doesn't
+    const v1 = propose("api", 1);
+    const skip = propose("api", 3, SHA_B);
+    const both = [propose("api", 2), propose("api", 2, SHA_B)];
+    const w = view([at("ours", v1), at("peer", skip, 1), at("peer", both[0]!, 2), at("ours", both[1]!, 3)], 4);
+    expect(w.info("peer", skip.id)).toEqual({ match: "version_gap" });
+    expect(w.info("peer", both[0]!.id)?.match).toBe("yes");
+    expect(w.info("ours", both[1]!.id)?.match).toBe("yes");
+    expect(w.contracts.map((c) => c.id)).toEqual([both[1]!.id]);
+    expect(w.maxVersion("api")).toBe(2);
+  });
+
+  it(`REQ-COLLAB-6 counts contract names per side: ${MAX_CONTRACT_NAMES_PER_SIDE} new names each`, () => {
+    const theirs = Array.from({ length: MAX_CONTRACT_NAMES_PER_SIDE + 1 }, (_, i) => propose(`p${i}`, 1));
+    const ours = Array.from({ length: MAX_CONTRACT_NAMES_PER_SIDE + 1 }, (_, i) => propose(`o${i}`, 1));
+    const msgs = [...theirs.map((p) => at("peer", p)), ...ours.map((p) => at("ours", p, 1))];
+    const v = view(msgs, 2);
+    expect(v.info("peer", theirs[MAX_CONTRACT_NAMES_PER_SIDE]!.id)).toEqual({ match: "over_limit" });
+    // the peer's names don't use up ours
+    expect(ours.slice(0, MAX_CONTRACT_NAMES_PER_SIDE).every((p) => v.info("ours", p.id)?.match === "yes")).toBe(true);
+    expect(v.info("ours", ours[MAX_CONTRACT_NAMES_PER_SIDE]!.id)).toEqual({ match: "over_limit" });
+    expect(v.contracts).toHaveLength(2 * MAX_CONTRACT_NAMES_PER_SIDE);
+    expect(v.contractNames).toEqual({ peer: MAX_CONTRACT_NAMES_PER_SIDE, ours: MAX_CONTRACT_NAMES_PER_SIDE });
+    // a name that is already live takes a new version from either side
+    const counter = propose("p0", 2);
+    const next = propose("o0", 2);
+    const w = view([...msgs, at("ours", counter, 2), at("peer", next, 2)], 3);
+    expect(w.info("ours", counter.id)?.match).toBe("yes");
+    expect(w.info("peer", next.id)?.match).toBe("yes");
   });
 
   it("finds proposals and claims by side and id for send's checks", () => {
@@ -179,5 +226,26 @@ describe("coordView: contracts (REQ-COLLAB-3)", () => {
     expect(v.proposal("ours", p.id)).toBeUndefined();
     expect(v.claim("ours", c.id)?.paths).toEqual(["src/a.ts"]);
     expect(v.claim("peer", c.id)).toBeUndefined();
+  });
+});
+
+describe("coordView: cost", () => {
+  it("REQ-COLLAB-6 stays linear: 50,000 claims from a flooding peer take well under two seconds", () => {
+    const N = 50_000;
+    // one claim every 6 s for 5 min each: about 50 live at a time, so most are over_limit
+    const msgs: CoordMessage[] = Array.from({ length: N }, (_, i) => ({ side: "peer", envelope: claim([`src/f${i}.ts`], 5), at: T0 + i * 6_000 }));
+    const ours = claim(["src/mine.ts"], 1440);
+    msgs.push({ side: "ours", envelope: ours, at: T0 + (N - 10) * 6_000 });
+    const nowMin = (N * 6_000) / MIN;
+    const started = performance.now();
+    const v = view(msgs, nowMin);
+    const ms = performance.now() - started;
+    expect(ms).toBeLessThan(2000);
+    // the bookkeeping is still right: 16 count at a time, expired ones make room
+    const yes = msgs.filter((m) => m.side === "peer" && v.info("peer", m.envelope.id)?.match === "yes").length;
+    expect(yes).toBeGreaterThan(N / 4);
+    expect(v.info("peer", msgs[MAX_ACTIVE_CLAIMS]!.envelope.id)).toEqual({ match: "over_limit" });
+    expect(v.claims.peer.length).toBeLessThanOrEqual(MAX_ACTIVE_CLAIMS);
+    expect(v.claims.ours.map((c) => c.id)).toEqual([ours.id]);
   });
 });
