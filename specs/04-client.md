@@ -606,7 +606,46 @@ Because the marketplace installs straight from the git repository's default bran
 `dist/pairwire.mjs` must be committed and current on `main` at all times, not only on
 releases. Any commit that changes client code also commits the rebuilt bundle. CI fails
 on any push to `main` (and on any tag) if the committed bundle doesn't match a fresh
-build. The release script bumps the version, rebuilds, commits and tags.
+build.
+
+### Releases and the npm package
+
+Releases follow ADR-021. One version covers the npm package, the plugin and both relays
+(`01`, Versioning).
+
+- **npm package.** `npm run pack:npm` assembles `build/npm/` from the committed plugin
+  bundle: `dist/` (with `chunks/`), `hooks/run.sh`, `skills/pairwire/SKILL.md`, `README.md`,
+  `LICENSE` and a generated `package.json` (`name: "pairwire"`, the version from
+  `packages/client/package.json`, `bin: { "pairwire": "dist/pairwire.mjs" }`,
+  `engines.node: ">=20"`, `license: "MIT"`, `repository`, `files`, and no `dependencies`).
+  The layout is the plugin's, so `npx pairwire install --codex` and `--print-config` find
+  `hooks/run.sh` and the skill next to `dist/`. An e2e test packs it with `npm pack`,
+  installs the tarball into a temporary prefix and runs the installed `pairwire doctor`,
+  `install --print-config` and `install --codex`.
+- **Release script.** `npm run release -- <version>` (`scripts/release.ts`) first runs its
+  preflight checks (the exported, unit-tested `preflight`): no changes to tracked files,
+  staged or not (untracked files are ignored, so a local `.claude/` doesn't block a
+  release), a version greater than the npm package's current one
+  (`packages/client/package.json`) and a tag that doesn't exist yet. It writes the version to `packages/client/package.json`, `packages/client/src/version.ts`,
+  `plugins/claude-code/.claude-plugin/plugin.json`, `packages/relay-node/package.json`,
+  `packages/relay-worker/package.json`, `packages/relay-worker/src/version.ts` and their
+  entries in `package-lock.json`; runs `npm run build:plugin`, `lint`, `test`, `test:e2e`
+  and `traceability`; commits `chore: release vX.Y.Z` and creates the annotated tag
+  `vX.Y.Z`. It never pushes: the human pushes the commit and the tag.
+  `tsx scripts/release.ts --check <version>` verifies that every location holds that version.
+- **Release workflow.** `.github/workflows/release.yml` runs on a pushed `v*` tag. It runs the
+  CI workflow in full (lint, tests, e2e, traceability, the bundle check, plugin validation,
+  the relay image smoke test) and `release.ts --check` against the tag; then, in parallel,
+  publishes `build/npm/` with `npm publish --provenance --access public` (repository secret
+  `NPM_TOKEN`: an npm granular access token with read-write access to the `pairwire`
+  package and "bypass 2FA" enabled, which expires within at most 90 days; npm no longer
+  issues classic or automation tokens, and ADR-021 plans the move to trusted publishing)
+  and pushes the relay-node image to `ghcr.io/tlezhava/pairwire-relay` for linux/amd64 and
+  linux/arm64 with the repository's `GITHUB_TOKEN`; finally it creates the GitHub release
+  with generated notes. Each job has only the permissions it needs (`id-token: write` for provenance,
+  `packages: write` for the image, `contents: write` for the release). A prerelease tag
+  (`v0.2.0-rc.1`) publishes to the npm dist-tag `next`, leaves the image's `latest` alone and
+  makes a GitHub prerelease.
 
 ## 10. Other harnesses (M6)
 

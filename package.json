@@ -14,6 +14,8 @@
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "build:plugin": "tsx scripts/build-plugin.ts",
+    "pack:npm": "tsx scripts/pack-npm.ts",
+    "release": "tsx scripts/release.ts",
     "test": "vitest run --project=!e2e",
     "test:e2e": "vitest run --project e2e",
     "test:live": "vitest run --project relay-node --testTimeout=30000 test/live.test.ts",

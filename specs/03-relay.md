@@ -119,7 +119,9 @@ above.
   if `PAIRWIRE_RELAY_INSECURE_OK` is not set and the server is not bound to localhost,
   reminding the operator that clients require `wss://`.
 - Dockerfile: multi-stage, `node:20-alpine` runtime, non-root user, `EXPOSE 8787`,
-  `HEALTHCHECK` on `/health`. Image published as `ghcr.io/tlezhava/pairwire-relay`.
+  `HEALTHCHECK` on `/health`. Image published as `ghcr.io/tlezhava/pairwire-relay` by the
+  release workflow (`04` §9), for linux/amd64 and linux/arm64, tagged with the release
+  version and `latest`.
 
 ## Logging
 

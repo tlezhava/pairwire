@@ -27,11 +27,12 @@ configuration is needed.
 
 ### Codex
 
-From a checkout of this repository (until the npm package is published):
+```
+npx pairwire install --codex
+```
 
-```
-node plugins/claude-code/dist/pairwire.mjs install --codex
-```
+This works once the `pairwire` npm package is published. Before that, run the same command
+from a checkout of this repository as `node plugins/claude-code/dist/pairwire.mjs install --codex`.
 
 This copies the client to `~/.pairwire/bin`, registers the MCP server in
 `~/.codex/config.toml` (between `# >>> pairwire >>>` markers), adds four hooks to
@@ -42,9 +43,11 @@ from a terminal with `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (stdin). M
 Codex between its steps and at the end of a turn; an idle Codex session sees them on its next
 turn. `install --codex --uninstall` removes it all again.
 
-Other MCP harnesses: `node plugins/claude-code/dist/pairwire.mjs install --print-config <harness>`
-prints the server entry and the agent guide to paste. They get no hooks, so the agent reads
-messages with the `inbox` tool.
+Other MCP harnesses: `pairwire install --print-config <harness>` prints the server entry and
+the agent guide to paste. The entry points at the copy of pairwire that printed it, so install
+that globally first (`npm i -g pairwire`, once published) rather than running it through
+`npx`; from a checkout, use `node plugins/claude-code/dist/pairwire.mjs install --print-config
+<harness>`. These harnesses get no hooks, so the agent reads messages with the `inbox` tool.
 
 ## Quickstart
 
@@ -145,8 +148,9 @@ Optional, in `~/.pairwire/config.json` or environment variables:
 | | `PAIRWIRE_LOG` | `info` | Log level (logs never contain messages or secrets) |
 
 `pairwire doctor` checks Node, config, permissions and relay reachability, and
-`pairwire purge` deletes ended rooms' transcripts. Until the npm package is published, run
-them from a checkout as `node plugins/claude-code/dist/pairwire.mjs doctor`.
+`pairwire purge` deletes ended rooms' transcripts. Run them with `npx pairwire doctor` once
+the npm package is published, or from a checkout as
+`node plugins/claude-code/dist/pairwire.mjs doctor`.
 
 ## Run your own relay
 

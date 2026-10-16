@@ -6,3 +6,5 @@ packages/*/dist/
 coverage/
 *.tsbuildinfo
 .wrangler/
+build/
+.claude/worktrees/

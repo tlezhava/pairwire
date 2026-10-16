@@ -28,7 +28,8 @@ Status: draft v0.1
    room, using the WebSocket Hibernation API. The hosted default relay runs this.
 3. **relay-node** (`packages/relay-node`) — the same room logic on Node with the `ws`
    package, plus a Dockerfile. For self-hosting outside Cloudflare and for local tests.
-4. **client** (`packages/client`) — published to npm as `pairwire`. One executable with
+4. **client** (`packages/client`) — published to npm as `pairwire`, as a self-contained
+   copy of the plugin bundle with no dependencies (`04` §9, ADR-021). One executable with
    subcommands:
    - `pairwire mcp` — the MCP server (stdio). Owns the relay connection for its session.
    - `pairwire hook <event>` — hook entrypoints that read the inbox and print hook JSON.
@@ -77,6 +78,9 @@ pairwire/
 │       ├── .mcp.json
 │       └── dist/                 # bundled client (`npm run build:plugin`), kept current on main
 ├── .claude-plugin/marketplace.json
+├── .github/workflows/            # ci.yml (every push and PR), release.yml (tags v*, 04 §9)
+├── scripts/                      # build-plugin, pack-npm, release, lint and traceability checks
+├── build/npm/                    # `npm run pack:npm` output, the npm package (gitignored)
 ├── spikes/                       # M0 throwaway code, never imported
 └── tests/e2e/
 ```
@@ -115,5 +119,9 @@ never end up in a published bundle or image.
 
 - Wire protocol version is in the share string prefix (`pw1_`) and in every relay URL
   (`/v1/`). A breaking protocol change bumps both.
-- The npm package, plugin and relay follow semver independently; the relay advertises the
-  protocol versions it speaks at `GET /v1/info`.
+- Everything that ships carries one semver version, set by the release tag `vX.Y.Z`
+  (ADR-021): the npm package (`packages/client/package.json` and `CLIENT_VERSION`), the
+  plugin (`plugin.json`), relay-node and relay-worker (`package.json` and `RELAY_VERSION`).
+  `npm run release -- <version>` keeps them equal; the release workflow refuses a tag that
+  doesn't match. `@pairwire/core` is private and bundled, and stays at 0.0.0.
+- The relay advertises its version and the protocol versions it speaks at `GET /v1/info`.

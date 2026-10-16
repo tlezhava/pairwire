@@ -115,6 +115,11 @@ From then on it fails CI.
 - REQ-INST-4: `doctor` and `hooks/run.sh` report a missing or old Node clearly (Node
   version faked in test); `run.sh` exits 0 in every case and starts no Node when the
   `active` flag is absent.
+- npm package (`04` §9): the `npm run pack:npm` output, packed with `npm pack` and installed
+  from the tarball into a temporary prefix, has no dependencies and runs `pairwire doctor`,
+  `install --print-config` and `install --codex` from the installed copy.
+- Release script: the version bump rewrites every version location and nothing else,
+  refuses invalid or non-increasing versions, and `--check` reports a mismatched location.
 - Passive session hooks never mark the owner's messages delivered.
 - `ctl.sock` falls back to a short path when `PAIRWIRE_HOME` is long.
 - INV-3: `ctl log` output passes through `renderTranscript()`: wrapped, labeled, and a peer
