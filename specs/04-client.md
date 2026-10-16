@@ -291,6 +291,7 @@ Does POST /orders accept a client-generated idempotency key, or do you generate 
 | `peer_left` | "Nika ended the room." / "The room expired." |
 | `peer_changed` | Peer `instance` or name changed (section 3, Peer identity) |
 | `wrong_key` | Five HELLOs failed to decrypt (`02-protocol.md` §4.2) |
+| `peer_unreadable` | "A message from Nika needs a newer pairwire to read. Ask them to update, or to resend it as a plain message." (`02-protocol.md` §6.1) |
 | `held` | "A message from Nika is held for your review. Run /pairwire:accept to read it and pass it to your agent, or /pairwire:accept drop to discard held messages." In Codex, which has no slash commands (section 10): "… Run \`node ~/.pairwire/bin/dist/pairwire.mjs ctl accept\` in a terminal to read it and pass it to your agent, or \`node ~/.pairwire/bin/dist/pairwire.mjs ctl accept drop\` in a terminal to discard held messages." (Hold mode, below) |
 
 They are appended to `inbox.jsonl` with `source: "local"` and rendered by the same
