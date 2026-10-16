@@ -151,6 +151,9 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   (S1, S3), and exec form vs shell form under Git Bash is decided when a Windows Claude Code
   session can test it.
 - [ ] Short authentication string option (residual risk 1).
+- [ ] Control-channel server proof (residual risk 8): the server proves it owns `ctl_path`
+  (for example an HMAC of a client nonce under a key in the private state directory), so a
+  squatted socket or pipe name is detected. Deferred by the human on 2026-10-16.
 - [x] relay-node SQLite persistence (ADR-022): `PAIRWIRE_RELAY_STATE=sqlite:<path>` on Node 22.13+.
 - [ ] External security review (`05-security.md` gate).
 - [ ] Consider single-binary distribution to drop the Node requirement.

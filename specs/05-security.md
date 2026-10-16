@@ -51,7 +51,8 @@ Each invariant has tests named with its id (`07-testing.md`).
   membership, delivery mode, hop budget or permissions.
 - **INV-9 Local state is private.** `~/.pairwire` is 0700; `secret`, `state.json` and
   `ctl.sock` are 0600. The client refuses to start if they are group- or world-readable
-  and tells the user how to fix it.
+  and tells the user how to fix it. On native Windows the check is not run; see residual
+  risk 8.
 
 ## Prompt injection: what we can and cannot promise
 
@@ -90,7 +91,13 @@ on while paired.
 7. **Hold mode is not a file-system barrier.** Held messages are in the room's
    `transcript.md` and `inbox.jsonl` (the human's record). pairwire never delivers them, but
    an agent allowed to read files under `~/.pairwire` can read them there. Hold mode relies
-   on the harness's permission prompts for reads outside the project.
+   on the harness's permission prompts for reads outside the project. The agent guide tells
+   the agent not to read or release held messages.
+8. **Native Windows state privacy.** Windows has no mode bits, so the client does not run
+   the INV-9 check there. The state directory relies on the access control it inherits from
+   the user profile. The control pipe accepts only the user, but while the owning session is
+   down, another local user could create a pipe with the same name. Clients don't connect
+   when the owner's process isn't running, which narrows this (`04` §8, ADR-024).
 
 ## Security review gate
 
