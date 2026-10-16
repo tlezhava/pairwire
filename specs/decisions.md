@@ -244,6 +244,38 @@ sanitized, wrapped in `<pairwire_transcript>` and preceded by a preamble labelin
 as external input. This tightens `04` §8; INV-3's text is unchanged. The ctl socket protocol
 is defined at the same time (one JSON request and reply per connection).
 
+## ADR-021 Release packaging: self-contained npm bundle, one version, tag-triggered workflow (M4-8)
+
+Status: accepted (2026-10-16)
+
+Preparing M4-8 needed three decisions the specs left open.
+
+- **The npm package is the plugin bundle, not the workspace package.** `packages/client`
+  depends on `@pairwire/core`, which is private and never published, so publishing the
+  workspace package would install a broken dependency. `npm run pack:npm` instead assembles
+  `build/npm/` (gitignored) from the committed plugin bundle: `dist/` with its chunks,
+  `hooks/run.sh` and `skills/pairwire/SKILL.md`, plus a generated `package.json` with **no
+  dependencies**, the README and the LICENSE. It keeps the plugin's layout because
+  `install --codex` and `--print-config` look for `hooks/run.sh` and `skills/` next to
+  `dist/` (`04` §10). The package carries no `.claude-plugin/`, so `doctor` doesn't check
+  plugin hook wiring there. `packages/client` stays `private` so it can't be published by
+  mistake.
+- **One version for everything that ships.** `01` said the npm package, plugin and relay
+  follow semver independently; with one repository, one tag and one release workflow that
+  only invited drift (the plugin said 0.1.0 while the client said 0.0.0). A release tag
+  `vX.Y.Z` now sets the version of the npm package, the plugin and both relays.
+  `@pairwire/core` is private, bundled into everything and stays at 0.0.0. The wire protocol
+  keeps its own version (`pw1_`, `/v1/`).
+- **Tags trigger releases; nothing is published from a laptop.** `npm run release --
+  <version>` bumps the version everywhere, rebuilds the plugin bundle, runs the checks,
+  commits `chore: release vX.Y.Z` and creates an annotated tag locally. It never pushes.
+  Pushing the tag runs `.github/workflows/release.yml`: the CI workflow in full, a check
+  that every version location equals the tag, then `npm publish --provenance` (with an
+  `NPM_TOKEN` repository secret), the relay-node image for linux/amd64 and linux/arm64 to
+  `ghcr.io/tlezhava/pairwire-relay` (tags: the version and `latest`), and a GitHub release.
+  A tag with a prerelease suffix (`v0.2.0-rc.1`) publishes under the npm dist-tag `next`,
+  doesn't move the image's `latest` and makes a GitHub prerelease.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

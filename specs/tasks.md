@@ -116,6 +116,14 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   machines; results in `tests/manual/RESULTS.md`.
 - [ ] **M4-8** 👤 Production relay deployed; `DEFAULT_RELAY_HOST` set; tag `v0.1.0`;
   publish npm package `pairwire`; Docker image to GHCR.
+  - Prepared (ADR-021, `04` §9 Releases): `npm run pack:npm` builds the self-contained npm
+    package in `build/npm/` (e2e-tested from an installed tarball); `npm run release --
+    <version>` bumps every version location, rebuilds, checks, commits and tags locally;
+    `.github/workflows/release.yml` publishes npm (provenance), the multi-arch GHCR image and
+    the GitHub release when a `v*` tag is pushed.
+  - Left for the human: decide the production relay host (keep or change
+    `DEFAULT_RELAY_HOST`) and deploy it; add the `NPM_TOKEN` repository secret; run
+    `npm run release -- 0.1.0`, then push `main` and the tag.
 
 ## M5 — Collaboration features
 
