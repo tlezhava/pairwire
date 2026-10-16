@@ -51,11 +51,26 @@ export function noticeWrongKey(): Notice {
   };
 }
 
-/** Hold mode (04 §5): tells the human a message waits for them. Names the peer, never the text. */
-export function noticeHeld(name: string): Notice {
+/** The command a Codex user runs in a terminal instead of a slash command (04 §10). */
+export const CODEX_CTL = "node ~/.pairwire/bin/dist/pairwire.mjs ctl";
+
+/**
+ * How the human releases (or drops) held messages in `harness` (04 §5, Hold mode): Codex has
+ * no `/pairwire:` commands, so its users run `ctl accept` in a terminal (04 §10).
+ */
+export function acceptHint(harness: string, drop = false): string {
+  const arg = drop ? " drop" : "";
+  return harness === "codex" ? `\`${CODEX_CTL} accept${arg}\` in a terminal` : `/pairwire:accept${arg}`;
+}
+
+/**
+ * Hold mode (04 §5): tells the human a message waits for them, with the command for their
+ * harness. Names the peer, never the text.
+ */
+export function noticeHeld(name: string, harness: string): Notice {
   return {
     event: "held",
-    text: `A message from ${displayName(name)} is held for your review. Run /pairwire:accept to read it and pass it to your agent, or /pairwire:accept drop to discard held messages.`,
+    text: `A message from ${displayName(name)} is held for your review. Run ${acceptHint(harness)} to read it and pass it to your agent, or ${acceptHint(harness, true)} to discard held messages.`,
   };
 }
 

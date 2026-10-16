@@ -13,6 +13,8 @@ export const bindingSchema = z.strictObject({
   room_id: z.string().regex(ROOM_ID_PATTERN),
   owner_pid: z.number().int().positive(),
   owner_session: z.string().nullable(),
+  /** The owning server's PAIRWIRE_HARNESS; absent in bindings written before M5. */
+  owner_harness: z.string().optional(),
   updated_at: z.number().int().min(0),
 });
 export type Binding = z.infer<typeof bindingSchema>;
@@ -22,7 +24,14 @@ export interface Claimant {
   pid: number;
   /** `CLAUDE_CODE_SESSION_ID` in Claude Code (S2); null in harnesses without one. */
   session: string | null;
+  /** The harness it runs in (PAIRWIRE_HARNESS), so `ctl` can name the human's commands (04 §3). */
+  harness?: string;
   now: number;
+}
+
+/** The binding fields that say who owns the room. */
+function owner(me: Claimant): Pick<Binding, "owner_pid" | "owner_session" | "owner_harness" | "updated_at"> {
+  return { owner_pid: me.pid, owner_session: me.session, ...(me.harness !== undefined ? { owner_harness: me.harness } : {}), updated_at: me.now };
 }
 
 export type Ownership =
@@ -95,7 +104,8 @@ export function claimProject(home: string, projectDir: string, me: Claimant, ali
     }
     if (binding.owner_pid === me.pid) return { kind: "owner", roomId: binding.room_id, tookOver: false };
     if (alive(binding.owner_pid)) return { kind: "passive", ownerPid: binding.owner_pid, roomId: binding.room_id };
-    writeBinding(path, { ...binding, owner_pid: me.pid, owner_session: me.session, updated_at: me.now });
+    const { owner_harness: _previous, ...rest } = binding;
+    writeBinding(path, { ...rest, ...owner(me) });
     return { kind: "owner", roomId: binding.room_id, tookOver: true };
   });
 }
@@ -112,7 +122,7 @@ export function bindProject(home: string, projectDir: string, roomId: string, me
     if (existing && existing.owner_pid !== me.pid && roomIsOpen(home, existing.room_id) && alive(existing.owner_pid)) {
       throw new PassiveSessionError(existing.owner_pid);
     }
-    const binding: Binding = { project_dir: projectDir, room_id: roomId, owner_pid: me.pid, owner_session: me.session, updated_at: me.now };
+    const binding: Binding = { project_dir: projectDir, room_id: roomId, ...owner(me) };
     writeBinding(path, binding);
     return binding;
   });

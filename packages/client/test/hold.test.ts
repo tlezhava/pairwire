@@ -9,8 +9,9 @@ import { runHook } from "../src/hooks.js";
 import { roomFile } from "../src/paths.js";
 import { inboxCounts, readDelivered, readInbox, readOutbox } from "../src/room-files.js";
 import { runStopWait } from "../src/waiter.js";
-import { until } from "./connection/harness.js";
-import { paired, roomOf, type Side } from "./session/pairing.js";
+import { readBinding } from "../src/binding.js";
+import { startRelay, until } from "./connection/harness.js";
+import { paired, roomOf, SHARE, side, type Side } from "./session/pairing.js";
 
 async function ctl(side: Side, args: string[], stdin = "", tty = false, env: NodeJS.ProcessEnv = {}): Promise<string> {
   let out = "";
@@ -34,9 +35,19 @@ const heldNotices = (side: Side) => readInbox(side.home, roomOf(side)).filter((e
 const held = (side: Side) => inboxCounts(side.home, roomOf(side), true).held;
 const settle = () => new Promise((r) => setTimeout(r, 300));
 
+/** A Codex session as A, paired with a Claude Code session as B. */
+async function pairedCodex() {
+  const { port } = await startRelay();
+  const a = side(port, "Tazo", { env: { PAIRWIRE_RELAY: `127.0.0.1:${port}`, PAIRWIRE_NAME: "Tazo", PAIRWIRE_HARNESS: "codex" } });
+  const share = (await a.session.start({})).text.match(SHARE)![0];
+  const b = side(port, "Nika");
+  await b.session.join({ share });
+  return { a, b, share };
+}
+
 /** A paired, with its peer_joined notice read and hold mode on (B does not hold). */
-async function holdA() {
-  const p = await paired();
+async function holdA(harness: "claude-code" | "codex" = "claude-code") {
+  const p = harness === "codex" ? await pairedCodex() : await paired();
   await p.a.session.ctlReady();
   await until(() => readInbox(p.a.home, roomOf(p.a)).length > 0, 5000, "peer_joined notice");
   await p.a.session.inbox();
@@ -225,5 +236,30 @@ describe("hold mode", () => {
     expect(second.settled()).toBeNull();
     a.session.shutdown();
     await until(() => second.settled() !== null, 5000, "waiter ends");
+  });
+
+  it("REQ-SAFE-6 Codex users are told the terminal command in the notice, footer, status, log and usage (04 §10)", async () => {
+    const TERMINAL = "`node ~/.pairwire/bin/dist/pairwire.mjs ctl accept` in a terminal";
+    const { a, fromB } = await holdA("codex");
+    expect(readBinding(a.home, a.project)?.owner_harness).toBe("codex");
+    await fromB("codex HOLDME");
+    const inbox = await a.session.inbox();
+    expect(inbox.text).toContain(`<pairwire_notice event="held">A message from Nika is held for your review. Run ${TERMINAL} to read it`);
+    expect(inbox.text).toContain(`· 0 unread messages, 1 held for your user's review (${TERMINAL}) ·`);
+    const status = (await a.session.status()).text;
+    expect(status).toContain(`Hold mode: on (peer messages wait until your user runs ${TERMINAL})`);
+    for (const text of [inbox.text, status]) expect(text).not.toContain("/pairwire:accept");
+    const log = await ctl(a, ["log"], "\n");
+    expect(log).toContain(`> (held for your review: run ${TERMINAL})`);
+    expect(log).not.toContain("HOLDME");
+    expect(await ctl(a, ["accept"], "please\n")).toBe("pairwire: usage: node ~/.pairwire/bin/dist/pairwire.mjs ctl accept [drop]\n");
+  });
+
+  it("REQ-SAFE-6 Claude Code users are told /pairwire:accept, also by ctl log and usage", async () => {
+    const { a, fromB } = await holdA();
+    expect(readBinding(a.home, a.project)?.owner_harness).toBe("claude-code");
+    await fromB("cc HOLDME");
+    expect(await ctl(a, ["log"], "\n")).toContain("> (held for your review: run /pairwire:accept)");
+    expect((await a.session.inbox()).text).not.toContain("ctl accept");
   });
 });

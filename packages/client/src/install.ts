@@ -197,6 +197,7 @@ export class Installer {
         "  2. Run /hooks in Codex and trust the four pairwire hooks (Codex runs no hook until you do).",
         "  3. Ask Codex to start or join a pairwire room. To send your own words or let the agent continue",
         `     after the hop budget, run in a terminal: node ${JSON.stringify(this.bundle)} ctl say|continue|log`,
+        `     In hold mode, release held messages with: node ${JSON.stringify(this.bundle)} ctl accept [drop]`,
         "Keep Codex's approval prompt for the pairwire send tool on: don't choose \"always allow\" for it.",
       ].join("\n"),
     );

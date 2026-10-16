@@ -278,6 +278,15 @@ Decisions:
   repeated wakes.
 - **`/pairwire:log` hides held and dropped bodies.** It is model-invocable and prints the
   transcript into the prompt, so it would otherwise bypass hold mode.
+- **Hints follow the harness.** Codex has no `/pairwire:` commands, so in Codex the
+  notice, footer, `status`, the `/pairwire:log` placeholder and `ctl accept`'s usage name the
+  terminal command (`04` §5, Hold mode, "Hints"). `ctl` runs outside the harness and can't
+  see `PAIRWIRE_HARNESS`, so the binding records the owning server's harness
+  (`owner_harness`, optional so older bindings stay valid).
+- **`ctl accept` doesn't trust its own `hold` setting.** It can differ from the MCP server's
+  (`PAIRWIRE_HOLD` set only in the server's environment), and refusing because "hold mode is
+  off" would strand messages the server holds. It acts on whatever would be held with hold
+  on.
 - **The sender does not learn "held" in v1.** Acks are sent on receipt as before, so the
   sender sees "delivered" (the peer's client has it). Reporting "held" or "released" would
   need a new envelope kind or ack field (`02` §6), and tells the peer about the receiver's

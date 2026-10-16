@@ -2,6 +2,7 @@
 // connection, and the six tools. Tool methods return text for the agent and never throw.
 import {
   DEFAULT_RELAY_HOST,
+  acceptHint,
   noticeHeld,
   deriveRoomKeys,
   displayName,
@@ -219,7 +220,7 @@ export class ClientSession {
     const roomId = this.#roomId;
     if (entry.source !== "peer" || !roomId || !this.#hold()) return;
     if (inboxCounts(this.#o.home, roomId, true).held !== 1) return;
-    this.#conn?.notice(noticeHeld(entry.from));
+    this.#conn?.notice(noticeHeld(entry.from, harnessOf(this.#o.env)));
   }
 
   #closeCtl(): void {
@@ -347,8 +348,8 @@ export class ClientSession {
         `Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${conn?.peerConnected ? ", online" : state.peer ? ", offline" : ""}`,
         `Connection: ${conn?.halted ? `stopped (${conn.halted})` : (conn?.socket ?? "offline")}`,
         `Relay: ${state.relay ?? "default relay"}`,
-        `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold))}`,
-        ...(hold ? ["Hold mode: on (peer messages wait until your user runs /pairwire:accept)"] : []),
+        `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
+        ...(hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : []),
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         `Transcript: ${roomFile(this.#o.home, state.roomId, "transcript.md")}`,
       ];
@@ -390,7 +391,7 @@ export class ClientSession {
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
-    return `[pairwire] ${who} · ${unreadText(inboxCounts(this.#o.home, state.roomId, this.#hold()))} · hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
+    return `[pairwire] ${who} · ${unreadText(inboxCounts(this.#o.home, state.roomId, this.#hold()), harnessOf(this.#o.env))} · hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
   }
 
   #ready(): Config {
@@ -424,7 +425,7 @@ export class ClientSession {
   }
 
   #claimant() {
-    return { pid: this.#pid, session: this.#session(), now: this.#now() };
+    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), now: this.#now() };
   }
 
   /**
@@ -545,12 +546,13 @@ export class ClientSession {
 
 /**
  * "2 unread messages, 1 notice": notices (joins, warnings) are not messages from the peer, and
- * held messages (04 §5, Hold mode) are not unread for the agent.
+ * held messages (04 §5, Hold mode) are not unread for the agent. The held part names the
+ * human's command in this harness.
  */
-function unreadText({ messages, notices, held }: InboxCounts): string {
+function unreadText({ messages, notices, held }: InboxCounts, harness: Harness): string {
   let text = `${messages} unread message${messages === 1 ? "" : "s"}`;
   if (notices > 0) text += `, ${notices} notice${notices === 1 ? "" : "s"}`;
-  if (held > 0) text += `, ${held} held for your user's review (/pairwire:accept)`;
+  if (held > 0) text += `, ${held} held for your user's review (${acceptHint(harness)})`;
   return text;
 }
 

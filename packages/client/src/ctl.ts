@@ -3,7 +3,7 @@
 // exit 0.
 import { createConnection } from "node:net";
 import type { Readable, Writable } from "node:stream";
-import { displayName, renderForHook, renderItems, renderTranscript } from "@pairwire/core";
+import { acceptHint, CODEX_CTL, displayName, renderForHook, renderItems, renderTranscript } from "@pairwire/core";
 import { readBinding } from "./binding.js";
 import { holdMode } from "./config.js";
 import { CTL_MAX_REQUEST, type CtlReply, type CtlRequest } from "./ctl-server.js";
@@ -68,8 +68,8 @@ function senders(entries: readonly InboxEntry[]): string {
  * whatever this process's own hold setting says: the MCP server may have been given another
  * one (PAIRWIRE_HOLD in its environment only), so anything that would be held is released.
  */
-function accept(home: string, roomId: string, action: string, io: CtlIo): string {
-  if (action !== "" && action !== "drop") return "pairwire: usage: /pairwire:accept [drop]";
+function accept(home: string, roomId: string, harness: string, action: string, io: CtlIo): string {
+  if (action !== "" && action !== "drop") return `pairwire: usage: ${harness === "codex" ? `${CODEX_CTL} accept` : "/pairwire:accept"} [drop]`;
   const nothing = () =>
     holdMode(home, io.env) ? "pairwire: no messages are held." : "pairwire: hold mode is off, so no messages are held; they go straight to your agent.";
   const now = Date.now();
@@ -116,18 +116,20 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
     return 0;
   }
   const roomId = binding.room_id;
+  // The owning MCP server's harness decides how hints name the human's commands (04 §3).
+  const harness = binding.owner_harness ?? "claude-code";
 
   switch (op) {
     case "log": {
       // The slash command passes the count through a heredoc (04 §8), never on the command line.
       const given = arg ?? ((io.stdin as { isTTY?: boolean }).isTTY ? "" : await readAll(io.stdin));
       const n = Math.min(MAX_LOG_ENTRIES, Math.max(1, Number.parseInt(given.trim(), 10) || DEFAULT_LOG_ENTRIES));
-      print(renderTranscript(transcriptTail(home, roomId, n, hiddenBodies(home, roomId, holdMode(home, io.env)))));
+      print(renderTranscript(transcriptTail(home, roomId, n, hiddenBodies(home, roomId, holdMode(home, io.env)), acceptHint(harness))));
       return 0;
     }
     case "accept": {
       const given = arg ?? ((io.stdin as { isTTY?: boolean }).isTTY ? "" : await readAll(io.stdin));
-      print(accept(home, roomId, given.trim().toLowerCase(), io));
+      print(accept(home, roomId, harness, given.trim().toLowerCase(), io));
       return 0;
     }
     case "continue": {

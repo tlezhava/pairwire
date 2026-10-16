@@ -90,7 +90,8 @@ it cannot tell whether the human asked for it, so it fails closed.
 ├── config.json
 ├── active                                empty flag file; exists iff some room on this machine
 │                                         is "waiting" or "active" (hook fast path, section 6)
-├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_session, updated_at}
+├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_session,
+│                                          owner_harness?, updated_at}
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
     ├── state.json                        relay (host[:port] or null for the default),
@@ -129,7 +130,10 @@ it cannot tell whether the human asked for it, so it fails closed.
   `ctl_path`. (macOS limits socket paths to 104 bytes.)
 - **One room per project directory.** The binding records `owner_pid` (the MCP server)
   and `owner_session`: the `CLAUDE_CODE_SESSION_ID` the harness gives the MCP server, or
-  `null` in a harness that sets none. When the MCP server starts, it reads the binding:
+  `null` in a harness that sets none. It also records `owner_harness`, the owning server's
+  `PAIRWIRE_HARNESS` (absent in bindings written before M5, and when the server has none), so
+  `ctl`, which runs outside the harness, can name the human's commands for it (section 5,
+  Hold mode). When the MCP server starts, it reads the binding:
   - no binding → idle, ready for `start`/`join`;
   - binding whose `owner_pid` is alive and isn't this process → **passive mode**: every
     tool returns "Another session in this project (pid N) owns the pairwire room";
@@ -219,7 +223,8 @@ Notices are counted apart from messages, and the hop budget says when it resets,
 manual acceptance agents read "1 unread" as a message and invented reasons for the budget.
 In hold mode, held messages are counted apart too and are not "unread":
 `· 0 unread messages, 2 held for your user's review (/pairwire:accept) ·`. The held part
-appears only when the count is above zero.
+appears only when the count is above zero, and names the human's command for the harness
+(section 5, Hold mode, "Hints").
 
 | Tool | Input | Behavior |
 |---|---|---|
@@ -256,7 +261,7 @@ Does POST /orders accept a client-generated idempotency key, or do you generate 
 | `peer_left` | "Nika ended the room." / "The room expired." |
 | `peer_changed` | Peer `instance` or name changed (section 3, Peer identity) |
 | `wrong_key` | Five HELLOs failed to decrypt (`02-protocol.md` §4.2) |
-| `held` | "A message from Nika is held for your review. Run /pairwire:accept to read it and pass it to your agent, or /pairwire:accept drop to discard held messages." (Hold mode, below) |
+| `held` | "A message from Nika is held for your review. Run /pairwire:accept to read it and pass it to your agent, or /pairwire:accept drop to discard held messages." In Codex, which has no slash commands (section 10): "… Run \`node ~/.pairwire/bin/dist/pairwire.mjs ctl accept\` in a terminal to read it and pass it to your agent, or \`node ~/.pairwire/bin/dist/pairwire.mjs ctl accept drop\` in a terminal to discard held messages." (Hold mode, below) |
 
 They are appended to `inbox.jsonl` with `source: "local"` and rendered by the same
 renderer, outside any `<pairwire_message>`, as
@@ -333,6 +338,13 @@ With `hold` on (section 2), the human sees peer messages before their agent does
   flow by the normal paths. Turning it on holds every unread peer message.
 - After the room ends locally (the binding is removed), `/pairwire:accept` can no longer
   find it; messages still held then stay in the transcript only.
+- **Hints.** Everything that tells the human how to release held messages (the `held`
+  notice, the footer, `status`, the `/pairwire:log` placeholder and `ctl accept`'s usage
+  line) names the command for the owning session's harness, through core's
+  `acceptHint()`: `/pairwire:accept [drop]` in Claude Code (and any harness other than
+  Codex), and `` `node ~/.pairwire/bin/dist/pairwire.mjs ctl accept [drop]` in a terminal ``
+  in Codex (section 10). The MCP server knows its harness from `PAIRWIRE_HARNESS`; `ctl`
+  reads the binding's `owner_harness` (section 3) and assumes Claude Code without one.
 
 ## 6. Delivery tiers in Claude Code
 
@@ -549,7 +561,8 @@ Display-only commands, which the model may run too:
   replaced in the excerpt (section 5, Hold mode): an entry is matched when its heading is a
   peer entry (`### ←`) and one of its ` · `-separated fields equals a held or dropped id. A
   forged display name can only add matches, never hide the real id field, so it can't make
-  a held body show.
+  a held body show. The held placeholder names the release command for the room's harness
+  (section 5, Hold mode, "Hints").
 
 **`ctl.sock` protocol.** The owning MCP server listens on the room's `ctl_path` (mode 0600,
 in a 0700 directory) and accepts one request per connection: a single JSON line, at most
@@ -743,7 +756,8 @@ Differences from Claude Code that the client handles:
   `/pairwire:say`, `/pairwire:continue` or `/pairwire:accept`. The human runs
   `node ~/.pairwire/bin/dist/pairwire.mjs ctl say|continue|log|accept` in a terminal (same
   project); `ctl accept` there prints the held messages to the terminal and releases them
-  (section 8).
+  (section 8). In hold mode the `held` notice, the footer, `status` and `ctl log` name that
+  terminal command instead of `/pairwire:accept` (section 5, Hold mode, "Hints").
   Hop budget resets also happen through Codex's UserPromptSubmit hook.
 
 ### Any MCP harness
