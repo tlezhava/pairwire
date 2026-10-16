@@ -22280,10 +22280,15 @@ function noticeWrongKey() {
     text: "Someone with the wrong key is in this room. pairwire disconnected and won't reconnect until you run a pairwire command."
   };
 }
-function noticeHeld(name) {
+var CODEX_CTL = "node ~/.pairwire/bin/dist/pairwire.mjs ctl";
+function acceptHint(harness, drop = false) {
+  const arg = drop ? " drop" : "";
+  return harness === "codex" ? `\`${CODEX_CTL} accept${arg}\` in a terminal` : `/pairwire:accept${arg}`;
+}
+function noticeHeld(name, harness) {
   return {
     event: "held",
-    text: `A message from ${displayName(name)} is held for your review. Run /pairwire:accept to read it and pass it to your agent, or /pairwire:accept drop to discard held messages.`
+    text: `A message from ${displayName(name)} is held for your review. Run ${acceptHint(harness)} to read it and pass it to your agent, or ${acceptHint(harness, true)} to discard held messages.`
   };
 }
 var TRANSCRIPT_PREAMBLE = [
@@ -22848,6 +22853,8 @@ export {
   noticePeerLeft,
   noticePeerChanged,
   noticeWrongKey,
+  CODEX_CTL,
+  acceptHint,
   noticeHeld,
   renderTranscript,
   renderItems,

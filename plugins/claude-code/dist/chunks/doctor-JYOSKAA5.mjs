@@ -3,7 +3,7 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   StatePermissionError,
   checkStatePermissions
-} from "./chunk-ZXB2ZKBQ.mjs";
+} from "./chunk-OFCEI2TC.mjs";
 import {
   expiresAt,
   isOpen,
@@ -11,7 +11,7 @@ import {
   loadConfig,
   readState,
   refreshActiveFlag
-} from "./chunk-SUNCKHEN.mjs";
+} from "./chunk-4WTSVBRV.mjs";
 import {
   activeFlagPath,
   roomDir
@@ -21,7 +21,7 @@ import {
   displayName,
   parseRelayAddress,
   relayUrl
-} from "./chunk-Y6UTEXTH.mjs";
+} from "./chunk-JYFH7MNE.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/doctor.ts

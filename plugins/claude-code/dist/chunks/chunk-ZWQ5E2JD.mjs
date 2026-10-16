@@ -5,7 +5,7 @@ import {
   ensurePrivateDir,
   errorCode,
   removeFile
-} from "./chunk-SUNCKHEN.mjs";
+} from "./chunk-4WTSVBRV.mjs";
 import {
   roomFile
 } from "./chunk-AOSSRO7Z.mjs";
@@ -13,7 +13,7 @@ import {
   displayName,
   redact,
   sanitizeText
-} from "./chunk-Y6UTEXTH.mjs";
+} from "./chunk-JYFH7MNE.mjs";
 
 // packages/client/src/transcript.ts
 import { appendFileSync, readFileSync } from "node:fs";
@@ -70,11 +70,8 @@ function transcriptEvents(home, roomId, now, onError, sessionHasCurrent) {
     delivered: (ids) => write(deliveredLine(ids, now()))
   };
 }
-var HIDDEN_BODY = {
-  held: "> (held for your review: run /pairwire:accept)",
-  dropped: "> (dropped by your user)"
-};
-function transcriptTail(home, roomId, n, hidden = /* @__PURE__ */ new Map()) {
+function transcriptTail(home, roomId, n, hidden = /* @__PURE__ */ new Map(), accept = "/pairwire:accept") {
+  const placeholder = { held: `> (held for your review: run ${accept})`, dropped: "> (dropped by your user)" };
   let text;
   try {
     text = readFileSync(roomFile(home, roomId, "transcript.md"), "utf8");
@@ -94,7 +91,7 @@ ${line}`;
     if (hidden.size === 0 || !heading.startsWith("### \u2190")) return entry;
     const why = heading.split(" \xB7 ").map((f) => hidden.get(f)).find((w) => w !== void 0);
     return why ? `${heading}
-${HIDDEN_BODY[why]}` : entry;
+${placeholder[why]}` : entry;
   }).join("\n\n");
 }
 

@@ -1,18 +1,24 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
+  createLogger,
+  fileSink,
+  roomTag
+} from "./chunk-TUK3NJ7F.mjs";
+import {
   PRIVATE_FILE_MODE,
   errorCode,
   withLock,
   writeFileAtomic
-} from "./chunk-SUNCKHEN.mjs";
+} from "./chunk-4WTSVBRV.mjs";
 import {
+  hookErrorsPath,
   roomFile
 } from "./chunk-AOSSRO7Z.mjs";
 import {
   envelopeSchema,
   external_exports
-} from "./chunk-Y6UTEXTH.mjs";
+} from "./chunk-JYFH7MNE.mjs";
 
 // packages/client/src/room-files.ts
 import { appendFileSync, readFileSync } from "node:fs";
@@ -96,12 +102,39 @@ var deliveredSchema = external_exports.strictObject({
   released: external_exports.array(external_exports.string()).optional(),
   dropped: external_exports.array(external_exports.string()).optional()
 });
-function readLedger(home, roomId) {
+var emptyLedger = () => ({ ids: /* @__PURE__ */ new Set(), released: /* @__PURE__ */ new Set(), dropped: /* @__PURE__ */ new Set() });
+function failClosedLedger(home, roomId) {
+  const peers = readInbox(home, roomId).filter((e) => e.source === "peer").map((e) => e.id);
+  return { ids: new Set(peers), released: /* @__PURE__ */ new Set(), dropped: new Set(peers) };
+}
+function loadLedger(home, roomId) {
+  let text;
   try {
-    const v = deliveredSchema.parse(JSON.parse(readFileSync(roomFile(home, roomId, "delivered.json"), "utf8")));
-    return { ids: new Set(v.ids), released: new Set(v.released), dropped: new Set(v.dropped) };
+    text = readFileSync(roomFile(home, roomId, "delivered.json"), "utf8");
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return { ledger: emptyLedger(), corrupt: false };
+    return { ledger: failClosedLedger(home, roomId), corrupt: true };
+  }
+  try {
+    const v = deliveredSchema.parse(JSON.parse(text));
+    return { ledger: { ids: new Set(v.ids), released: new Set(v.released), dropped: new Set(v.dropped) }, corrupt: false };
   } catch {
-    return { ids: /* @__PURE__ */ new Set(), released: /* @__PURE__ */ new Set(), dropped: /* @__PURE__ */ new Set() };
+    return { ledger: failClosedLedger(home, roomId), corrupt: true };
+  }
+}
+function warnCorrupt(home, roomId) {
+  createLogger({ sink: fileSink(hookErrorsPath(home)), level: "warn" }).warn("delivered_unreadable", {
+    room: roomTag(roomId),
+    action: "treated every peer message in the inbox as delivered and dropped"
+  });
+}
+function readLedger(home, roomId) {
+  const { ledger, corrupt } = loadLedger(home, roomId);
+  if (!corrupt) return ledger;
+  try {
+    return withLedger(home, roomId, (l) => l);
+  } catch {
+    return ledger;
   }
 }
 function writeLedger(path, l) {
@@ -110,8 +143,13 @@ function writeLedger(path, l) {
 function withLedger(home, roomId, fn) {
   const path = roomFile(home, roomId, "delivered.json");
   return withLock(path, () => {
-    const l = readLedger(home, roomId);
-    return fn(l, () => writeLedger(path, l));
+    const { ledger, corrupt } = loadLedger(home, roomId);
+    const save = () => writeLedger(path, ledger);
+    if (corrupt) {
+      warnCorrupt(home, roomId);
+      save();
+    }
+    return fn(ledger, save);
   });
 }
 function isHeld(e, l, hold) {
@@ -138,25 +176,33 @@ function claimUndelivered(home, roomId, opts, pick) {
     return result;
   });
 }
+function heldAndNotices(home, roomId, l) {
+  const inbox = readInbox(home, roomId);
+  return {
+    held: inbox.filter((e) => isHeld(e, l, true)),
+    notices: inbox.filter((e) => e.source === "local" && e.event === "held" && !l.ids.has(e.id)).map((e) => e.id)
+  };
+}
 function releaseHeld(home, roomId, pick) {
   return withLedger(home, roomId, (l, save) => {
-    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    const { held, notices } = heldAndNotices(home, roomId, l);
     const { ids, result } = pick(held);
     if (held.length === 0) return { released: held, result };
     for (const e of held) l.released.add(e.id);
-    for (const id of ids) l.ids.add(id);
+    for (const id of [...ids, ...notices]) l.ids.add(id);
     save();
     return { released: held, result };
   });
 }
 function dropHeld(home, roomId) {
   return withLedger(home, roomId, (l, save) => {
-    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    const { held, notices } = heldAndNotices(home, roomId, l);
     if (held.length === 0) return held;
     for (const e of held) {
       l.dropped.add(e.id);
       l.ids.add(e.id);
     }
+    for (const id of notices) l.ids.add(id);
     save();
     return held;
   });
