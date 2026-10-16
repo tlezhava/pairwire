@@ -17,7 +17,7 @@ import {
   external_exports,
   formatRelayAddress,
   parseRelayAddress
-} from "./chunk-J2VZYBRA.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 import {
   randomBytes
 } from "./chunk-KARZWXGF.mjs";

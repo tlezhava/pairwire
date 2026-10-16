@@ -22819,7 +22819,7 @@ function badHost() {
 
 // packages/core/src/coord.ts
 var MAX_ACTIVE_CLAIMS = 16;
-var MAX_CONTRACT_NAMES = 50;
+var MAX_CONTRACT_NAMES_PER_SIDE = 25;
 var MINUTE = 6e4;
 var other = (side) => side === "peer" ? "ours" : "peer";
 var key = (side, id) => `${side}:${id}`;
@@ -22829,8 +22829,10 @@ function coordView(input2) {
   const proposals = /* @__PURE__ */ new Map();
   const live = /* @__PURE__ */ new Map();
   const maxVersion = /* @__PURE__ */ new Map();
+  const names = { peer: /* @__PURE__ */ new Set(), ours: /* @__PURE__ */ new Set() };
+  const active = { peer: [], ours: [] };
   const collab2 = input2.messages.filter((m) => isCollabKind(m.envelope.kind)).sort((a, b) => a.at - b.at || a.side.localeCompare(b.side) || a.envelope.id.localeCompare(b.envelope.id));
-  const activeAt = (side, t) => [...claims.values()].filter((c) => c.side === side && c.counted && c.releasedAt === null && c.expiresAt > t);
+  const isActive = (c, t) => c.counted && c.releasedAt === null && c.expiresAt > t;
   for (const { side, envelope: env, at } of collab2) {
     const k = key(side, env.id);
     if (infos.has(k)) continue;
@@ -22838,9 +22840,12 @@ function coordView(input2) {
       case "heads_up":
         break;
       case "claim": {
-        const counted = activeAt(side, at).length < MAX_ACTIVE_CLAIMS;
+        active[side] = active[side].filter((c) => isActive(c, at));
+        const counted = active[side].length < MAX_ACTIVE_CLAIMS;
         const expiresAt = Math.min(at + env.data.ttl_min * MINUTE, input2.roomExpiresAt);
-        claims.set(k, { side, id: env.id, paths: env.data.paths, at, expiresAt, counted, releasedAt: null });
+        const record2 = { side, id: env.id, paths: env.data.paths, at, expiresAt, counted, releasedAt: null };
+        claims.set(k, record2);
+        if (counted) active[side].push(record2);
         infos.set(k, counted ? { match: "yes", expiresAt } : { match: "over_limit" });
         break;
       }
@@ -22875,17 +22880,24 @@ function coordView(input2) {
           answer: null
         };
         proposals.set(k, record2);
-        if (current && (current.version > d.version || current.version === d.version && current.id >= env.id)) {
-          infos.set(k, { match: "stale_version" });
-        } else if (!current && live.size >= MAX_CONTRACT_NAMES) {
+        if (d.version > (maxVersion.get(d.name) ?? 0) + 1) {
+          infos.set(k, { match: "version_gap" });
+          break;
+        }
+        if (!current && names[side].size >= MAX_CONTRACT_NAMES_PER_SIDE) {
           infos.set(k, { match: "over_limit" });
           break;
-        } else {
-          record2.counted = true;
-          live.set(d.name, record2);
-          infos.set(k, { match: "yes" });
         }
+        names[side].add(d.name);
         maxVersion.set(d.name, Math.max(maxVersion.get(d.name) ?? 0, d.version));
+        const replaces = !current || current.version < d.version || current.version === d.version && current.state === "pending" && current.id < env.id;
+        if (!replaces) {
+          infos.set(k, { match: "stale_version" });
+          break;
+        }
+        record2.counted = true;
+        live.set(d.name, record2);
+        infos.set(k, { match: "yes" });
         break;
       }
       case "contract_response": {
@@ -22913,14 +22925,16 @@ function coordView(input2) {
     const info = infos.get(key(p.side, p.id));
     if (info?.match === "yes") info.status = live.get(p.name) === p ? p.state : "superseded";
   }
-  const activeNow = (side) => input2.roomOpen ? activeAt(side, input2.now) : [];
+  const all = [...claims.values()];
+  const activeNow = (side) => input2.roomOpen ? all.filter((c) => c.side === side && isActive(c, input2.now)) : [];
   return {
     claims: { peer: activeNow("peer"), ours: activeNow("ours") },
     contracts: [...live.values()].sort((a, b) => a.name.localeCompare(b.name)),
     info: (side, id) => infos.get(key(side, id)),
     claim: (side, id) => claims.get(key(side, id)),
     proposal: (side, id) => proposals.get(key(side, id)),
-    maxVersion: (name) => maxVersion.get(name) ?? 0
+    maxVersion: (name) => maxVersion.get(name) ?? 0,
+    contractNames: { peer: names.peer.size, ours: names.ours.size }
   };
 }
 function literalSegments(path) {
@@ -23193,6 +23207,7 @@ export {
   openMsg,
   receiveDecision,
   MAX_ACTIVE_CLAIMS,
+  MAX_CONTRACT_NAMES_PER_SIDE,
   coordView,
   pathsOverlap,
   fallbackBody,

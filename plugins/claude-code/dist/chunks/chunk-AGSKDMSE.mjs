@@ -7,7 +7,7 @@ import {
   expiresAt,
   readState,
   removeFile
-} from "./chunk-SKIYUC7T.mjs";
+} from "./chunk-YNXENSKT.mjs";
 import {
   isNamedPipePath,
   roomFile
@@ -17,7 +17,7 @@ import {
   isCollabKind,
   redact,
   sanitizeText
-} from "./chunk-J2VZYBRA.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 
 // packages/client/src/transcript.ts
 import { appendFileSync, readFileSync } from "node:fs";

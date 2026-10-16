@@ -4,7 +4,7 @@ import {
   createLogger,
   fileSink,
   roomTag
-} from "./chunk-ICN7LAQE.mjs";
+} from "./chunk-L37HB6AK.mjs";
 import {
   PRIVATE_FILE_MODE,
   errorCode,
@@ -13,7 +13,7 @@ import {
   readState,
   withLock,
   writeFileAtomic
-} from "./chunk-SKIYUC7T.mjs";
+} from "./chunk-YNXENSKT.mjs";
 import {
   hookErrorsPath,
   roomFile
@@ -27,7 +27,7 @@ import {
   pathsOverlap,
   sanitizeAttr,
   scanSecrets
-} from "./chunk-J2VZYBRA.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 import {
   bytesToHex,
   sha256
@@ -57,9 +57,7 @@ var outboxEntrySchema = external_exports.strictObject({
   envelope: envelopeSchema,
   status: external_exports.enum(["queued", "sent", "delivered"]),
   sent_at: millis.nullable(),
-  delivered_at: millis.nullable(),
-  /** Structured kinds: the chat body for a peer without `collab1`, built and checked at send time (02 §6.3.6). */
-  fallback_body: external_exports.string().optional()
+  delivered_at: millis.nullable()
 });
 var KEEP_DELIVERED = 5;
 function readLines(path) {
@@ -385,6 +383,7 @@ export {
   releaseHeld,
   dropHeld,
   hiddenBodies,
+  readCoordSent,
   appendCoordSent,
   loadView,
   renderItemsFor,

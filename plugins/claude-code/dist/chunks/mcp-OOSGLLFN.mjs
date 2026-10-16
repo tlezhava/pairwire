@@ -3,7 +3,7 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   listenCtl,
   transcriptEvents
-} from "./chunk-S4SFJ5QS.mjs";
+} from "./chunk-AGSKDMSE.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -14,11 +14,12 @@ import {
   inboxCounts,
   loadView,
   readContractFile,
+  readCoordSent,
   readOutbox,
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-DHDZKT6C.mjs";
+} from "./chunk-GH2BAUU7.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -28,10 +29,10 @@ import {
   isProcessAlive,
   removeBindingFor,
   resolveProjectDir
-} from "./chunk-ICN7LAQE.mjs";
+} from "./chunk-L37HB6AK.mjs";
 import {
   assertStatePrivate
-} from "./chunk-DRAHYN5N.mjs";
+} from "./chunk-CGGNPNBK.mjs";
 import {
   createRoom,
   expiresAt,
@@ -45,7 +46,7 @@ import {
   resolveDisplayName,
   updateState,
   writeSessionCaps
-} from "./chunk-SKIYUC7T.mjs";
+} from "./chunk-YNXENSKT.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -64,6 +65,7 @@ import {
   HELLO_TYPE,
   Handshake,
   MAX_ACTIVE_CLAIMS,
+  MAX_CONTRACT_NAMES_PER_SIDE,
   MAX_CONTRACT_VERSION,
   MAX_PATHS,
   MSG_TYPE,
@@ -129,7 +131,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-J2VZYBRA.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 import {
   __commonJS,
   __require,
@@ -26551,11 +26553,10 @@ var DEFAULT_TUNING = {
 function collabFor(home, roomId, sid) {
   return readSessionCaps(home, roomId)[sid]?.includes(COLLAB_CAP) ?? false;
 }
-function wireEnvelope(entry, collab) {
+function wireEnvelope(entry, structured) {
   const env = entry.envelope;
-  if (collab || !isCollabKind(env.kind)) return env;
-  const structured = env;
-  return fallbackEnvelope(structured, entry.fallback_body ?? fallbackBody(structured));
+  const original = env.kind === "chat" ? structured?.get(env.id) : void 0;
+  return original && isCollabKind(original.kind) && original.seq === env.seq ? original : env;
 }
 var toStored = (s) => ({ sid: bytesToHex(s.sid), send_key: bytesToHex(s.sendKey), recv_key: bytesToHex(s.recvKey) });
 var fromStored = (s) => ({ sid: hexToBytes(s.sid), sendKey: hexToBytes(s.send_key), recvKey: hexToBytes(s.recv_key) });
@@ -26641,10 +26642,15 @@ var RoomConnection = class {
     const structured = "fallbackBody" in input;
     const envelope = structured ? { ...common, author: "agent", kind: input.kind, data: input.data } : { ...common, author: input.author, kind: input.kind };
     serializeEnvelope(envelope);
-    if (structured) serializeEnvelope(fallbackEnvelope(envelope, input.fallbackBody));
+    const fallback = structured ? fallbackEnvelope(envelope, input.fallbackBody) : null;
+    if (fallback) serializeEnvelope(fallback);
     updateState(this.#o.home, this.#roomId, (st) => ({ ...st, my_seq: Math.max(st.my_seq, envelope.seq) }));
     const status = s.sessions.current ? "sent" : "queued";
-    const entry = { envelope, status, sent_at: null, delivered_at: null, ...structured ? { fallback_body: input.fallbackBody } : {} };
+    if (structured) {
+      const sentAt = input.sentAt ?? this.#t.now();
+      appendCoordSent(this.#o.home, this.#roomId, { envelope, sent_at: sentAt, ...input.localPath ? { local_path: input.localPath } : {} });
+    }
+    const entry = { envelope: fallback ?? envelope, status, sent_at: null, delivered_at: null };
     updateOutbox(this.#o.home, this.#roomId, (entries) => [...entries, entry]);
     this.#o.events?.sent?.(envelope);
     if (status === "sent") {
@@ -26969,6 +26975,8 @@ var RoomConnection = class {
     const session = s?.sessions.current ? fromStored(s.sessions.current) : null;
     const collab = !!s?.sessions.current && collabFor(this.#o.home, this.#roomId, s.sessions.current.sid);
     const outbox = new Map(readOutbox(this.#o.home, this.#roomId).map((e) => [e.envelope.id, e]));
+    let structured;
+    const structuredFor = () => structured ??= collab ? new Map(readCoordSent(this.#o.home, this.#roomId).map((c) => [c.envelope.id, c.envelope])) : null;
     const sentIds = [];
     while (this.#queue.length > 0 && this.#sentTimes.length < this.#tune.framesPerWindow) {
       const item = this.#queue.shift();
@@ -26980,7 +26988,7 @@ var RoomConnection = class {
       } else if (session && item.t === "env") {
         const entry = outbox.get(item.id);
         if (entry && entry.status !== "delivered") {
-          frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: wireEnvelope(entry, collab) });
+          frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: wireEnvelope(entry, structuredFor()) });
           sentIds.push(item.id);
         }
       }
@@ -27144,6 +27152,9 @@ function planStructured(input, ctx) {
         if (why) refuse(`Not proposed: ${why}. Send it without contract_content (by reference).`);
         content2 = input.contract_content;
         scan.push(["contract_content", content2]);
+      }
+      if (!view.contracts.some((c) => c.name === name) && view.contractNames.ours >= MAX_CONTRACT_NAMES_PER_SIDE) {
+        refuse(`You have already proposed ${MAX_CONTRACT_NAMES_PER_SIDE} contract names in this room; propose a new version of one of them instead. Nothing was sent.`);
       }
       const version = view.maxVersion(name) + 1;
       if (version > MAX_CONTRACT_VERSION) refuse("This contract has reached the highest version pairwire supports; use a new contract_name.");
@@ -27463,8 +27474,16 @@ ${rendered}` }) + "\n");
         const wait = Math.ceil((this.#sendTimes[0] + MINUTE2 - now) / 1e3);
         throw new ToolError(`Rate limit: at most ${SENDS_PER_MINUTE} messages per minute. Try again in ${wait} s.`);
       }
-      const sent = plan ? this.#conn.send({ kind: plan.kind, data: plan.data, body: plan.body, reply_to: plan.reply_to, author: "agent", fallbackBody: plan.fallbackBody }) : this.#conn.send({ kind: input.kind, body: input.body, reply_to: input.reply_to ?? null, author: "agent" });
-      if (plan) appendCoordSent(this.#o.home, state.roomId, { envelope: sent.envelope, sent_at: now, ...plan.localPath ? { local_path: plan.localPath } : {} });
+      const sent = plan ? this.#conn.send({
+        kind: plan.kind,
+        data: plan.data,
+        body: plan.body,
+        reply_to: plan.reply_to,
+        author: "agent",
+        fallbackBody: plan.fallbackBody,
+        sentAt: now,
+        ...plan.localPath ? { localPath: plan.localPath } : {}
+      }) : this.#conn.send({ kind: input.kind, body: input.body, reply_to: input.reply_to ?? null, author: "agent" });
       this.#sendTimes.push(now);
       updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: s.hop_count + 1 }));
       const lines = [
@@ -27692,7 +27711,8 @@ ${this.footer()}` };
   #recentSends(roomId) {
     const recent = readOutbox(this.#o.home, roomId).filter((e) => e.envelope.kind !== "ack").slice(-5).reverse();
     if (recent.length === 0) return "";
-    return ["Your recent messages:", ...recent.map((e) => `- ${e.envelope.id} (${e.envelope.kind}): ${e.status}`)].join("\n");
+    const kinds = new Map(readCoordSent(this.#o.home, roomId).map((c) => [c.envelope.id, c.envelope.kind]));
+    return ["Your recent messages:", ...recent.map((e) => `- ${e.envelope.id} (${kinds.get(e.envelope.id) ?? e.envelope.kind}): ${e.status}`)].join("\n");
   }
   async #waitFor(cond, ms) {
     const deadline = this.#now() + ms;
