@@ -2,8 +2,8 @@
 // no file the peer named is opened or stat'ed, nothing in the project is written, no process
 // starts, and nothing but acks is sent. The peer here is a bare connection that skips every
 // check `send` would make; the receiver is a full ClientSession with its hooks.
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { COLLAB_CAP, encodeShareString, fallbackBody, parseRelayAddress, type CollabEnvelope } from "@pairwire/core";
 import { describe, expect, it, vi } from "vitest";
 import type { SendInput } from "../src/connection.js";
@@ -127,11 +127,20 @@ describe("a hostile peer's structured messages (REQ-COLLAB-6, INV-2)", { timeout
     expect(footer).toContain("1 peer claim · 1 contract awaiting your answer");
 
     // Nothing opened, written, run or sent because of them.
-    const underProject = rec.paths.filter((p) => p === b.project || p.startsWith(b.project + "/"));
-    const allowed = new Set([b.project, join(b.project, ".git"), join(b.project, "contracts/b.yaml")]);
+    // Project-relative "/" paths, whichever spelling the code used: on Windows a path may be the
+    // real long form or the 8.3 short one (RUNNER~1), with backslashes, in any letter case.
+    const norm = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+    const roots = [...new Set([norm(b.project), norm(realpathSync.native(b.project))])];
+    const rel = (p: string) => {
+      const n = norm(p);
+      const root = roots.find((r) => n === r || n.startsWith(r + sep));
+      return root === undefined ? null : n.slice(root.length + 1).split(sep).join("/");
+    };
+    const underProject = rec.paths.map(rel).filter((p): p is string => p !== null);
+    const allowed = new Set(["", ".git", "contracts/b.yaml"]);
     // The recorder works: B read its own state and, for status, its own contract file.
-    expect(rec.paths.some((p) => p.startsWith(b.home))).toBe(true);
-    expect(underProject).toContain(join(b.project, "contracts/b.yaml"));
+    expect(rec.paths.some((p) => norm(p).startsWith(norm(b.home)) || norm(p).startsWith(norm(realpathSync.native(b.home))))).toBe(true);
+    expect(underProject).toContain("contracts/b.yaml");
     expect(underProject.filter((p) => !allowed.has(p))).toEqual([]);
     for (const n of named) expect(rec.paths.some((p) => p.endsWith(n))).toBe(false);
     expect(rec.spawns).toEqual([]);
