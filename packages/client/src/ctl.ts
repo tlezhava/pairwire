@@ -64,11 +64,14 @@ function senders(entries: readonly InboxEntry[]): string {
 
 /**
  * /pairwire:accept [drop] (04 §5 Hold mode, §8). Without a terminal the output lands in the
- * prompt, so what it shows is delivered; from a terminal (Codex) it only releases.
+ * prompt, so what it shows is delivered; from a terminal (Codex) it only releases. It acts
+ * whatever this process's own hold setting says: the MCP server may have been given another
+ * one (PAIRWIRE_HOLD in its environment only), so anything that would be held is released.
  */
 function accept(home: string, roomId: string, action: string, io: CtlIo): string {
   if (action !== "" && action !== "drop") return "pairwire: usage: /pairwire:accept [drop]";
-  if (!holdMode(home, io.env)) return "pairwire: hold mode is off, so no messages are held; they go straight to your agent.";
+  const nothing = () =>
+    holdMode(home, io.env) ? "pairwire: no messages are held." : "pairwire: hold mode is off, so no messages are held; they go straight to your agent.";
   const now = Date.now();
   const note = (text: string) => {
     try {
@@ -79,7 +82,7 @@ function accept(home: string, roomId: string, action: string, io: CtlIo): string
   };
   if (action === "drop") {
     const dropped = dropHeld(home, roomId);
-    if (dropped.length === 0) return "pairwire: no messages are held.";
+    if (dropped.length === 0) return nothing();
     note(`You dropped ${plural(dropped.length, "held message")}.`);
     return `pairwire: dropped ${plural(dropped.length, "held message")} from ${senders(dropped)}; your agent will not see them.`;
   }
@@ -89,7 +92,7 @@ function accept(home: string, roomId: string, action: string, io: CtlIo): string
     const r = renderForHook(held.map(toRenderItem));
     return { ids: r.deliveredIds, result: r.text ?? "" };
   });
-  if (released.length === 0) return "pairwire: no messages are held.";
+  if (released.length === 0) return nothing();
   note(`You released ${plural(released.length, "held message")}.`);
   const what = `${plural(released.length, "held message")} from ${senders(released)}`;
   if (terminal) return `pairwire: released ${what}; your agent receives them on its next turn or inbox call.\n\n${result}`;

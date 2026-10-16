@@ -524,8 +524,11 @@ Commands:
   handle them as the pairwire skill says.", then the `renderForHook()` output (preamble,
   wrappers, and the "*n* more waiting" trailer when some didn't fit). With `drop` it drops
   every held message and prints only "pairwire: dropped N held message(s) from Nika; your
-  agent will not see them." Any other argument prints the usage. With hold mode off, or
-  nothing held, it says so and changes nothing (released-but-unread messages are not
+  agent will not see them." Any other argument prints the usage. It does not consult its
+  own process's `hold` setting, which can differ from the MCP server's (`PAIRWIRE_HOLD` set
+  only in the server's environment): it acts on every message that would be held with hold
+  mode on. When there is none, it changes nothing and says "no messages are held", or, if
+  its own `hold` is off, that hold mode is off (released-but-unread messages are not
   re-shown; the normal paths deliver them). Both actions append a notice line to the
   transcript ("You released 2 held messages." / "You dropped 2 held messages.").
   `ctl accept` works on the room's files under the `delivered.json` lock, so it needs no

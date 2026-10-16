@@ -12,7 +12,7 @@ import { runStopWait } from "../src/waiter.js";
 import { until } from "./connection/harness.js";
 import { paired, roomOf, type Side } from "./session/pairing.js";
 
-async function ctl(side: Side, args: string[], stdin = "", tty = false): Promise<string> {
+async function ctl(side: Side, args: string[], stdin = "", tty = false, env: NodeJS.ProcessEnv = {}): Promise<string> {
   let out = "";
   const stdout = Object.assign(
     new Writable({
@@ -23,7 +23,7 @@ async function ctl(side: Side, args: string[], stdin = "", tty = false): Promise
     }),
     tty ? { isTTY: true } : {},
   );
-  const code = await runCtl(args, { stdin: Readable.from([stdin]), stdout, env: { PAIRWIRE_HOME: side.home }, cwd: side.project });
+  const code = await runCtl(args, { stdin: Readable.from([stdin]), stdout, env: { ...env, PAIRWIRE_HOME: side.home }, cwd: side.project });
   expect(code).toBe(0);
   return out;
 }
@@ -176,6 +176,20 @@ describe("hold mode", () => {
     expect(await ctl(a, ["accept"], "drop\n")).toBe("pairwire: no messages are held.\n");
     setHold(a, false);
     expect(await ctl(a, ["accept"], "\n")).toBe("pairwire: hold mode is off, so no messages are held; they go straight to your agent.\n");
+  });
+
+  it("REQ-SAFE-6 ctl accept releases and drops even when its own hold setting is off (the server's may differ)", async () => {
+    const { a, fromB } = await holdA(); // the MCP server holds through config.json
+    const off = { PAIRWIRE_HOLD: "0" }; // ctl was started without the server's setting
+    await fromB("first HOLDME");
+    const out = await ctl(a, ["accept"], "\n", false, off);
+    expect(out).toMatch(/^pairwire: your user released 1 held message from Nika\./);
+    expect(out).toContain("first HOLDME");
+    expect(held(a)).toBe(0);
+    await fromB("second DROPME");
+    expect(await ctl(a, ["accept"], "drop\n", false, off)).toBe("pairwire: dropped 1 held message from Nika; your agent will not see them.\n");
+    expect((await a.session.inbox()).text).not.toContain("DROPME");
+    expect(await ctl(a, ["accept"], "\n", false, off)).toBe("pairwire: hold mode is off, so no messages are held; they go straight to your agent.\n");
   });
 
   it("REQ-SAFE-6 turning hold mode off lets held messages flow; turning it on holds unread ones", async () => {
