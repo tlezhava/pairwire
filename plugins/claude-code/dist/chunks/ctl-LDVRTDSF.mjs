@@ -5,27 +5,27 @@ import {
   appendTranscript,
   noticeLine,
   transcriptTail
-} from "./chunk-M7U4EUTR.mjs";
+} from "./chunk-S4SFJ5QS.mjs";
 import {
   dropHeld,
   hiddenBodies,
   releaseHeld,
-  toRenderItem
-} from "./chunk-EUE26XHT.mjs";
+  renderItemsFor
+} from "./chunk-DHDZKT6C.mjs";
 import {
   isProcessAlive,
   readBinding,
   resolveProjectDir
-} from "./chunk-VU23LRE3.mjs";
+} from "./chunk-ICN7LAQE.mjs";
 import {
   assertStatePrivate
-} from "./chunk-QXIUGJEG.mjs";
+} from "./chunk-DRAHYN5N.mjs";
 import {
   holdMode,
   isOpen,
   readState,
   updateState
-} from "./chunk-5XLM2UC5.mjs";
+} from "./chunk-SKIYUC7T.mjs";
 import {
   pairwireHome
 } from "./chunk-GVGSGJLD.mjs";
@@ -36,7 +36,7 @@ import {
   renderForHook,
   renderItems,
   renderTranscript
-} from "./chunk-WZNRRE4K.mjs";
+} from "./chunk-J2VZYBRA.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/ctl.ts
@@ -92,9 +92,10 @@ function accept(home, roomId, harness, action, io) {
     return `pairwire: dropped ${plural(dropped.length, "held message")} from ${senders(dropped)}; your agent will not see them.`;
   }
   const terminal = io.stdout.isTTY === true;
-  const { released, result } = releaseHeld(home, roomId, (held) => {
-    if (terminal) return { ids: [], result: renderItems(held.map(toRenderItem)) };
-    const r = renderForHook(held.map(toRenderItem));
+  const { released, result } = releaseHeld(home, roomId, (held, ledger) => {
+    const items = renderItemsFor(home, roomId, held, { hold: true, now, ledger });
+    if (terminal) return { ids: [], result: renderItems(items) };
+    const r = renderForHook(items);
     return { ids: r.deliveredIds, result: r.text ?? "" };
   });
   if (released.length === 0) return nothing();

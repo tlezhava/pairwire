@@ -4,17 +4,20 @@ import {
   PRIVATE_FILE_MODE,
   ensurePrivateDir,
   errorCode,
+  expiresAt,
+  readState,
   removeFile
-} from "./chunk-5XLM2UC5.mjs";
+} from "./chunk-SKIYUC7T.mjs";
 import {
   isNamedPipePath,
   roomFile
 } from "./chunk-GVGSGJLD.mjs";
 import {
   displayName,
+  isCollabKind,
   redact,
   sanitizeText
-} from "./chunk-WZNRRE4K.mjs";
+} from "./chunk-J2VZYBRA.mjs";
 
 // packages/client/src/transcript.ts
 import { appendFileSync, readFileSync } from "node:fs";
@@ -24,22 +27,44 @@ function appendTranscript(home, roomId, text) {
   appendFileSync(roomFile(home, roomId, "transcript.md"), text.endsWith("\n") ? text : `${text}
 `, { mode: PRIVATE_FILE_MODE });
 }
-function messageEntry(arrow, at, who, env, queued = false) {
+var MINUTE = 6e4;
+var hhmm = (ms) => new Date(ms).toISOString().slice(11, 16) + "Z";
+function structuredFields(env, at, roomExpiresAt) {
+  switch (env.kind) {
+    case "heads_up":
+      return env.data.paths.length > 0 ? [env.data.paths.join(", ")] : [];
+    case "claim":
+      return [env.data.paths.join(", "), `until ${hhmm(Math.min(at + env.data.ttl_min * MINUTE, roomExpiresAt))}`];
+    case "contract_propose": {
+      const d = env.data;
+      return [`${d.name} v${d.version}`, d.path, ...d.rev ? [`@ ${d.rev}`] : [], `sha256 ${d.sha256.slice(0, 8)}`, ...d.content !== null ? ["inline"] : []];
+    }
+    case "contract_response":
+      return [env.data.decision, `${env.data.name} v${env.data.version}`, `sha256 ${env.data.sha256.slice(0, 8)}`];
+    default:
+      return [];
+  }
+}
+function messageEntry(arrow, at, who, env, o = {}) {
+  const peer = arrow === "\u2190";
+  const clean = (text) => peer ? sanitizeText(redact(text)) : redact(text);
   const parts = [`### ${arrow} ${stamp(at)}`, who, env.kind, env.id];
   if (env.reply_to) parts.push(`re ${env.reply_to}`);
-  if (queued) parts.push("queued");
+  for (const f of structuredFields(env, at, o.roomExpiresAt ?? Number.MAX_SAFE_INTEGER)) parts.push(clean(f).replace(/\n/g, " "));
+  if (o.queued) parts.push("queued");
+  if (o.asChat) parts.push("as chat (peer's pairwire is older)");
   const body = env.body === null || env.body === "" ? "(no message)" : redact(env.body);
   return `${parts.join(" \xB7 ")}
-${quote(arrow === "\u2190" ? sanitizeText(body) : body)}
+${quote(peer ? sanitizeText(body) : body)}
 
 `;
 }
-function ourMessage(env, at, queued) {
-  return messageEntry("\u2192", at, `you (${env.author})`, env, queued);
+function ourMessage(env, at, queued, o = {}) {
+  return messageEntry("\u2192", at, `you (${env.author})`, env, { ...o, queued });
 }
-function peerMessage(entry) {
+function peerMessage(entry, roomExpiresAt) {
   const who = `${displayName(entry.from)} (${displayName(entry.harness)}, ${entry.envelope.author})`;
-  return messageEntry("\u2190", entry.received_at, who, entry.envelope);
+  return messageEntry("\u2190", entry.received_at, who, entry.envelope, roomExpiresAt === void 0 ? {} : { roomExpiresAt });
 }
 function noticeLine(text, at) {
   return `\xB7 ${stamp(at)} \xB7 ${sanitizeText(text).replace(/\n/g, " ")}
@@ -53,7 +78,7 @@ function deliveredLine(ids, at) {
   return ids.map((id) => `\u2713 ${stamp(at)} \xB7 delivered ${id}
 `).join("");
 }
-function transcriptEvents(home, roomId, now, onError, sessionHasCurrent) {
+function transcriptEvents(home, roomId, now, onError, sessionHasCurrent, peerHasCollab = () => true) {
   const write = (text) => {
     try {
       appendTranscript(home, roomId, text);
@@ -61,10 +86,23 @@ function transcriptEvents(home, roomId, now, onError, sessionHasCurrent) {
       onError(e);
     }
   };
+  const roomExpiresAt = () => {
+    try {
+      const s = readState(home, roomId);
+      return s ? expiresAt(s) : void 0;
+    } catch {
+      return void 0;
+    }
+  };
   return {
-    sent: (env) => write(ourMessage(env, now(), !sessionHasCurrent())),
+    sent: (env) => {
+      const queued = !sessionHasCurrent();
+      const asChat = !queued && isCollabKind(env.kind) && !peerHasCollab();
+      const expires = roomExpiresAt();
+      write(ourMessage(env, now(), queued, { asChat, ...expires === void 0 ? {} : { roomExpiresAt: expires } }));
+    },
     inbound: (entry) => {
-      if (entry.source === "peer") return write(peerMessage(entry));
+      if (entry.source === "peer") return write(peerMessage(entry, roomExpiresAt()));
       const warn = entry.event === "peer_changed" || entry.event === "wrong_key";
       write((warn ? warningLine : noticeLine)(entry.text, entry.received_at));
     },
@@ -94,9 +132,11 @@ ${line}`;
   return entries.slice(-n).map((entry) => {
     const heading = entry.split("\n", 1)[0];
     if (hidden.size === 0 || !heading.startsWith("### \u2190")) return entry;
-    const why = heading.split(" \xB7 ").map((f) => hidden.get(f)).find((w) => w !== void 0);
-    return why ? `${heading}
-${placeholder[why]}` : entry;
+    const fields = heading.split(" \xB7 ");
+    const at = fields.findIndex((f) => hidden.has(f));
+    if (at < 0) return entry;
+    return `${fields.slice(0, at + 1).join(" \xB7 ")}
+${placeholder[hidden.get(fields[at])]}`;
   }).join("\n\n");
 }
 
