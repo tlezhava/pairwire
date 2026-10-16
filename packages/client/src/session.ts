@@ -33,7 +33,7 @@ import type { Logger } from "./log.js";
 import { chooseCtlPath, roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
-import { appendCoordSent, claimUndelivered, inboxCounts, readOutbox, type InboxCounts, type InboxEntry } from "./room-files.js";
+import { claimUndelivered, inboxCounts, readCoordSent, readOutbox, type InboxCounts, type InboxEntry } from "./room-files.js";
 import { createRoom, expiresAt, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
 import { CollabSendError, planStructured, type CollabPlan } from "./collab-send.js";
 import { coordFooter, coordStatusLines, loadView, renderItemsFor } from "./coord.js";
@@ -381,9 +381,17 @@ export class ClientSession {
         throw new ToolError(`Rate limit: at most ${SENDS_PER_MINUTE} messages per minute. Try again in ${wait} s.`);
       }
       const sent = plan
-        ? this.#conn!.send({ kind: plan.kind, data: plan.data, body: plan.body, reply_to: plan.reply_to, author: "agent", fallbackBody: plan.fallbackBody } as StructuredSend)
+        ? this.#conn!.send({
+            kind: plan.kind,
+            data: plan.data,
+            body: plan.body,
+            reply_to: plan.reply_to,
+            author: "agent",
+            fallbackBody: plan.fallbackBody,
+            sentAt: now,
+            ...(plan.localPath ? { localPath: plan.localPath } : {}),
+          } as StructuredSend)
         : this.#conn!.send({ kind: input.kind as "chat" | "question" | "answer", body: input.body!, reply_to: input.reply_to ?? null, author: "agent" });
-      if (plan) appendCoordSent(this.#o.home, state.roomId, { envelope: sent.envelope, sent_at: now, ...(plan.localPath ? { local_path: plan.localPath } : {}) });
       this.#sendTimes.push(now);
       updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: s.hop_count + 1 }));
       const lines = [
@@ -637,7 +645,9 @@ export class ClientSession {
       .slice(-5)
       .reverse();
     if (recent.length === 0) return "";
-    return ["Your recent messages:", ...recent.map((e) => `- ${e.envelope.id} (${e.envelope.kind}): ${e.status}`)].join("\n");
+    // The outbox holds a structured kind as its fallback chat; name the kind that was sent.
+    const kinds = new Map(readCoordSent(this.#o.home, roomId).map((c) => [c.envelope.id, c.envelope.kind]));
+    return ["Your recent messages:", ...recent.map((e) => `- ${e.envelope.id} (${kinds.get(e.envelope.id) ?? e.envelope.kind}): ${e.status}`)].join("\n");
   }
 
   async #waitFor(cond: () => boolean, ms: number): Promise<boolean> {

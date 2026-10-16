@@ -5,7 +5,11 @@ import { hexToBytes, randomBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { COLLAB_CAP, fallbackBody, msgAad, MSG_TYPE, type CollabEnvelope } from "@pairwire/core";
 import { describe, expect, it } from "vitest";
 import type { SendInput, SocketFactory } from "../../src/connection.js";
+import { readFileSync } from "node:fs";
+import { roomFile } from "../../src/paths.js";
+import { readCoordSent } from "../../src/room-files.js";
 import { readSessionCaps, updateState } from "../../src/state.js";
+import { v011OutboxEntrySchema } from "../fixtures/v011-schemas.js";
 import { makeClient, newSecret, startRelay, until, type Client, type ClientOptions } from "./harness.js";
 
 const NEW = ["ack", "say", COLLAB_CAP];
@@ -66,8 +70,36 @@ describe("structured kinds on the wire (02 §6.3.6)", { timeout: 30_000 }, () =>
     expect("data" in first!.envelope).toBe(false);
     expect(second!.envelope.body).toBe("and a plain one");
     await until(() => a.outbox().every((e) => e.status === "delivered"), 5000, "both acked");
-    // The outbox keeps the structured form; the fallback is stored next to it.
-    expect(a.outbox()[0]).toMatchObject({ envelope: { kind: "claim" }, fallback_body: first!.envelope.body });
+    // The outbox holds the fallback chat; the structured form is in coord-sent.jsonl.
+    expect(a.outbox()[0]).toEqual({ envelope: first!.envelope, status: "delivered", sent_at: expect.any(Number), delivered_at: expect.any(Number) });
+    expect(readCoordSent(a.home, a.keys.roomId).map((c) => c.envelope)).toEqual([sent.envelope]);
+  });
+
+  it("REQ-COLLAB-4 a queued structured message is stored in 0.1.1's outbox shape, so going back to 0.1.1 still resends it", async () => {
+    const { port } = await startRelay();
+    const secret = newSecret();
+    const a = makeClient("Tazo", port, secret, { caps: NEW });
+    a.conn.start();
+    await until(() => a.conn.status().socket === "joined", 5000, "A joined");
+    const queued = a.conn.send(claim(["src/a.ts"]));
+    const plain = a.conn.send({ kind: "chat", body: "plain", author: "agent" });
+    expect(queued.status).toBe("queued");
+
+    // 0.1.1 reads outbox.jsonl with its strict schemas and drops what fails; nothing may fail.
+    const lines = readFileSync(roomFile(a.home, a.keys.roomId, "outbox.jsonl"), "utf8").trim().split("\n");
+    const old = lines.map((l) => v011OutboxEntrySchema.safeParse(JSON.parse(l)));
+    expect(old.map((r) => r.success)).toEqual([true, true]);
+    expect(old[0]!.data!.envelope).toMatchObject({ id: queued.id, seq: queued.seq, kind: "chat", author: "agent" });
+    expect(old[0]!.data!.envelope.body).toMatch(/^\[pairwire claim · paths: src\/a\.ts · for 120 min, until /);
+    expect(old[1]!.data!.envelope).toMatchObject({ id: plain.id, seq: plain.seq });
+
+    // An M5 peer still gets the structured envelope, under the same id and seq.
+    const b = makeClient("Nika", port, secret, { caps: NEW });
+    b.conn.start();
+    await until(() => peerEntries(b).length === 2, 5000, "B has both");
+    expect(peerEntries(b)[0]!.envelope).toEqual(queued.envelope);
+    expect(peerEntries(b)[1]!.envelope).toMatchObject({ id: plain.id, kind: "chat" });
+    await until(() => a.outbox().every((e) => e.status === "delivered"), 5000, "acked");
   });
 
   it("REQ-COLLAB-4 resends unacked structured envelopes as chat after a downgrade, and structured after an upgrade", async () => {

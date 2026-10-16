@@ -27,13 +27,16 @@ export const inboxEntrySchema = z.discriminatedUnion("source", [
 ]);
 export type InboxEntry = z.infer<typeof inboxEntrySchema>;
 
+/**
+ * The 0.1.x shape, so a user who goes back to 0.1.1 in an open room keeps resending what is
+ * unacked: a structured kind is stored as its fallback chat (same id and seq), and the
+ * structured envelope lives in coord-sent.jsonl (02 §6.3.6, 04 §3).
+ */
 export const outboxEntrySchema = z.strictObject({
   envelope: envelopeSchema,
   status: z.enum(["queued", "sent", "delivered"]),
   sent_at: millis.nullable(),
   delivered_at: millis.nullable(),
-  /** Structured kinds: the chat body for a peer without `collab1`, built and checked at send time (02 §6.3.6). */
-  fallback_body: z.string().optional(),
 });
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
 

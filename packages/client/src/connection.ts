@@ -5,7 +5,6 @@ import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
 import {
   CLIENT_LIMITS,
   COLLAB_CAP,
-  fallbackBody,
   fallbackEnvelope,
   Handshake,
   HELLO_TYPE,
@@ -34,7 +33,7 @@ import { monotonicFactory } from "ulid";
 import { WebSocket } from "ws";
 import { closeRoomLocally } from "./lifecycle.js";
 import type { Logger } from "./log.js";
-import { appendInbox, readOutbox, unacked, updateOutbox, type InboxEntry, type OutboxEntry } from "./room-files.js";
+import { appendCoordSent, appendInbox, readCoordSent, readOutbox, unacked, updateOutbox, type InboxEntry, type OutboxEntry } from "./room-files.js";
 import { expiresAt, isOpen, readSessionCaps, readState, updateState, writeSessionCaps, type RoomState, type StoredSession } from "./state.js";
 
 // ---------------------------------------------------------------------------------------
@@ -175,6 +174,9 @@ export type SendInput =
       author: "agent";
       /** The chat body for a peer without `collab1`, already checked (02 §6.3.6). */
       fallbackBody: string;
+      /** coord-sent.jsonl: our local time of the send (default: now) and an accept's own copy (04 §3). */
+      sentAt?: number;
+      localPath?: string;
     });
 
 export interface SendResult {
@@ -193,12 +195,15 @@ function collabFor(home: string, roomId: string, sid: string): boolean {
   return readSessionCaps(home, roomId)[sid]?.includes(COLLAB_CAP) ?? false;
 }
 
-/** What goes on the wire for an outbox entry: a structured kind becomes its fallback chat for a peer without `collab1`. */
-function wireEnvelope(entry: OutboxEntry, collab: boolean): Envelope {
+/**
+ * What goes on the wire for an outbox entry (02 §6.3.6). The outbox holds the fallback chat of
+ * a structured kind, in the shape 0.1.x reads; a session with `collab1` sends the structured
+ * envelope with the same id from coord-sent.jsonl instead.
+ */
+function wireEnvelope(entry: OutboxEntry, structured: ReadonlyMap<string, Envelope> | null): Envelope {
   const env = entry.envelope;
-  if (collab || !isCollabKind(env.kind)) return env;
-  const structured = env as CollabEnvelope;
-  return fallbackEnvelope(structured, entry.fallback_body ?? fallbackBody(structured));
+  const original = env.kind === "chat" ? structured?.get(env.id) : undefined;
+  return original && isCollabKind(original.kind) && original.seq === env.seq ? original : env;
 }
 
 const toStored = (s: Session): StoredSession => ({ sid: bytesToHex(s.sid), send_key: bytesToHex(s.sendKey), recv_key: bytesToHex(s.recvKey) });
@@ -298,10 +303,17 @@ export class RoomConnection {
     const structured = "fallbackBody" in input;
     const envelope = (structured ? { ...common, author: "agent", kind: input.kind, data: input.data } : { ...common, author: input.author, kind: input.kind }) as Envelope;
     serializeEnvelope(envelope);
-    if (structured) serializeEnvelope(fallbackEnvelope(envelope as CollabEnvelope, input.fallbackBody));
+    const fallback = structured ? fallbackEnvelope(envelope as CollabEnvelope, input.fallbackBody) : null;
+    if (fallback) serializeEnvelope(fallback);
     updateState(this.#o.home, this.#roomId, (st) => ({ ...st, my_seq: Math.max(st.my_seq, envelope.seq) }));
     const status = s.sessions.current ? "sent" : "queued";
-    const entry: OutboxEntry = { envelope, status, sent_at: null, delivered_at: null, ...(structured ? { fallback_body: input.fallbackBody } : {}) };
+    // A structured kind: the structured envelope goes to coord-sent.jsonl first, so the pump
+    // finds it; the outbox keeps the fallback chat, which 0.1.x can read and resend (02 §6.3.6).
+    if (structured) {
+      const sentAt = input.sentAt ?? this.#t.now();
+      appendCoordSent(this.#o.home, this.#roomId, { envelope, sent_at: sentAt, ...(input.localPath ? { local_path: input.localPath } : {}) });
+    }
+    const entry: OutboxEntry = { envelope: fallback ?? envelope, status, sent_at: null, delivered_at: null };
     updateOutbox(this.#o.home, this.#roomId, (entries) => [...entries, entry]);
     this.#o.events?.sent?.(envelope);
     if (status === "sent") {
@@ -651,6 +663,8 @@ export class RoomConnection {
     // The encoding of structured kinds follows the caps of the session we encrypt under (02 §6.3.6).
     const collab = !!s?.sessions.current && collabFor(this.#o.home, this.#roomId, s.sessions.current.sid);
     const outbox = new Map(readOutbox(this.#o.home, this.#roomId).map((e) => [e.envelope.id, e]));
+    let structured: Map<string, Envelope> | null | undefined;
+    const structuredFor = () => (structured ??= collab ? new Map(readCoordSent(this.#o.home, this.#roomId).map((c) => [c.envelope.id, c.envelope])) : null);
     const sentIds: string[] = [];
 
     while (this.#queue.length > 0 && this.#sentTimes.length < this.#tune.framesPerWindow) {
@@ -663,7 +677,7 @@ export class RoomConnection {
       } else if (session && item.t === "env") {
         const entry = outbox.get(item.id);
         if (entry && entry.status !== "delivered") {
-          frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: wireEnvelope(entry, collab) });
+          frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: wireEnvelope(entry, structuredFor()) });
           sentIds.push(item.id);
         }
       }

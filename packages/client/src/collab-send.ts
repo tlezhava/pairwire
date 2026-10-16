@@ -9,6 +9,7 @@ import {
   fallbackBody,
   fallbackEnvelope,
   inlineContentProblem,
+  MAX_CONTRACT_NAMES_PER_SIDE,
   MAX_CONTRACT_VERSION,
   MAX_PATHS,
   MAX_ACTIVE_CLAIMS,
@@ -159,6 +160,10 @@ export function planStructured(input: CollabInput, ctx: CollabContext): CollabPl
         if (why) refuse(`Not proposed: ${why}. Send it without contract_content (by reference).`);
         content = input.contract_content;
         scan.push(["contract_content", content]);
+      }
+      // The view would show a new name past our limit as over_limit (02 §6.3.4).
+      if (!view.contracts.some((c) => c.name === name) && view.contractNames.ours >= MAX_CONTRACT_NAMES_PER_SIDE) {
+        refuse(`You have already proposed ${MAX_CONTRACT_NAMES_PER_SIDE} contract names in this room; propose a new version of one of them instead. Nothing was sent.`);
       }
       const version = view.maxVersion(name!) + 1;
       if (version > MAX_CONTRACT_VERSION) refuse("This contract has reached the highest version pairwire supports; use a new contract_name.");

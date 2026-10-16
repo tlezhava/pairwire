@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
-import { COLLAB_PREAMBLE } from "@pairwire/core";
+import { COLLAB_PREAMBLE, coordView, MAX_CONTRACT_NAMES_PER_SIDE, type CoordMessage, type Envelope } from "@pairwire/core";
 import { describe, expect, it } from "vitest";
 import { planStructured } from "../src/collab-send.js";
 import { ContractFileError, loadView, readContractFile } from "../src/coord.js";
 import { runCtl } from "../src/ctl.js";
 import { roomFile } from "../src/paths.js";
-import { readInbox, readOutbox } from "../src/room-files.js";
+import { readCoordSent, readInbox, readOutbox } from "../src/room-files.js";
 import { readState } from "../src/state.js";
 import { startRelay, until } from "./connection/harness.js";
 import { roomOf, SHARE, side, type Side } from "./session/pairing.js";
@@ -329,6 +329,79 @@ describe("contract files (04 §3, REQ-COLLAB-7, INV-5)", { timeout: 30_000 }, ()
     expect(r.text).toContain("Not proposed: contracts/keys.yaml: looks like it contains a secret (aws_access_key_id at character 5).");
     expect(r.text).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(readOutbox(a.home, roomOf(a))).toEqual([]);
+  });
+
+  it("REQ-COLLAB-7 INV-5 an accept refuses a local_path outside the project, under a dot-directory, with a sensitive name or with a secret", async () => {
+    const { a, b } = await pair();
+    writeIn(a, "contracts/orders-api.yaml", SPEC);
+    const p = await send(a, { kind: "contract_propose", body: "Orders API.", contract_name: "orders-api", contract_path: "contracts/orders-api.yaml" });
+    await arrives(b, p.id);
+    await b.session.inbox();
+    // Every copy has the proposal's exact bytes, so only the file rules can refuse it.
+    const outside = join(tempDir(), "orders.yaml");
+    writeFileSync(outside, SPEC);
+    mkdirSync(join(b.project, "api"), { recursive: true });
+    symlinkSync(outside, join(b.project, "api/link.yaml"));
+    writeIn(b, ".env", SPEC);
+    writeIn(b, ".github/x.yaml", SPEC);
+    symlinkSync(join(b.project, ".github/x.yaml"), join(b.project, "api/dot.yaml"));
+    writeIn(b, "contracts/server.pem", SPEC);
+    const keyed = SPEC + "aws: AKIAIOSFODNN7EXAMPLE\n";
+    writeIn(b, "api/keys.yaml", keyed);
+    const seq = readState(b.home, roomOf(b))!.my_seq;
+    const cases = [
+      ["api/link.yaml", "Not accepted: api/link.yaml: resolves to a file outside this project."],
+      [".env", "Not accepted: .env: the path must not be or be under a dot-file or dot-directory."],
+      [".github/x.yaml", "Not accepted: .github/x.yaml: the path must not be or be under a dot-file or dot-directory."],
+      ["api/dot.yaml", "Not accepted: api/dot.yaml: resolves to a dot-file, a dot-directory or an unusable path."],
+      ["contracts/server.pem", "Not accepted: contracts/server.pem: has a name that usually holds keys or credentials."],
+      ["api/keys.yaml", "Not accepted: api/keys.yaml: looks like it contains a secret (aws_access_key_id at character"],
+    ] as const;
+    for (const [localPath, message] of cases) {
+      const r = await b.session.send({ kind: "contract_response", reply_to: p.id, decision: "accept", local_path: localPath });
+      expect(r.isError, localPath).toBe(true);
+      expect(r.text, localPath).toContain(message);
+      expect(r.text).not.toContain("AKIAIOSFODNN7EXAMPLE");
+      expect(r.text).not.toContain("openapi");
+    }
+    expect(readState(b.home, roomOf(b))!.my_seq).toBe(seq);
+    expect(readOutbox(b.home, roomOf(b))).toEqual([]);
+    expect(readCoordSent(b.home, roomOf(b))).toEqual([]);
+    // The proposal is still open: a valid copy is accepted.
+    writeIn(b, "api/orders.yaml", SPEC);
+    await send(b, { kind: "contract_response", reply_to: p.id, decision: "accept", local_path: "api/orders.yaml" });
+  });
+
+  it(`REQ-COLLAB-6 send refuses a new contract name past our ${MAX_CONTRACT_NAMES_PER_SIDE}, whatever the peer proposed`, () => {
+    const dir = project();
+    writeFileSync(join(dir, "contracts/x.yaml"), SPEC);
+    const now = Date.now();
+    let n = 0;
+    const propose = (name: string): Envelope =>
+      ({ v: 1, id: `01JD${String(n++).padStart(22, "0")}`, seq: n, ts: new Date(now).toISOString(), author: "agent", kind: "contract_propose", reply_to: null, body: "x", acks: null,
+         data: { name, version: 1, path: `contracts/${name}.yaml`, sha256: SHA, rev: null, content: null } }) as Envelope;
+    const plan = (messages: CoordMessage[], name: string) =>
+      planStructured(
+        { kind: "contract_propose", body: "b", contract_name: name, contract_path: "contracts/x.yaml" },
+        {
+          loaded: { view: coordView({ messages, roomOpen: true, roomExpiresAt: now + 1e9, now }), sent: [], ledger: { ids: new Set(), released: new Set(), dropped: new Set() } },
+          projectDir: dir,
+          peerName: "Nika",
+          now,
+          roomExpiresAt: now + 1e9,
+          nextSeq: 1,
+        },
+      );
+    // The peer's names use none of ours.
+    const theirs = Array.from({ length: MAX_CONTRACT_NAMES_PER_SIDE }, (_, i) => ({ side: "peer" as const, envelope: propose(`p${i}`), at: now }));
+    expect(plan(theirs, "mine").data).toMatchObject({ name: "mine", version: 1 });
+    const ours = Array.from({ length: MAX_CONTRACT_NAMES_PER_SIDE }, (_, i) => ({ side: "ours" as const, envelope: propose(`o${i}`), at: now }));
+    expect(() => plan([...theirs, ...ours], "mine")).toThrow(
+      `You have already proposed ${MAX_CONTRACT_NAMES_PER_SIDE} contract names in this room; propose a new version of one of them instead. Nothing was sent.`,
+    );
+    // A name already in the view, ours or theirs, still takes its next version.
+    expect(plan([...theirs, ...ours], "o3").data).toMatchObject({ name: "o3", version: 2 });
+    expect(plan([...theirs, ...ours], "p3").data).toMatchObject({ name: "p3", version: 2 });
   });
 
   it("INV-5 scans every new text field and the chat fallback", async () => {
