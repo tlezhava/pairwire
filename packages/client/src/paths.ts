@@ -42,7 +42,7 @@ const MAX_SOCKET_PATH_BYTES = 100;
  *
  * On Windows always a named pipe, `\\.\pipe\pairwire-<tag>-<nonce>`, with a random nonce on every
  * call: pipe names are machine-wide and listable, so a fixed name could be held by another user
- * while the server is down (04 §8, ADR-021).
+ * while the server is down (04 §8, ADR-024).
  */
 export function chooseCtlPath(
   home: string,

@@ -1,4 +1,4 @@
-// Platform helpers (04 §1, §3, §6; ADR-021): the Windows branches, tested on every OS.
+// Platform helpers (04 §1, §3, §6; ADR-024): the Windows branches, tested on every OS.
 import { posix, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
 import { envValue, findDistDir, findGitBash, isInsideDir } from "../src/platform.js";

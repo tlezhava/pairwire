@@ -193,7 +193,7 @@ describe("ownership", () => {
     await until(() => second.session.footer().includes("waiting for your collaborator"), 3000, "reconnected");
   });
 
-  // Windows has no mode bits, and the check does not run there (04 §3, ADR-021).
+  // Windows has no mode bits, and the check does not run there (04 §3, ADR-024).
   it.skipIf(process.platform === "win32")("INV-9 refuses to run with a state directory other users can read, and says how to fix it", async () => {
     const { port } = await startRelay();
     const home = join(tempDir(), ".pairwire");

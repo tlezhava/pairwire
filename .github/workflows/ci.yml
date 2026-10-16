@@ -35,7 +35,7 @@ jobs:
           npx -y @anthropic-ai/claude-code@2.1.300 plugin validate plugins/claude-code --strict
 
   windows:
-    # Native Windows (ADR-021): named-pipe ctl, hooks through Git Bash. Lint, traceability and
+    # Native Windows (ADR-024): named-pipe ctl, run.sh under Git's sh. Lint, traceability and
     # the bundle check are platform-independent and run in `check`.
     runs-on: windows-latest
     steps:

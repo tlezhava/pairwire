@@ -179,7 +179,7 @@ describe("INV-9 local state is private", () => {
     expect(checkStatePermissions(newHome())).toEqual([]); // nothing created yet
   });
 
-  // Windows has no mode bits, and the check does not run there (04 §3, ADR-021).
+  // Windows has no mode bits, and the check does not run there (04 §3, ADR-024).
   it.skipIf(onWindows)("INV-9 refuses a state directory or room file readable by others, and says how to fix it", () => {
     const home = homeWithRoom();
     chmodSync(home, 0o755);
@@ -201,7 +201,7 @@ describe("INV-9 local state is private", () => {
     expect(checkStatePermissions(home)).toEqual([{ path: roomFile(home, ROOM, "secret"), problem: "symlink" }]);
   });
 
-  it("INV-9 is skipped on Windows, which has no mode bits (ADR-021)", () => {
+  it("INV-9 is skipped on Windows, which has no mode bits (ADR-024)", () => {
     const home = homeWithRoom();
     chmodSync(home, 0o777);
     expect(checkStatePermissions(home, "win32")).toEqual([]);

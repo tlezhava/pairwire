@@ -64,7 +64,7 @@ describe("paths", () => {
     expect(chooseCtlPath(long + "/a", ROOM, {}, 501)).not.toBe(chooseCtlPath(long + "/b", ROOM, {}, 501));
   });
 
-  it("on Windows uses a named pipe with a fresh random name each time (ADR-021)", () => {
+  it("on Windows uses a named pipe with a fresh random name each time (ADR-024)", () => {
     const home = "C:\\Users\\tazo\\.pairwire";
     const fixed = chooseCtlPath(home, ROOM, {}, 0, "win32", () => new Uint8Array(16).fill(0xab));
     expect(fixed).toMatch(/^\\\\\.\\pipe\\pairwire-[0-9a-f]{16}-(ab){16}$/);

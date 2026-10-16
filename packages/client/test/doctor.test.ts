@@ -92,7 +92,7 @@ describe("pairwire doctor", () => {
   });
 });
 
-describe("pairwire doctor on Windows (ADR-021)", () => {
+describe("pairwire doctor on Windows (ADR-024)", () => {
   const win = (env: NodeJS.ProcessEnv, h = "C:\\Users\\tazo\\.pairwire") => {
     const s = sink();
     return runDoctor({ home: h, env: { PAIRWIRE_RELAY: "relay.example.com", ...env }, out: s.out, nodeVersion: "22.0.0", fetch: okFetch, bundleDir: null, platform: "win32" }).then((code) => ({ code, text: s.text() }));

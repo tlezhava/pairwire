@@ -4,7 +4,7 @@
 #   1. no room on this machine (no "active" flag): exit 0 without starting Node;
 #   2. Node missing or older than 20: tell the human once what to install, exit 0;
 #   3. otherwise run the bundled client.
-# On native Windows it runs under Git Bash; OS=Windows_NT marks that case (ADR-021).
+# On native Windows it runs under Git Bash; OS=Windows_NT marks that case (ADR-024).
 event="$1"
 windows=
 [ "${OS-}" = Windows_NT ] && windows=1

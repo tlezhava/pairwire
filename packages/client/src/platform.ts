@@ -1,4 +1,4 @@
-// Platform differences (04 §1, §3, §6; ADR-021). Each helper takes its path module or file
+// Platform differences (04 §1, §3, §6; ADR-024). Each helper takes its path module or file
 // check as a parameter, so the Windows branches are unit-tested on every OS.
 import { existsSync } from "node:fs";
 import * as path from "node:path";
