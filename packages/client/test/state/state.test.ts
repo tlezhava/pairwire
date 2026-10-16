@@ -5,7 +5,7 @@ import { RELAY_LIMITS } from "@pairwire/core";
 import { describe, expect, it } from "vitest";
 import { bindingPath, bindProject, claimProject, PassiveSessionError, readBinding, sessionOwnsBinding } from "../../src/binding.js";
 import { closeRoomLocally } from "../../src/lifecycle.js";
-import { activeFlagPath, chooseCtlPath, roomDir, roomFile } from "../../src/paths.js";
+import { activeFlagPath, chooseCtlPath, isNamedPipePath, roomDir, roomFile } from "../../src/paths.js";
 import { assertStatePrivate, checkStatePermissions, StatePermissionError } from "../../src/permissions.js";
 import { createRoom, expiresAt, listRooms, readSecret, readState, StateError, updateState } from "../../src/state.js";
 import { runChild, tempDir } from "./helpers.js";
@@ -15,6 +15,7 @@ const ROOM2 = "zyxwvutsrqponmlkjihgfedcba";
 const NOW = Date.UTC(2026, 9, 16, 12);
 const secret = () => new Uint8Array(32).fill(7);
 const mode = (path: string) => statSync(path).mode & 0o777;
+const onWindows = process.platform === "win32";
 
 function newHome() {
   return join(tempDir(), ".pairwire");
@@ -25,11 +26,16 @@ describe("room state", () => {
     const home = newHome();
     const state = createRoom(home, { roomId: ROOM, secret: secret(), relay: "relay.example.com", name: "Tazo", now: NOW }, {});
     expect(state).toMatchObject({ status: "waiting", relay: "relay.example.com", member: null, my_seq: 0, hop_count: 0, created_at: NOW, expires_at: null });
-    expect(state.ctl_path).toBe(chooseCtlPath(home, ROOM, {}));
-    expect(mode(home)).toBe(0o700);
-    expect(mode(roomDir(home, ROOM))).toBe(0o700);
-    expect(mode(roomFile(home, ROOM, "secret"))).toBe(0o600);
-    expect(mode(roomFile(home, ROOM, "state.json"))).toBe(0o600);
+    if (onWindows) {
+      // A named pipe with a random name, and no mode bits to check (04 §3).
+      expect(isNamedPipePath(state.ctl_path)).toBe(true);
+    } else {
+      expect(state.ctl_path).toBe(chooseCtlPath(home, ROOM, {}));
+      expect(mode(home)).toBe(0o700);
+      expect(mode(roomDir(home, ROOM))).toBe(0o700);
+      expect(mode(roomFile(home, ROOM, "secret"))).toBe(0o600);
+      expect(mode(roomFile(home, ROOM, "state.json"))).toBe(0o600);
+    }
     expect(readSecret(home, ROOM)).toEqual(secret());
     expect(readState(home, ROOM)).toEqual(state);
     expect(existsSync(activeFlagPath(home))).toBe(true);
@@ -173,7 +179,8 @@ describe("INV-9 local state is private", () => {
     expect(checkStatePermissions(newHome())).toEqual([]); // nothing created yet
   });
 
-  it("INV-9 refuses a state directory or room file readable by others, and says how to fix it", () => {
+  // Windows has no mode bits, and the check does not run there (04 §3, ADR-021).
+  it.skipIf(onWindows)("INV-9 refuses a state directory or room file readable by others, and says how to fix it", () => {
     const home = homeWithRoom();
     chmodSync(home, 0o755);
     chmodSync(roomFile(home, ROOM, "secret"), 0o644);
@@ -184,7 +191,8 @@ describe("INV-9 local state is private", () => {
     expect(() => assertStatePrivate(home)).toThrow(`chmod -R go-rwx '${home}'`);
   });
 
-  it("INV-9 refuses a symlinked room file", () => {
+  // Creating a symlink on Windows needs Developer Mode or an elevated process.
+  it.skipIf(onWindows)("INV-9 refuses a symlinked room file", () => {
     const home = homeWithRoom();
     const elsewhere = join(tempDir(), "secret");
     writeFileSync(elsewhere, secret(), { mode: 0o600 });
@@ -193,7 +201,7 @@ describe("INV-9 local state is private", () => {
     expect(checkStatePermissions(home)).toEqual([{ path: roomFile(home, ROOM, "secret"), problem: "symlink" }]);
   });
 
-  it("INV-9 is skipped on Windows until M7", () => {
+  it("INV-9 is skipped on Windows, which has no mode bits (ADR-021)", () => {
     const home = homeWithRoom();
     chmodSync(home, 0o777);
     expect(checkStatePermissions(home, "win32")).toEqual([]);

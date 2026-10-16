@@ -2,22 +2,28 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   loadConfig
-} from "./chunk-QURWOD6W.mjs";
+} from "./chunk-HYP52EEN.mjs";
 import {
   StatePermissionError,
   checkStatePermissions
-} from "./chunk-OGGIIAMI.mjs";
+} from "./chunk-B5Z44TXS.mjs";
 import {
   expiresAt,
   isOpen,
   listRooms,
   readState,
   refreshActiveFlag
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-STXFRAI5.mjs";
 import {
   activeFlagPath,
   roomDir
-} from "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-GVGSGJLD.mjs";
+import {
+  envValue,
+  findDistDir,
+  findGitBash,
+  isInsideDir
+} from "./chunk-HDMYU3UC.mjs";
 import {
   DEFAULT_RELAY_HOST,
   displayName,
@@ -28,6 +34,7 @@ import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/doctor.ts
 import { existsSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 var MIN_NODE_MAJOR = 20;
@@ -57,9 +64,18 @@ async function runDoctor(o) {
   } catch (e) {
     line("FAIL", `config: ${e.message}`);
   }
-  const problems = checkStatePermissions(o.home);
-  if (problems.length > 0) line("FAIL", new StatePermissionError(o.home, problems).message);
-  else line("ok", `state directory ${o.home} is private`);
+  const platform = o.platform ?? process.platform;
+  if (platform === "win32") {
+    line("ok", `state directory ${o.home}: permissions are not checked on Windows`);
+    const profile = envValue(o.env, "USERPROFILE") ?? homedir();
+    if (!isInsideDir(o.home, profile)) {
+      line("warn", `state directory ${o.home} is outside your profile ${profile}, so other users of this computer may be able to read it; keep it under your profile`);
+    }
+  } else {
+    const problems = checkStatePermissions(o.home, platform);
+    if (problems.length > 0) line("FAIL", new StatePermissionError(o.home, problems).message);
+    else line("ok", `state directory ${o.home} is private`);
+  }
   const now = (o.now ?? Date.now)();
   const rooms = listRooms(o.home);
   for (const id of rooms) {
@@ -94,6 +110,15 @@ async function runDoctor(o) {
     if (missing.length > 0) line("FAIL", `plugin at ${root} is missing ${missing.join(", ")}; reinstall the plugin`);
     else line("ok", `plugin hooks wired at ${root}`);
   }
+  if (platform === "win32") {
+    const bash = findGitBash(o.env);
+    if (bash) line("ok", `Git Bash ${bash} (runs pairwire's hooks)`);
+    else
+      line(
+        "warn",
+        "Git for Windows was not found. Claude Code runs plugin hooks with Git Bash; without it pairwire's hooks fail and messages arrive only when your agent checks its inbox. Install Git for Windows from https://git-scm.com/downloads/win, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe."
+      );
+  }
   return failed ? 1 : 0;
 }
 async function checkRelay(host, fetcher) {
@@ -112,11 +137,7 @@ async function checkRelay(host, fetcher) {
   }
 }
 function defaultBundleDir() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const dir of [here, dirname(here)]) {
-    if (dir.endsWith("/dist") && existsSync(join(dir, "..", ".claude-plugin"))) return dir;
-  }
-  return null;
+  return findDistDir(dirname(fileURLToPath(import.meta.url)), (root) => existsSync(join(root, ".claude-plugin")));
 }
 function runPurge(o) {
   const say = (t) => o.out.write(`${t}

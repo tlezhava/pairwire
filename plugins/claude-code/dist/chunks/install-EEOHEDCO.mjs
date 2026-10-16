@@ -1,6 +1,9 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
+  findDistDir
+} from "./chunk-HDMYU3UC.mjs";
+import {
   HARNESSES
 } from "./chunk-5TF4YXFP.mjs";
 import "./chunk-KARZWXGF.mjs";
@@ -25,11 +28,8 @@ var InstallError = class extends Error {
   name = "InstallError";
 };
 function runningPluginRoot() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const dir of [here, dirname(here)]) {
-    if (dir.endsWith("/dist") && existsSync(join(dir, "..", "hooks", "run.sh"))) return dirname(dir);
-  }
-  return null;
+  const dist = findDistDir(dirname(fileURLToPath(import.meta.url)), (root) => existsSync(join(root, "hooks", "run.sh")));
+  return dist && dirname(dist);
 }
 function defaultInstallOptions(env, out, pairwireHome) {
   const sourceRoot = runningPluginRoot();

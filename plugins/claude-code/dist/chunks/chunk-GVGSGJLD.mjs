@@ -2,6 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   bytesToHex,
+  randomBytes,
   sha256,
   utf8ToBytes
 } from "./chunk-KARZWXGF.mjs";
@@ -29,13 +30,21 @@ function roomFile(home, roomId, file) {
   return join(roomDir(home, roomId), file);
 }
 var MAX_SOCKET_PATH_BYTES = 100;
-function chooseCtlPath(home, roomId, env = process.env, uid = process.getuid?.() ?? 0) {
-  const inRoom = join(roomDir(home, roomId), "ctl.sock");
-  if (Buffer.byteLength(inRoom) < MAX_SOCKET_PATH_BYTES) return inRoom;
+function chooseCtlPath(home, roomId, env = process.env, uid = process.getuid?.() ?? 0, platform = process.platform, nonce = () => randomBytes(16)) {
   const tag = bytesToHex(sha256(utf8ToBytes(`${home}
 ${roomId}`))).slice(0, 16);
+  if (platform === "win32") {
+    assertRoomId(roomId);
+    return `${PIPE_PREFIX}pairwire-${tag}-${bytesToHex(nonce())}`;
+  }
+  const inRoom = join(roomDir(home, roomId), "ctl.sock");
+  if (Buffer.byteLength(inRoom) < MAX_SOCKET_PATH_BYTES) return inRoom;
   if (env.XDG_RUNTIME_DIR) return join(env.XDG_RUNTIME_DIR, `pairwire-${tag}.sock`);
   return join("/tmp", `pairwire-${uid}`, `${tag}.sock`);
+}
+var PIPE_PREFIX = "\\\\.\\pipe\\";
+function isNamedPipePath(path) {
+  return /^[\\/]{2}[.?][\\/]pipe[\\/]/i.test(path);
 }
 
 export {
@@ -48,5 +57,6 @@ export {
   roomsDir,
   roomDir,
   roomFile,
-  chooseCtlPath
+  chooseCtlPath,
+  isNamedPipePath
 };

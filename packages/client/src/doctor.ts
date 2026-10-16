@@ -1,5 +1,6 @@
 // `pairwire doctor` and `pairwire purge` (04 §1).
 import { existsSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
@@ -7,6 +8,7 @@ import { DEFAULT_RELAY_HOST, displayName, parseRelayAddress, relayUrl } from "@p
 import { loadConfig } from "./config.js";
 import { activeFlagPath, roomDir } from "./paths.js";
 import { checkStatePermissions, StatePermissionError } from "./permissions.js";
+import { envValue, findDistDir, findGitBash, isInsideDir } from "./platform.js";
 import { expiresAt, isOpen, listRooms, readState, refreshActiveFlag } from "./state.js";
 
 export const MIN_NODE_MAJOR = 20;
@@ -22,6 +24,7 @@ export interface DoctorOptions {
   /** Directory of the running bundle (`dist/`), to check plugin wiring. */
   bundleDir?: string | null;
   now?: () => number;
+  platform?: NodeJS.Platform;
 }
 
 /** REQ-INST-4: what to tell the user when Node is missing or too old. */
@@ -54,9 +57,19 @@ export async function runDoctor(o: DoctorOptions): Promise<number> {
     line("FAIL", `config: ${(e as Error).message}`);
   }
 
-  const problems = checkStatePermissions(o.home);
-  if (problems.length > 0) line("FAIL", new StatePermissionError(o.home, problems).message);
-  else line("ok", `state directory ${o.home} is private`);
+  const platform = o.platform ?? process.platform;
+  if (platform === "win32") {
+    // No mode bits on Windows: the state relies on the ACL it inherits (04 §3).
+    line("ok", `state directory ${o.home}: permissions are not checked on Windows`);
+    const profile = envValue(o.env, "USERPROFILE") ?? homedir();
+    if (!isInsideDir(o.home, profile)) {
+      line("warn", `state directory ${o.home} is outside your profile ${profile}, so other users of this computer may be able to read it; keep it under your profile`);
+    }
+  } else {
+    const problems = checkStatePermissions(o.home, platform);
+    if (problems.length > 0) line("FAIL", new StatePermissionError(o.home, problems).message);
+    else line("ok", `state directory ${o.home} is private`);
+  }
 
   const now = (o.now ?? Date.now)();
   const rooms = listRooms(o.home);
@@ -94,6 +107,16 @@ export async function runDoctor(o: DoctorOptions): Promise<number> {
     if (missing.length > 0) line("FAIL", `plugin at ${root} is missing ${missing.join(", ")}; reinstall the plugin`);
     else line("ok", `plugin hooks wired at ${root}`);
   }
+  if (platform === "win32") {
+    const bash = findGitBash(o.env);
+    if (bash) line("ok", `Git Bash ${bash} (runs pairwire's hooks)`);
+    else
+      line(
+        "warn",
+        "Git for Windows was not found. Claude Code runs plugin hooks with Git Bash; without it pairwire's hooks fail and messages arrive only when your agent checks its inbox. " +
+          "Install Git for Windows from https://git-scm.com/downloads/win, or set CLAUDE_CODE_GIT_BASH_PATH to its bash.exe.",
+      );
+  }
   return failed ? 1 : 0;
 }
 
@@ -116,11 +139,7 @@ async function checkRelay(host: string, fetcher: typeof fetch): Promise<string |
 
 /** When running from the plugin bundle (`<plugin>/dist/`, or a chunk in `dist/chunks/`), its `dist/`. */
 function defaultBundleDir(): string | null {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const dir of [here, dirname(here)]) {
-    if (dir.endsWith("/dist") && existsSync(join(dir, "..", ".claude-plugin"))) return dir;
-  }
-  return null;
+  return findDistDir(dirname(fileURLToPath(import.meta.url)), (root) => existsSync(join(root, ".claude-plugin")));
 }
 
 export interface PurgeOptions {

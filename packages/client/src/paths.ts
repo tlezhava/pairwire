@@ -1,7 +1,7 @@
 // Layout of the local state directory (04 §3).
 import { homedir } from "node:os";
 import { sha256 } from "@noble/hashes/sha2.js";
-import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
+import { bytesToHex, randomBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { join, resolve } from "node:path";
 
 export const ROOM_ID_PATTERN = /^[a-z2-7]{26}$/;
@@ -39,11 +39,33 @@ const MAX_SOCKET_PATH_BYTES = 100;
  * `rooms/<id>/ctl.sock` if that is under 100 bytes, else `$XDG_RUNTIME_DIR/pairwire-<tag>.sock`,
  * else `/tmp/pairwire-<uid>/<tag>.sock` (created 0700 by the listener). The tag hashes the state
  * directory with the room id: two members of one room may share a machine.
+ *
+ * On Windows always a named pipe, `\\.\pipe\pairwire-<tag>-<nonce>`, with a random nonce on every
+ * call: pipe names are machine-wide and listable, so a fixed name could be held by another user
+ * while the server is down (04 §8, ADR-021).
  */
-export function chooseCtlPath(home: string, roomId: string, env: NodeJS.ProcessEnv = process.env, uid = process.getuid?.() ?? 0): string {
+export function chooseCtlPath(
+  home: string,
+  roomId: string,
+  env: NodeJS.ProcessEnv = process.env,
+  uid = process.getuid?.() ?? 0,
+  platform: NodeJS.Platform = process.platform,
+  nonce: () => Uint8Array = () => randomBytes(16),
+): string {
+  const tag = bytesToHex(sha256(utf8ToBytes(`${home}\n${roomId}`))).slice(0, 16);
+  if (platform === "win32") {
+    assertRoomId(roomId);
+    return `${PIPE_PREFIX}pairwire-${tag}-${bytesToHex(nonce())}`;
+  }
   const inRoom = join(roomDir(home, roomId), "ctl.sock");
   if (Buffer.byteLength(inRoom) < MAX_SOCKET_PATH_BYTES) return inRoom;
-  const tag = bytesToHex(sha256(utf8ToBytes(`${home}\n${roomId}`))).slice(0, 16);
   if (env.XDG_RUNTIME_DIR) return join(env.XDG_RUNTIME_DIR, `pairwire-${tag}.sock`);
   return join("/tmp", `pairwire-${uid}`, `${tag}.sock`);
+}
+
+const PIPE_PREFIX = "\\\\.\\pipe\\";
+
+/** A Windows named pipe path (`\\.\pipe\…` or `\\?\pipe\…`): no file, mode or directory to manage. */
+export function isNamedPipePath(path: string): boolean {
+  return /^[\\/]{2}[.?][\\/]pipe[\\/]/i.test(path);
 }

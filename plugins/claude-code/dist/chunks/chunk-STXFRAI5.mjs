@@ -7,7 +7,7 @@ import {
   roomDir,
   roomFile,
   roomsDir
-} from "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-GVGSGJLD.mjs";
 import {
   RELAY_LIMITS,
   SECRET_BYTES,

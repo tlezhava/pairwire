@@ -8,14 +8,14 @@ import {
   unacked,
   undelivered,
   updateOutbox
-} from "./chunk-7VP4OKGQ.mjs";
+} from "./chunk-3EX5CKPU.mjs";
 import {
   createLogger
-} from "./chunk-LDWSRL3V.mjs";
+} from "./chunk-HKWSNRJC.mjs";
 import {
   listenCtl,
   transcriptEvents
-} from "./chunk-YB6YHH2Y.mjs";
+} from "./chunk-QFYQWKLM.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -24,14 +24,14 @@ import {
   isProcessAlive,
   removeBindingFor,
   resolveProjectDir
-} from "./chunk-BMM36N6F.mjs";
+} from "./chunk-RT2ZLH6F.mjs";
 import {
   loadConfig,
   resolveDisplayName
-} from "./chunk-QURWOD6W.mjs";
+} from "./chunk-HYP52EEN.mjs";
 import {
   assertStatePrivate
-} from "./chunk-OGGIIAMI.mjs";
+} from "./chunk-B5Z44TXS.mjs";
 import {
   createRoom,
   expiresAt,
@@ -40,11 +40,12 @@ import {
   readState,
   removeFile,
   updateState
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-STXFRAI5.mjs";
 import {
+  chooseCtlPath,
   pairwireHome,
   roomFile
-} from "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-GVGSGJLD.mjs";
 import {
   $ZodObject,
   $ZodType,
@@ -27345,7 +27346,12 @@ ${this.footer()}` };
     });
     this.#conn.start();
     this.#closeCtl();
-    this.#ctl = listenCtl(state.ctl_path, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e) => {
+    let ctlPath = state.ctl_path;
+    if (process.platform === "win32") {
+      ctlPath = chooseCtlPath(this.#o.home, roomId, this.#o.env);
+      updateState(this.#o.home, roomId, (s) => ({ ...s, ctl_path: ctlPath }));
+    }
+    this.#ctl = listenCtl(ctlPath, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });

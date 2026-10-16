@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { HARNESSES } from "@pairwire/core";
+import { findDistDir } from "./platform.js";
 
 export const MARK_BEGIN = "# >>> pairwire >>>";
 export const MARK_END = "# <<< pairwire <<<";
@@ -38,11 +39,8 @@ export class InstallError extends Error {
 
 /** The plugin root this code runs from: `<root>/dist/pairwire.mjs` or a chunk under `dist/chunks/`. */
 export function runningPluginRoot(): string | null {
-  const here = dirname(fileURLToPath(import.meta.url));
-  for (const dir of [here, dirname(here)]) {
-    if (dir.endsWith("/dist") && existsSync(join(dir, "..", "hooks", "run.sh"))) return dirname(dir);
-  }
-  return null;
+  const dist = findDistDir(dirname(fileURLToPath(import.meta.url)), (root) => existsSync(join(root, "hooks", "run.sh")));
+  return dist && dirname(dist);
 }
 
 export function defaultInstallOptions(env: NodeJS.ProcessEnv, out: Writable, pairwireHome: string): InstallOptions | null {

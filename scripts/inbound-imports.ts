@@ -2,7 +2,7 @@
 // rendering, must never reach anything that can run a process or change configuration or
 // permissions. Walks the relative-import graph from each inbound module.
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 /** Where peer bytes travel: decrypt, envelope, inbox, transcript, render. */
 export const INBOUND_MODULES = [
@@ -37,7 +37,7 @@ export function checkInboundImports(root: string): Violation[] {
     const walk = (file: string, chain: string[]) => {
       if (seen.has(file)) return;
       seen.add(file);
-      const rel = relative(root, file);
+      const rel = relative(root, file).split(sep).join("/"); // repo-relative, "/" on every OS
       if (FORBIDDEN_MODULES.has(rel)) {
         violations.push({ from: entry, chain, forbidden: rel });
         return;

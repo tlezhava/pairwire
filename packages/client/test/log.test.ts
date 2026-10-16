@@ -86,7 +86,7 @@ describe("hook error log", () => {
     log.info("ignored");
     log.error("hook_failed", new Error("boom"), { hook: "stop" });
     const path = join(home, "hook-errors.log");
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600); // no mode bits on Windows
     const lines = readFileSync(path, "utf8").trim().split("\n");
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ event: "hook_failed", hook: "stop", error_message: "boom" });
@@ -102,7 +102,8 @@ describe("hook error log", () => {
     expect(readFileSync(path, "utf8")).toBe("new line\n");
   });
 
-  it("swallows write failures", () => {
+  // A read-only directory needs chmod, which on Windows only sets the read-only attribute.
+  it.skipIf(process.platform === "win32")("swallows write failures", () => {
     const dir = tempDir();
     mkdirSync(join(dir, "ro"));
     chmodSync(join(dir, "ro"), 0o500);

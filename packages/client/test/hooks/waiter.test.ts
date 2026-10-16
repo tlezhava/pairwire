@@ -103,7 +103,8 @@ describe("D3 waiter (stop-wait)", () => {
     expect(await w.done).toBe(0);
   });
 
-  it("the stop-wait process exits 0 on SIGTERM (session end, S3)", async () => {
+  // Windows has no SIGTERM: child.kill() there terminates the process outright.
+  it.skipIf(process.platform === "win32")("the stop-wait process exits 0 on SIGTERM (session end, S3)", async () => {
     const { a } = await idleA();
     const child = spawn(process.execPath, ["--conditions=source", "--import", TSX, MAIN, "hook", "stop-wait"], {
       env: { PATH: process.env.PATH ?? "", PAIRWIRE_HOME: a.home },
