@@ -13,7 +13,7 @@ import {
   SECRET_BYTES,
   base32Encode,
   external_exports
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-RXHLPIRV.mjs";
 import {
   randomBytes
 } from "./chunk-KARZWXGF.mjs";

@@ -22677,6 +22677,18 @@ var controlSchema = external_exports.discriminatedUnion("t", [
   external_exports.strictObject({ t: external_exports.literal("leave") }),
   external_exports.strictObject({ t: external_exports.literal("ping") })
 ]);
+var slotSchema = external_exports.strictObject({
+  token: external_exports.string(),
+  connected: external_exports.boolean(),
+  buffer: external_exports.array(external_exports.strictObject({ at: external_exports.number().int(), bytes: external_exports.string() }))
+});
+var roomStateSchema = external_exports.strictObject({
+  createdAt: external_exports.number().int(),
+  lastActivityAt: external_exports.number().int(),
+  epoch: external_exports.number().int().nonnegative(),
+  ended: external_exports.strictObject({ at: external_exports.number().int(), reason: external_exports.enum(["left", "expired"]) }).nullable(),
+  slots: external_exports.strictObject({ a: slotSchema.optional(), b: slotSchema.optional() })
+});
 
 // packages/core/src/secrets.ts
 var RULES = [
