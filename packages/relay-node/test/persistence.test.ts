@@ -224,6 +224,25 @@ describe.runIf(sqlite)("relay-node SQLite persistence (03, Persistence)", () => 
     expect((await member(roomId, a.joined.token)).joined.member).toBe("a");
   });
 
+  it("opens the file in WAL mode with synchronous = FULL, so a returned write survives power loss", () => {
+    const opened: InstanceType<SqliteModule["DatabaseSync"]>[] = [];
+    const spy: SqliteModule = {
+      DatabaseSync: class extends sqlite!.DatabaseSync {
+        constructor(file: string) {
+          super(file);
+          opened.push(this);
+        }
+      },
+    };
+    const other = openSqliteStore(join(dir, "pragma.db"), () => spy);
+    try {
+      expect(opened[0]!.prepare("PRAGMA journal_mode").get()).toEqual({ journal_mode: "wal" });
+      expect(opened[0]!.prepare("PRAGMA synchronous").get()).toEqual({ synchronous: 2 }); // 2 = FULL
+    } finally {
+      other.close();
+    }
+  });
+
   it.skipIf(process.platform === "win32")("creates the file owner-only (it holds member tokens)", () => {
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });

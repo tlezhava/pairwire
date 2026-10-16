@@ -56,7 +56,8 @@ export function openSqliteStore(path: string, loadSqlite: () => SqliteModule | u
   if (path !== ":memory:") closeSync(openSync(path, "a", 0o600));
   const db = new sqlite.DatabaseSync(path);
   try {
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+    // FULL: a returned write survives power loss too; writes are rare enough to afford it.
+    db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
     const version = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
     if (version === 0) {
       db.exec(`CREATE TABLE rooms (room_id TEXT PRIMARY KEY, state TEXT NOT NULL) STRICT; PRAGMA user_version = ${SCHEMA_VERSION};`);
