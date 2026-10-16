@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SendInput } from "../src/connection.js";
 import { runHook } from "../src/hooks.js";
 import { readInbox, readOutbox } from "../src/room-files.js";
-import { makeClient, newSecret, startRelay, until } from "./connection/harness.js";
+import { FAST, makeClient, newSecret, startRelay, until } from "./connection/harness.js";
 import { roomOf, side } from "./session/pairing.js";
 
 const rec = vi.hoisted(() => ({ on: false, paths: [] as string[], spawns: [] as string[] }));
@@ -67,10 +67,13 @@ describe("a hostile peer's structured messages (REQ-COLLAB-6, INV-2)", { timeout
   it("REQ-COLLAB-6 INV-2 claims, releases, proposals and answers naming real files open nothing, write nothing, run nothing and send nothing", async () => {
     const { port } = await startRelay();
     const secret = newSecret();
-    const peer = makeClient("Mallory", port, secret, { caps: ["ack", "say", COLLAB_CAP] });
+    // Frame pacing (8 per 10 s) is not under test here; with it, B's last ack could wait for
+    // the next window under a loaded test run.
+    const unpaced = { framesPerWindow: 1000 };
+    const peer = makeClient("Mallory", port, secret, { caps: ["ack", "say", COLLAB_CAP], tuning: unpaced });
     peer.conn.start();
     await until(() => peer.conn.status().socket === "joined", 5000, "peer joined");
-    const b = side(port, "Nika", { config: { hop_budget: 100 } });
+    const b = side(port, "Nika", { config: { hop_budget: 100 }, tuning: { ...FAST, ...unpaced } });
     await b.session.join({ share: encodeShareString(secret, parseRelayAddress(`127.0.0.1:${port}`)) });
     await until(() => peer.conn.status().session, 5000, "handshake");
 
@@ -135,6 +138,6 @@ describe("a hostile peer's structured messages (REQ-COLLAB-6, INV-2)", { timeout
     expect(snapshot(b.project)).toEqual(before);
     expect(readOutbox(b.home, roomOf(b))).toHaveLength(sentBefore);
     expect(peer.inbox().filter((e) => e.source === "peer")).toHaveLength(peerFramesBefore);
-    await until(() => peer.outbox().every((e) => e.status === "delivered"), 5000, "B acked them all");
+    await until(() => peer.outbox().every((e) => e.status === "delivered"), 12_000, "B acked them all");
   });
 });
