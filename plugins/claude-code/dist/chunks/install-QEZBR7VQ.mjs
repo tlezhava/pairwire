@@ -55,10 +55,13 @@ function stripBlock(text) {
   if (end < 0) throw new InstallError(`config.toml has "${MARK_BEGIN}" without "${MARK_END}"; fix it by hand first.`);
   return (text.slice(0, start).trimEnd() + "\n" + text.slice(end + MARK_END.length).replace(/^\n+/, "")).replace(/^\n+$/, "");
 }
+function isOurs(command, runSh) {
+  return typeof command === "string" && (command.includes(runSh) || command.includes(JSON.stringify(runSh)));
+}
 function withoutPairwire(file, runSh) {
   const hooks = {};
   for (const [event, groups] of Object.entries(file.hooks ?? {})) {
-    const kept = groups.map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !(typeof h.command === "string" && h.command.includes(runSh))) })).filter((g) => g.hooks.length > 0);
+    const kept = groups.map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurs(h.command, runSh)) })).filter((g) => g.hooks.length > 0);
     if (kept.length > 0) hooks[event] = kept;
   }
   return { ...file, hooks };

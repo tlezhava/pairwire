@@ -52,7 +52,7 @@ async function main(argv) {
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }
   if (command === "install") {
-    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-EAQKAVRC.mjs");
+    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-QEZBR7VQ.mjs");
     const args = argv.slice(1);
     try {
       const printFor = args.indexOf("--print-config");

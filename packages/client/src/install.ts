@@ -83,11 +83,19 @@ interface HookGroup {
 }
 type HooksFile = { hooks?: Record<string, HookGroup[]>; [k: string]: unknown };
 
+/**
+ * Our hook commands quote run.sh with JSON.stringify, which doubles Windows backslashes, so
+ * match both the raw and the quoted path.
+ */
+function isOurs(command: unknown, runSh: string): boolean {
+  return typeof command === "string" && (command.includes(runSh) || command.includes(JSON.stringify(runSh)));
+}
+
 function withoutPairwire(file: HooksFile, runSh: string): HooksFile {
   const hooks: Record<string, HookGroup[]> = {};
   for (const [event, groups] of Object.entries(file.hooks ?? {})) {
     const kept = groups
-      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !(typeof h.command === "string" && h.command.includes(runSh))) }))
+      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurs(h.command, runSh)) }))
       .filter((g) => g.hooks.length > 0);
     if (kept.length > 0) hooks[event] = kept;
   }

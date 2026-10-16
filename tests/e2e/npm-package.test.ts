@@ -9,6 +9,10 @@ import { describe, expect, it } from "vitest";
 import { packNpm } from "../../scripts/pack-npm.js";
 import { startRelay, tempDir } from "./harness.js";
 
+// On Windows npm is npm.cmd, which Node only runs through a shell.
+const WIN = process.platform === "win32";
+const NPM = WIN ? "npm.cmd" : "npm";
+
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const run = promisify(execFile);
 
@@ -25,7 +29,7 @@ describe("npm package", () => {
     const npmHome = tempDir();
     const npmEnv = { PATH: process.env.PATH ?? "", HOME: npmHome, npm_config_cache: join(npmHome, "cache"), npm_config_update_notifier: "false" };
     const packDir = tempDir();
-    const [packed] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", packDir], { cwd: out, env: npmEnv, encoding: "utf8" })) as {
+    const [packed] = JSON.parse(execFileSync(NPM, ["pack", "--json", "--pack-destination", packDir], { cwd: out, env: npmEnv, encoding: "utf8", shell: WIN })) as {
       filename: string;
       files: { path: string }[];
     }[];
@@ -35,7 +39,7 @@ describe("npm package", () => {
     expect(paths.filter((p) => !/^(package\.json|README\.md|LICENSE|dist\/.*\.mjs|hooks\/run\.sh|skills\/pairwire\/SKILL\.md)$/.test(p))).toEqual([]);
 
     const prefix = tempDir();
-    execFileSync("npm", ["install", "--global", "--prefix", prefix, "--offline", "--no-audit", "--no-fund", join(packDir, packed!.filename)], { env: npmEnv, encoding: "utf8" });
+    execFileSync(NPM, ["install", "--global", "--prefix", prefix, "--offline", "--no-audit", "--no-fund", join(packDir, packed!.filename)], { env: npmEnv, encoding: "utf8", shell: WIN });
     const bin = join(prefix, "bin", "pairwire");
     const installed = join(prefix, "lib", "node_modules", "pairwire");
     expect(existsSync(bin)).toBe(true);
