@@ -288,7 +288,7 @@ the 90-day renewal.
 
 ## ADR-022 relay-node SQLite persistence uses node:sqlite and core's RoomState codec (M7)
 
-Status: accepted (2026-10-16)
+Status: accepted (2026-10-16; the Docker base image move to Node 24 approved by the human)
 
 `PAIRWIRE_RELAY_STATE=sqlite:<path>` was reserved in `03` but undefined. Decisions:
 
