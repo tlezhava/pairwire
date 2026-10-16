@@ -246,7 +246,7 @@ is defined at the same time (one JSON request and reply per connection).
 
 ## ADR-021 Release packaging: self-contained npm bundle, one version, tag-triggered workflow (M4-8)
 
-Status: accepted (2026-10-16)
+Status: accepted (2026-10-16; one shared version approved by the human)
 
 Preparing M4-8 needed three decisions the specs left open.
 
