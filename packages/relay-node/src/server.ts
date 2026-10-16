@@ -1,5 +1,6 @@
 // Node relay (03, Node implementation): the shared RelayRoom state machine behind an HTTP
-// server and the `ws` package. State is in memory; timers replace Durable Object alarms.
+// server and the `ws` package. State is in memory, optionally saved to a RoomStore
+// (03, Persistence); timers replace Durable Object alarms.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
@@ -7,6 +8,7 @@ import { RelayRoom, relayInfo, type Output } from "@pairwire/core";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 import { systemClock, type Clock } from "./clock.js";
 import { createLogger, roomTag, type Logger } from "./log.js";
+import type { RoomStore } from "./store.js";
 
 const ROOM_PATH = /^\/v1\/rooms\/([^/]*)$/;
 const ROOM_ID = /^[a-z2-7]{26}$/;
@@ -19,6 +21,8 @@ export interface RelayServerOptions {
   clock?: Clock;
   log?: Logger;
   version?: string;
+  /** Saves room state across restarts; the caller opens and closes it. */
+  store?: RoomStore;
 }
 
 export interface RelayServer {
@@ -36,9 +40,11 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   const clock = options.clock ?? systemClock;
   const log = options.log ?? createLogger();
   const version = options.version ?? "0.0.0";
+  const store = options.store;
   const rooms = new Map<string, RoomEntry>();
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   let seq = 0;
+  let closed = false;
 
   const http: Server = createServer((req, res) => handleHttp(req, res));
   http.on("upgrade", (req, socket, head) => handleUpgrade(req, socket, head));
@@ -95,6 +101,16 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   }
 
   function apply(roomId: string, entry: RoomEntry, out: Output): void {
+    if (closed) return; // sockets dropped by close() change nothing on disk
+    // Save before sending, so no member sees a token that isn't stored yet.
+    if (store && (out.persist || out.deleteAll)) {
+      try {
+        if (entry.room.state && !out.deleteAll) store.save(roomId, entry.room.state);
+        else store.delete(roomId);
+      } catch {
+        log.warn("state_write_failed", { room: roomTag(roomId) });
+      }
+    }
     for (const e of out.effects) {
       const ws = entry.sockets.get(e.socket);
       if (!ws) continue;
@@ -119,6 +135,28 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     if (entry.room.state === null && entry.sockets.size === 0 && entry.cancelAlarm === null) rooms.delete(roomId);
   }
 
+  /**
+   * Loads saved rooms. A slot saved as connected lost its socket to the restart: that counts
+   * as a disconnect now. One alarm() per room applies what fell due while the relay was down
+   * and arms the next timer.
+   */
+  function restore(from: RoomStore): void {
+    const { rooms: saved, dropped } = from.load();
+    const now = clock.now();
+    for (const [roomId, state] of saved) {
+      if (!state.ended && Object.values(state.slots).some((slot) => slot.connected)) {
+        state.lastActivityAt = Math.max(state.lastActivityAt, now);
+      }
+      const entry: RoomEntry = { room: new RelayRoom({ now: () => clock.now(), state }), sockets: new Map(), cancelAlarm: null };
+      rooms.set(roomId, entry);
+      apply(roomId, entry, { ...entry.room.alarm(), persist: true });
+    }
+    log.info("state_loaded", { rooms: saved.size, dropped });
+    if (dropped > 0) log.warn("state_dropped", { rooms: dropped });
+  }
+
+  if (store) restore(store);
+
   return {
     listen() {
       const port = options.port ?? 8787;
@@ -139,6 +177,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       });
     },
     async close() {
+      closed = true;
       for (const entry of rooms.values()) {
         entry.cancelAlarm?.();
         for (const ws of entry.sockets.values()) ws.terminate();
