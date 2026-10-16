@@ -137,7 +137,8 @@ describe("connection: reliable delivery (02 §6)", () => {
   });
 
   it("acks are batched, never acked themselves, and never reach the inbox", async () => {
-    const { a, b } = await pair();
+    // No resends here: on a slow runner a 400 ms resend interval would add frames and blur the counts.
+    const { a, b } = await pair({ a: { tuning: { resendAfterMs: 60_000 } }, b: { tuning: { resendAfterMs: 60_000 } } });
     for (let i = 1; i <= 3; i++) a.conn.send({ kind: "chat", body: `m${i}`, author: "agent" });
     await until(() => a.outbox().filter((e) => e.status === "delivered").length === 3, 5000, "acked");
     await sleep(200);
