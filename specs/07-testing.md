@@ -179,10 +179,9 @@ From then on it fails CI.
   output; it has no timer of its own.
 - Internal error → exit 0, no output, error logged.
 
-### Structured kinds (Proposed (M5), not implemented)
+### Structured kinds (M5)
 
-**Proposed (M5), not implemented** (ADR-027). Required once the proposal is accepted; until
-then the REQ-COLLAB ids are `deferred` to M5 in `tests/traceability.json`.
+ADR-027.
 
 - core, envelope schema (test-first): each M5 kind's `data` bounds; `data` present on an old
   kind (also `"data": null`) rejected; `data` missing on an M5 kind rejected; unknown keys in
@@ -204,17 +203,18 @@ then the REQ-COLLAB ids are `deferred` to M5 in `tests/traceability.json`.
   with a mismatching `local_path` refused, reject; a response to a superseded proposal
   refused by `send` and rendered `match="superseded"` when it arrives anyway; a held
   proposal id gets the same `send` error as a nonexistent one.
-- REQ-COLLAB-4: an e2e pair with one client pinned to 0.1.0's kind list and no `collab1`:
-  a claim arrives as `chat` with its header, is acked, and later `seq`s keep flowing; a
-  peer downgrade between sessions resends unacked structured envelopes as chat under the
-  same id and seq; an upgrade resends structured.
-- REQ-COLLAB-5: unknown kinds, invalid `data` and an extra top-level field are acked, advance
-  `peer_max_seq`, write a quarantine line, render nothing, and queue exactly one
-  `peer_unreadable` notice per unread cycle; a non-orderable envelope is still dropped.
+- REQ-COLLAB-4: an e2e pair with one side a raw test peer that validates with 0.1.0's
+  envelope schema and advertises no `collab1`: every M5 kind arrives as `chat` with its
+  header, is acked, and later `seq`s keep flowing. Client tests (fake socket, injected
+  caps): a peer downgrade between sessions resends unacked structured envelopes as chat
+  under the same id and seq; an upgrade resends structured.
+- REQ-COLLAB-5: invalid `data`, `data` on an old kind, `author: "human"` on an M5 kind and
+  an extra top-level field are skipped like an unknown kind (ADR-025): acked, `peer_max_seq`
+  advanced, nothing stored or rendered, one `peer_unreadable` notice per connection.
 - REQ-COLLAB-6 and INV-2: claim, release, contract_propose and contract_response from the
   peer, including paths that name real files and `.claude/settings.json`, leave the project
-  tree and `.claude/` byte-identical, open no file the peer named (fs spy), spawn no
-  process and send nothing.
+  tree and `.claude/` byte-identical, open no file the peer named (fs spy in client tests),
+  spawn no process and send nothing but acks (e2e, a hostile raw peer).
 - REQ-COLLAB-7 and INV-5: `contract_propose` refuses a symlink that leaves the project, a
   dot-segment path, each sensitive name, a file over 1 MiB, and a file containing a
   scanner match (the error carries no content); the scan covers every new input field and

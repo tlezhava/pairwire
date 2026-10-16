@@ -70,10 +70,10 @@ something within the permissions its human has granted. Labeling reduces this; i
 eliminate it. The README says so plainly and recommends keeping normal permission prompts
 on while paired.
 
-## Structured kinds (Proposed (M5), not implemented)
+## Structured kinds (M5)
 
-**Proposed (M5), not implemented** (ADR-027, `02-protocol.md` §6.3). This section analyzes
-the proposal against the invariants above. It changes no invariant text.
+ADR-027, `02-protocol.md` §6.3. This section analyzes the structured kinds against the
+invariants above. It changes no invariant text.
 
 - **INV-2.** Receiving a `claim`, `release`, `contract_propose` or `contract_response`
   changes nothing outside pairwire's own display and the view it computes from its own
@@ -105,9 +105,9 @@ the proposal against the invariants above. It changes no invariant text.
 - **INV-8.** `data` is a strict per-kind schema and is forbidden on old kinds; bounds are
   fixed (TTL at most 24 h, at most 20 paths, 16 active claims per side, 50 contract names).
   The peer can only end its **own** claims and answer **our** proposals; anything else
-  renders with a `match` value other than `yes` and changes nothing. The ack-and-skip rule
-  for unreadable envelopes changes only `peer_max_seq`, which the peer already controls
-  through its own sequence numbers. No value maps to config, delivery mode, hold mode,
+  renders with a `match` value other than `yes` and changes nothing. An unreadable M5
+  envelope takes 0.1.1's skip-and-ack path (ADR-025), which changes only `peer_max_seq`, a
+  value the peer already controls through its own sequence numbers. No value maps to config, delivery mode, hold mode,
   membership or the hop budget.
 - **Hold mode.** The view leaves out held and dropped messages, so a held claim's paths or
   a held proposal's name never reach the agent through `status`, the footer, overlap
@@ -152,17 +152,18 @@ New risks and their mitigations:
    the user profile. The control pipe accepts only the user, but while the owning session is
    down, another local user could create a pipe with the same name. Clients don't connect
    when the owner's process isn't running, which narrows this (`04` §8, ADR-024).
-9. **(Proposed, M5) Claims are advisory.** A peer can claim up to 16 rooted patterns (such
+9. **(M5) Claims are advisory.** A peer can claim up to 16 rooted patterns (such
    as `src/**`) for up to 24 h. pairwire blocks nothing either way, so a claim slows the
    other agent only as far as its user lets it, and an agent may ignore a claim its user
    never hears about.
-10. **(Proposed, M5) A contract hash proves bytes, not understanding.** An acceptance shows
+10. **(M5) A contract hash proves bytes, not understanding.** An acceptance shows
     which bytes were agreed, not that anyone read them. A ref-only proposal can't be
     checked by the receiver until its user pulls the file (`local_path`).
-11. **(Proposed, M5) Unreadable envelopes are acked.** The sender sees "delivered" for a
-    message the receiver's agent never saw; only the receiving side's `peer_unreadable`
-    notice says so.
-12. **(Proposed, M5) A file hash leaves the machine.** `contract_propose` sends the SHA-256
+11. **(0.1.1, M5) Unreadable envelopes are acked** (ADR-025). The sender sees "delivered"
+    for a message the receiver's agent never saw; only the receiving side's
+    `peer_unreadable` notice says so. Frames the relay buffered as structured for a peer
+    that then went back to an older client are lost this way (`02` §6.3.6).
+12. **(M5) A file hash leaves the machine.** `contract_propose` sends the SHA-256
     of a project file the local agent named. For a short or guessable file the hash reveals
     its content. The dot-segment and sensitive-name rules, the content secret scan and the
     approval prompt narrow this; they don't remove it.

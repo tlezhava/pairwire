@@ -236,10 +236,9 @@ it cannot tell whether the human asked for it, so it fails closed.
   (`peer_changed`, section 5): "The peer reconnected as a different client (was Nika/codex, now
   …). If you didn't expect this, run /pairwire:leave." (Mitigates A3 in `05-security.md`.)
 
-### Coordination state (Proposed (M5), not implemented)
+### Coordination state (M5)
 
-**Proposed (M5), not implemented** (ADR-027). Structured kinds (`02` §6.3) add one file and
-a few fields. pairwire never writes a contract file, a claims registry, a ledger or a lock
+ADR-027. Structured kinds (`02` §6.3) add two files and one field. pairwire never writes a contract file, a claims registry, a ledger or a lock
 file in either repository.
 
 - `rooms/<room_id>/coord-sent.jsonl` (0600, append-only): one line per structured envelope
@@ -254,22 +253,23 @@ file in either repository.
 - `outbox.jsonl` entries for structured kinds gain `fallback_body`: the chat body built and
   checked at send time (`02` §6.3.6). The entry keeps the structured envelope; the encoding
   is picked when the frame is encrypted.
-- `state.json` gains `peer.caps` (string array, at most 16 flags of at most 32 characters)
-  from the latest accepted HELLO, and `caps` on each stored session (current and previous),
-  copied from the HELLO that set that session up. Both are absent in state written before
-  M5, which means "no `collab1`".
-- `inbox.jsonl` gains quarantine lines,
-  `{"source":"quarantine","id","kind"?,"reason","received_at"}` (`02` §6.3.5). They are never
-  unread, rendered or delivered and are not counted anywhere; the transcript records
-  `! <time> · An unreadable message from <peer> was skipped (kind <kind>, <reason>).`
-  Appends are idempotent by id.
+- `rooms/<room_id>/caps.json` (0600): `{"<sid hex>": [<caps>], ...}`, the caps of the peer
+  HELLO behind each stored session (at most 16 flags of at most 32 characters each), for the
+  current and previous session only. The MCP server rewrites it atomically right after it
+  stores a new session in `state.json`. A session without an entry has no `collab1`
+  (`02` §6.3.2), so a missing or unreadable file, or a crash between the two writes, only
+  makes structured kinds go out as chat. It is a separate file, not a `state.json` field,
+  because 0.1.x refuses a `state.json` with unknown fields (ADR-027).
 - **The view is computed, not stored.** Nothing else is written on the receive path.
-  `coordView(inbox, sent, ledger, room, now)` is a pure function in `packages/core`
-  (isomorphic, unit-tested) over the peer's entries in `inbox.jsonl`, our lines in
-  `coord-sent.jsonl`, `delivered.json` (held and dropped ids are left out) and the room's
-  status and `expires_at`. It returns the active claims of each side, the contract table by
-  name, and each structured message's `match` value (`02` §6.3.4). `status`, the footer,
-  `send`'s checks and the renderer all call it, so they can't disagree.
+  `coordView({messages, roomOpen, roomExpiresAt, now})` is a pure function in
+  `packages/core` (isomorphic, unit-tested). `messages` are the peer's entries in
+  `inbox.jsonl` (side `peer`, at `received_at`) minus held and dropped ones (the client
+  removes them using `delivered.json` and the hold setting; a message being released right
+  now counts as visible), and our lines in `coord-sent.jsonl` (side `ours`, at `sent_at`).
+  It processes them in time order (ties by side, then id) and returns the active claims of
+  each side, the contract table by name, the highest version seen per name, and each
+  structured message's `match` value and client-computed attributes (`02` §6.3.4). `status`,
+  the footer, `send`'s checks and the renderer all call it, so they can't disagree.
   - Claims: active while not expired (`02` §6.3.4), not ended by a `match="yes"` release
     from the same side, not held or dropped, and the room is open. At most 16 per side
     count.
@@ -312,7 +312,7 @@ appears only when the count is above zero, and names the human's command for the
 |---|---|---|
 | `start` | `{ name?: string }` | Fails if this project has a room with status `active` (a handshake has happened). If a room is still `waiting` (no handshake yet), sends relay `leave` for it and creates a new one. Generates the secret, connects, returns the share string and instructions for the human. The share string is returned **only** here (REQ-ROOM-1). |
 | `join` | `{ share: string, name?: string }` | Parses the share string (REQ-ROOM-8), connects to its relay, waits up to 30 s for the handshake. Success → peer name and harness. If the peer isn't online within 30 s, the room stays bound and connected in the background and the tool returns "joined; waiting for your collaborator to come online". Relay errors (4001 etc.) → no binding is kept. |
-| `send` | `{ kind: "chat"\|"question"\|"answer", body: string, reply_to?: string }` | Validates (`body` max 24 KiB UTF-8 **and** serialized envelope max 28 KiB, `02` §6), secret-scans (REQ-SAFE-3), checks the hop budget (REQ-SAFE-4), rate-limits (20/min), then follows the sender rules in `02` §6.2: sent under the current session even if the peer is offline (the relay buffers), or queued if no session has ever existed. Returns `{ id, status: "sent"\|"queued" }`; "delivered" arrives later via ack. Never sets `author: "human"`. |
+| `send` | `{ kind: "chat"\|"question"\|"answer", body: string, reply_to?: string }`, plus the coordination kinds and fields below | Validates (`body` max 24 KiB UTF-8 **and** serialized envelope max 28 KiB, `02` §6), secret-scans (REQ-SAFE-3), checks the hop budget (REQ-SAFE-4), rate-limits (20/min), then follows the sender rules in `02` §6.2: sent under the current session even if the peer is offline (the relay buffers), or queued if no session has ever existed. Returns `{ id, status: "sent"\|"queued" }`; "delivered" arrives later via ack. Never sets `author: "human"`. |
 | `inbox` | `{}` | Returns all undelivered messages except held ones (section 5, Hold mode), wrapped (section 5), marks them delivered, and lists delivery status of the agent's last 5 sent messages. |
 | `status` | `{}` | Room state, peer, relay host, unread and held counts, whether hold mode is on, hop budget, transcript path. Never returns the share string, the secret or a held message's text. |
 | `leave` | `{ message?: string }` | If `message` is given, it passes the same validation and secret scan as `send` (INV-5); a blocked message aborts the leave and says why. Then sends `bye` (optional body), then relay `leave`; cleans up (REQ-ROOM-5). |
@@ -320,9 +320,9 @@ appears only when the count is above zero, and names the human's command for the
 There is deliberately **no** tool to reset the hop budget, change config, send as a
 human, or release or drop held messages: those are human-only paths (`ctl`, section 8).
 
-### Structured kinds in the tools (Proposed (M5), not implemented)
+### Structured kinds in the tools (M5)
 
-**Proposed (M5), not implemented** (ADR-027). There is no new MCP tool. `send` takes five
+ADR-027. There is no new MCP tool. `send` takes five
 more kinds and some optional fields; `status`, `inbox` and the footer show more, read-only.
 `start`, `join`, `leave` and the `ctl` operations are unchanged. No tool releases a peer's
 claim, edits the view, answers for the human or writes a contract file.
@@ -349,7 +349,9 @@ handler validates each kind with a zod discriminated union.
 ```
 
 A field that doesn't belong to the kind is an error that names it, so the approval prompt
-never shows input that isn't used. The tool description says that the coordination kinds
+never shows input that isn't used. `body` may be left out (or empty) only for `release` and
+for a `contract_response` that accepts; every other kind requires it. `paths` entries must
+be `RelPath`s and distinct (`02` §6.3.3), `contract_name` a `ContractName`, `rev` a `Rev`. The tool description says that the coordination kinds
 are records and that pairwire never locks, fetches or writes files.
 
 **Checks**, in addition to the outbound pipeline (section 7: size, secret scan, hop budget,
@@ -368,8 +370,8 @@ rate limit, then `02` §6.2):
   "contract_content differs from the file at contract_path; not proposed". Only `body` and
   `contract_content` (when given) are sent, both visible in the approval prompt; a ref-only
   proposal sends the hash, never the file. The client sets `version` to one more than the
-  highest version of that name in the view, from either side. `rev` is sent as given;
-  pairwire runs no git command.
+  highest version of that name in the view, from either side (at most 1,000,000). `rev` is
+  sent as given; pairwire runs no git command.
 - `contract_response`: `reply_to` must be a peer `contract_propose` already shown to the
   agent (in `delivered.json` `ids`, not held or dropped) that is live and unanswered. A
   held, dropped, answered, superseded or nonexistent id gets the same error, "No open
@@ -381,19 +383,19 @@ rate limit, then `02` §6.2):
 - Every structured send counts toward the hop budget and the rate limit like any other
   send.
 
-**`send` result**: the same shape, plus fields when they apply.
+**`send` result**: the same text as for the other kinds (`Sent (id …)` or `Queued (id …)`),
+plus a line for each of these that applies:
 
-```jsonc
-{ "id": "01JB…", "status": "sent",
-  "expires_at": "2026-10-16T14:00:00Z",              // claim
-  "contract": "orders-api v2", "sha256": "9f2c…",    // contract_propose, contract_response
-  "encoding": "chat",                                // only when the peer's client lacks collab1
-  "warnings": ["overlaps Nika's claim 01JA… (src/orders/**)"] }  // claim, heads_up
+```
+Claim active until 2026-10-16T14:00:00Z (advisory; pairwire locks nothing).      claim
+Contract orders-api v2, sha256 9f2c….                                           contract_propose, contract_response
+Your collaborator's pairwire is older, so this went out as a chat message with a header line.
+Warning: overlaps Nika's claim 01JA… (src/orders/**).                            claim, heads_up
 ```
 
-Overlap warnings compare against the peer's active claims and never block. The check is in
-core and conservative: two patterns overlap if their literal prefixes (up to the first glob
-token) are equal or one is a segment-boundary prefix of the other.
+The "older" line appears only when the current session's peer lacks `collab1`. Overlap
+warnings compare against the peer's active claims, use the overlap rule in `02` §6.3.4 (core
+`pathsOverlap()`) and never block. Peer paths in them pass the sanitizer's attribute step.
 
 **`status`** adds, read-only:
 
@@ -406,6 +408,7 @@ Contracts:
   events v1 · sha256 77ab03d1… · proposed by Nika 01JD… (external input) · awaiting your answer
 ```
 
+Both sections appear only when the view holds at least one active claim or one contract.
 Peer-supplied strings go through the sanitizer's attribute step. The local file state
 (`in sync`, `changed locally`, `missing`, or `unreadable (<rule>)`) is shown only for a
 path the local agent named (our proposal's `contract_path`, our acceptance's
@@ -529,19 +532,26 @@ With `hold` on (section 2), the human sees peer messages before their agent does
   in Codex (section 10). The MCP server knows its harness from `PAIRWIRE_HARNESS`; `ctl`
   reads the binding's `owner_harness` (section 3) and assumes Claude Code without one.
 
-### Structured kinds (Proposed (M5), not implemented)
+### Structured kinds (M5)
 
-**Proposed (M5), not implemented** (ADR-027). Structured messages (`02` §6.3) go through
-`render.ts` like every other message (INV-3).
+ADR-027. Structured messages (`02` §6.3) go through `render.ts` like every other message
+(INV-3).
 
-- **Attributes.** Each `data` value becomes an attribute and passes the sanitizer's
-  attribute step. Peer text only ever sits inside an attribute value or the tag body. Paths
-  are joined with `, ` (a path can't contain a comma, `02` §6.3.3).
-- **Client-computed attributes.** `match`, `expires`, `overlaps_yours` and `status`, and on
-  `release` and `contract_response` the `paths` or `name`/`version`/`path` of the message
-  they refer to, come from `coordView()` (section 3, Coordination state): fixed values or
-  our own records. The renderer adds them itself; nothing in an envelope can set them, and
-  peer text can't leave the attribute or body it is in.
+- **Attributes.** `data` values become attributes and pass the sanitizer's attribute step.
+  Peer text only ever sits inside an attribute value or the tag body. Paths are joined with
+  `, ` (a path can't contain a comma, `02` §6.3.3). Per kind, after the common attributes
+  (`reply_to` whenever it is set): `heads_up` has `paths` (when not empty); `claim` has
+  `paths`; `contract_propose` has `name`, `version`, `path`, `rev` (when set), `sha256` and
+  `content="inline"` for an inline proposal; `contract_response` has `decision`, `name`,
+  `version` and `sha256`. A claim's `ttl_min` is shown only as the computed `expires`.
+- **Client-computed attributes** come from `coordView()` (section 3, Coordination state):
+  fixed values or our own records. `match` on every structured kind; `expires` on a claim
+  that counts (`match="yes"`); `overlaps_yours` (ids of our active claims) on a claim or
+  heads-up whose paths overlap them; `status` (`pending`, `accepted`, `rejected` or
+  `superseded`) on a proposal that counted; on `release` the `paths` of the claim it ended;
+  and on `contract_response` the `path` of our proposal it answers. The renderer adds them
+  itself; nothing in an envelope can set them, and peer text can't leave the attribute or
+  body it is in.
 - **Inline contract content** is rendered as a sibling element right after its message:
   `<pairwire_contract_content of="<id>" name="…" version="…" sha256="…">…</pairwire_contract_content>`.
   The sanitizer already neutralizes every `<pairwire…` look-alike, so neither the body nor
@@ -569,11 +579,11 @@ Renaming OrderStatus.PENDING to OPEN in packages/types; on main within the hour.
 Refactoring order validation; please don't edit these until I release them.
 </pairwire_message>
 
-<pairwire_message … kind="release" id="01JB…" reply_to="01JB…" match="yes" paths="src/orders/**, src/api/orders.ts">
+<pairwire_message … kind="release" id="01JB…" reply_to="01JB…" received="…" match="yes" paths="src/orders/**, src/api/orders.ts">
 (no message)
 </pairwire_message>
 
-<pairwire_message … kind="contract_propose" id="01JC…" name="orders-api" version="2" path="contracts/orders-api.yaml" rev="a1b2c3d" sha256="9f2c…" match="yes" content="inline">
+<pairwire_message … kind="contract_propose" id="01JC…" name="orders-api" version="2" path="contracts/orders-api.yaml" rev="a1b2c3d4e5f6" sha256="9f2c…" content="inline" match="yes" status="pending">
 Orders API v2: …
 </pairwire_message>
 <pairwire_contract_content of="01JC…" name="orders-api" version="2" sha256="9f2c…">
@@ -581,7 +591,7 @@ openapi: 3.1.0
 …
 </pairwire_contract_content>
 
-<pairwire_message … kind="contract_response" id="01JD…" reply_to="01JC…" decision="accept" name="orders-api" version="2" sha256="9f2c…" match="yes">
+<pairwire_message … kind="contract_response" id="01JD…" reply_to="01JC…" decision="accept" name="orders-api" version="2" sha256="9f2c…" match="yes" path="contracts/orders-api.yaml">
 Agreed. …
 </pairwire_message>
 ```
@@ -595,25 +605,27 @@ Agreed. …
   `chat`. `coordView()` leaves out held and dropped messages, so a held claim or proposal
   appears nowhere (`status`, the footer, `send`'s checks, overlap warnings) before the human
   releases it.
-- **Delivery.** `Stop` and the D3 wake treat structured messages like `chat` (ADR-027
-  leaves passive delivery for `heads_up` and `release` as an open question).
-- **Local notice `peer_unreadable`** (`02` §6.3.5): "Your collaborator's pairwire sent a
-  message this version can't read (kind: x); nothing from it was shown. Ask them which
-  pairwire version they run, or update pairwire." The kind is shown only if it matches
-  `^[a-z0-9_]{1,32}$`. At most one is unread at a time.
+- **Delivery.** `Stop` and the D3 wake treat structured messages like `chat` (ADR-027).
+- **Unreadable envelopes** (`02` §6.3.5) produce the 0.1.1 `peer_unreadable` notice (table
+  above), once per connection; nothing from the envelope is stored or shown.
 - **Transcript** headings carry the structured fields; peer paths and names pass the
   sanitizer's text step and `redact()`:
 
   ```
   ### ← 2026-10-16 12:01:09Z · Nika (codex, agent) · claim · 01JB… · src/orders/**, src/api/orders.ts · until 14:01Z
   > Refactoring order validation…
-  ### → 2026-10-16 12:40:02Z · you (agent) · contract_response · 01JD… · re 01JC… · accept · orders-api v2 · 9f2c1e4a · your file contracts/orders-api.yaml
+  ### → 2026-10-16 12:40:02Z · you (agent) · contract_response · 01JD… · re 01JC… · accept · orders-api v2 · sha256 9f2c1e4a
   > Agreed…
-  ### → 2026-10-16 12:41:00Z · you (agent) · claim · 01JE… · as chat (peer's pairwire is older)
+  ### → 2026-10-16 12:41:00Z · you (agent) · claim · 01JE… · src/api/** · until 14:41Z · as chat (peer's pairwire is older)
   ```
 
-  `/pairwire:log` hides held and dropped bodies as today, and for those messages also the
-  structured fields in the heading and any inline content.
+  Fields per kind: `heads_up` its paths (if any); `claim` its paths and `until HH:MMZ` (the
+  local expiry, `02` §6.3.4); `release` `re <claim id>`; `contract_propose` `<name> v<n>`,
+  its path, `@ <rev>` when set, `sha256 <first 8>` and `inline` for an inline proposal;
+  `contract_response` `re <id>`, the decision, `<name> v<n>` and `sha256 <first 8>`. Inline
+  content is not copied into the transcript. `/pairwire:log` hides held and dropped bodies as
+  today, and for those messages also cuts the heading after the id, so the structured fields
+  don't show either.
 - **Older peer (0.1.0)** sees an ordinary `chat` whose first line is the header from
   `02` §6.3.6.
 

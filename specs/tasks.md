@@ -128,8 +128,12 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 ## M5 — Collaboration features
 
-- [ ] Spec first: structured kinds `heads_up`, `claim`/`release` (files or paths),
+- [x] Spec first: structured kinds `heads_up`, `claim`/`release` (files or paths),
   `contract_propose`/`contract_response` (with a checked-in contract file). Update `02` §6.
+  Accepted as ADR-027 (`02` §6.3).
+- [ ] Structured kinds (ADR-027): core schema, `coordView()` and fallback encoding; client
+  `send`, `status`, footer, rendering, transcript and `caps.json`; SKILL.md; e2e with an
+  older peer and a hostile one (REQ-COLLAB-1..7).
 - [x] Inbound `hold` mode: messages wait for the human's `/pairwire:accept` (ADR-023).
 - [ ] Channels "live mode" if not already in M4.
 
