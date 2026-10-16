@@ -271,10 +271,20 @@ Preparing M4-8 needed three decisions the specs left open.
   commits `chore: release vX.Y.Z` and creates an annotated tag locally. It never pushes.
   Pushing the tag runs `.github/workflows/release.yml`: the CI workflow in full, a check
   that every version location equals the tag, then `npm publish --provenance` (with an
-  `NPM_TOKEN` repository secret), the relay-node image for linux/amd64 and linux/arm64 to
-  `ghcr.io/tlezhava/pairwire-relay` (tags: the version and `latest`), and a GitHub release.
+  `NPM_TOKEN` repository secret: an npm granular access token with read-write access to the
+  `pairwire` package and "bypass 2FA" enabled, since npm no longer issues classic or
+  automation tokens; it expires within at most 90 days), the relay-node image for
+  linux/amd64 and linux/arm64 to `ghcr.io/tlezhava/pairwire-relay` (tags: the version and
+  `latest`), and a GitHub release.
   A tag with a prerelease suffix (`v0.2.0-rc.1`) publishes under the npm dist-tag `next`,
   doesn't move the image's `latest` and makes a GitHub prerelease.
+
+Follow-up: npm trusted publishing (OIDC) can only be configured for a package that already
+exists on the registry, so the first publish uses `NPM_TOKEN`. After it, configure
+`.github/workflows/release.yml` as the package's trusted publisher, drop
+`NODE_AUTH_TOKEN`/`NPM_TOKEN` from the workflow (the job already has `id-token: write`),
+delete the repository secret and revoke the token. That removes the long-lived credential and
+the 90-day renewal.
 
 ## Spike findings
 

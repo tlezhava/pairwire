@@ -1,9 +1,12 @@
 # Release (specs/04-client.md section 9, ADR-021). Runs when a v* tag is pushed; the tag comes
 # from `npm run release -- <version>`, which never pushes.
 #
-# Needs one repository secret: NPM_TOKEN, an npm automation (or granular publish) token for the
-# `pairwire` package. The image is pushed with the workflow's own GITHUB_TOKEN. npm provenance
-# requires a public repository, and a new GHCR package starts private: make it public once.
+# Needs one repository secret: NPM_TOKEN, an npm granular access token with read-write access to
+# the `pairwire` package and "bypass 2FA" enabled (npm no longer issues classic or automation
+# tokens). It expires within at most 90 days, so renew it before a release. After the first
+# publish, move to npm trusted publishing (OIDC) and drop the secret (ADR-021). The image is
+# pushed with the workflow's own GITHUB_TOKEN. npm provenance requires a public repository, and
+# a new GHCR package starts private: make it public once.
 name: Release
 
 on:
