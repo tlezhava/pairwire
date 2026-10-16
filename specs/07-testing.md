@@ -15,6 +15,14 @@ Status: draft v0.1
 | Plugin | `claude plugin validate plugins/claude-code --strict` | CI step | yes |
 | Manual acceptance | two real Claude Code sessions in two folders, then two machines | `tests/manual/ACCEPTANCE.md` | before each release |
 
+CI runs everything on Ubuntu (Node 20 and 22), and `npm test` plus `npm run test:e2e` on
+`windows-latest` (Node 22, ADR-021). A test that rests on POSIX behavior (mode bits, the
+INV-9 permission check, symlinks, signals, a fake `node` shell script) is skipped on Windows
+with `it.skipIf(process.platform === "win32")` and a comment saying why. Windows-only logic
+(pipe names, Git Bash lookup, `doctor`'s Windows lines) takes the platform or a path module
+as a parameter, so it is unit-tested on every OS; the Windows job then runs the real thing:
+`ctl` over named pipes, and the hook command from `hooks.json` through Git Bash.
+
 Naming: every test that covers a requirement or invariant includes its id in the test
 name, e.g. `it("REQ-ROOM-4 refuses a third member", ...)`. CI fails if any REQ-* or INV-*
 id defined in `00-product.md` or `05-security.md` has no matching test

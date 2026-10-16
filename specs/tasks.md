@@ -134,7 +134,8 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 ## M7 — Hardening toward 1.0
 
-- [ ] Native Windows support (named pipe for `ctl`, hook wiring).
+- [ ] Native Windows support (named pipe for `ctl`, hook wiring). Implemented per ADR-021;
+  open until the `windows-latest` CI job passes and a human has run one Windows session.
 - [ ] Short authentication string option (residual risk 1).
 - [ ] relay-node SQLite persistence.
 - [ ] External security review (`05-security.md` gate).

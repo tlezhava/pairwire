@@ -244,6 +244,65 @@ sanitized, wrapped in `<pairwire_transcript>` and preceded by a preamble labelin
 as external input. This tightens `04` §8; INV-3's text is unchanged. The ctl socket protocol
 is defined at the same time (one JSON request and reply per connection).
 
+## ADR-021 Native Windows: named-pipe control channel, shell-form hooks through Git Bash (M7)
+
+Status: proposed (2026-10-16); the Windows CI job and a first Windows session confirm it.
+Built and tested on macOS only; Windows code paths take the platform as a parameter so
+their pure parts are unit-tested everywhere, and a `windows-latest` CI job runs the rest.
+
+Research (docs only; no Windows machine was used):
+
+- Claude Code on native Windows needs no Git for Windows; without it the agent gets a
+  PowerShell tool instead of Bash ([setup](https://code.claude.com/docs/en/setup#install-on-native-windows)).
+- Hooks ([hooks reference](https://code.claude.com/docs/en/hooks), "Exec form and shell
+  form"): shell form (no `args`) runs `command` with `sh -c` on macOS and Linux, with Git
+  Bash on Windows, or with PowerShell when Git Bash isn't installed. Exec form resolves
+  `command` on `PATH` and on Windows needs a real executable. Both forms export
+  `CLAUDE_PLUGIN_ROOT`. A hook that can't start, or exits with a code other than 0 or 2, is
+  a non-blocking error shown in the transcript.
+- Git for Windows' default `PATH` option, "Git from the command line and also from 3rd-party
+  software", "adds only some minimal Git wrappers to your PATH" (its `cmd` directory), not
+  `sh.exe` ([installer source](https://github.com/git-for-windows/build-extra/blob/main/installer/install.iss)).
+- Named pipes created with no security descriptor (which is what libuv does) grant full
+  control to the creator, SYSTEM and Administrators and read access to Everyone
+  ([Microsoft](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights));
+  libuv sets `FILE_FLAG_FIRST_PIPE_INSTANCE` on the first instance.
+
+Decisions:
+
+1. **Hooks stay on the one POSIX wrapper, `run.sh`, run in shell form**
+   (`sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <event>`). Exec form with `sh` fails on a default
+   Git for Windows install, where `sh` is not on `PATH`; shell form reaches Git Bash, which
+   has it. No PowerShell variant: `hooks.json` cannot select entries by platform, two
+   variants would both run where both shells exist, and a script that runs in both shells
+   would be fragile and untestable here. So pairwire's hooks require Git for Windows on
+   native Windows (README, `doctor`); without it hooks show a non-blocking error and the room
+   works through D1. The no-Node fast path is unchanged: with no `active` flag the wrapper
+   exits 0 using shell builtins only. `run.sh` uses `USERPROFILE`, forward slashes and
+   `pwd -W` when `OS=Windows_NT` (`04` §6). On macOS and Linux the hooks now pass through one
+   more `sh -c`; S1 had already verified the shell-string form.
+2. **`ctl` is a named pipe on Windows**, `\\.\pipe\pairwire-<tag>-<nonce>`, with a fresh
+   random nonce each time the owning server opens the room. The tag alone (as in the
+   `/tmp` fallback) would be a fixed name that any local user can read from the pipe list
+   once and then hold whenever the server isn't running; the nonce limits that to the time
+   between a server's exit and its restart (`04` §8). Closing that gap needs the server to
+   prove itself to the client (for example an HMAC of a client nonce under a key in the
+   private state directory). That changes the ctl protocol and needs the human's decision,
+   so it is not done here.
+3. **INV-9's check stays off on Windows**, as before M7: there are no mode bits, and an ACL
+   check would need native code or a child process. Privacy rests on the profile
+   directory's inherited ACL; `doctor` warns when the state directory is outside the
+   profile. `05-security.md` is unchanged until the human accepts this as a residual risk.
+4. `.gitattributes` forces LF checkouts, so Git's CRLF conversion on Windows cannot break
+   `run.sh`, the generated `SKILL.md` or the tests that compare text.
+5. Path checks use `path.basename`/`path.win32` instead of `endsWith("/dist")`. The INV-2
+   import check compares repo-relative paths with `/` separators on every platform.
+
+Not covered: Codex on native Windows (its hook command is `sh "<path>" <event>` and needs
+Codex to run hooks through a POSIX shell; unverified), and project-directory case or 8.3
+short-name differences between `CLAUDE_PROJECT_DIR` and a hook's `cwd` (both come from
+Claude Code, which passes the same value to the MCP server and the hooks).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

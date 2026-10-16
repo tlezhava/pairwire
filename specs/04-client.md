@@ -6,7 +6,9 @@ Items marked **[verify: Sn]** depend on harness behavior that spike Sn in `tasks
 must confirm before the related code is written. Record the answer in `decisions.md`
 and edit this file.
 
-MVP platforms: macOS, Linux, WSL 2. Native Windows is M7.
+MVP platforms: macOS, Linux, WSL 2. Native Windows (M7) differs only where this spec says
+so: the control pipe and state permissions (section 3), the hook wrapper (sections 6 and 9),
+the control pipe's access model (section 8) and `doctor` (below). See ADR-021.
 
 ## 1. The `pairwire` executable
 
@@ -28,13 +30,20 @@ fails:
 
 1. Node version is at least 20 (REQ-INST-4); otherwise it says exactly what to install.
 2. `config.json` and the `PAIRWIRE_*` variables parse; unknown keys are warnings.
-3. State permissions (INV-9), with the fix command.
+3. State permissions (INV-9), with the fix command. On Windows nothing is checked (section 3,
+   "Native Windows"); the line says so, and warns when the state directory is outside the
+   user's profile directory.
 4. Relay reachability: `GET https://<host>/health` (http for loopback hosts) answers `ok`
    within 5 s, for the configured relay and the relay of every open room.
 5. Rooms: each stored room's status, peer and expiry, and whether the `active` flag
    matches (it is repaired if not).
 6. Plugin wiring, when run from a plugin bundle: `hooks/run.sh` and `hooks/hooks.json` exist
    next to `dist/`.
+7. On Windows only: Git Bash, which the hooks need (section 6). Found through
+   `CLAUDE_CODE_GIT_BASH_PATH`, else `bin\bash.exe` beside the install of a `git.exe` on `PATH`
+   (`<Git>\cmd\git.exe` or `<Git>\mingw64\bin\git.exe`), else `Git\bin\bash.exe` under
+   `%ProgramFiles%`, `%ProgramFiles(x86)%` or `%LOCALAPPDATA%\Programs`. Not found is a
+   warning: messages then arrive only through D1.
 
 It never prints secrets, tokens or share strings.
 
@@ -119,7 +128,21 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
   characters of `SHA-256(<state dir> \n <room_id>)`. The tag includes the state directory
   because both members of a room can run on one machine with different `PAIRWIRE_HOME`s, and
   a name built from the room id alone would collide. The chosen path is stored as
-  `ctl_path`. (macOS limits socket paths to 104 bytes.)
+  `ctl_path`. (macOS limits socket paths to 104 bytes.) On Windows, where Node's local IPC
+  is a named pipe and cannot live in the file system, the path is always
+  `\\.\pipe\pairwire-<tag>-<nonce>`, `<nonce>` being 16 random bytes in hex. A new nonce is
+  chosen when the room is created and again each time the owning MCP server opens the room,
+  which records it in `ctl_path` before listening (section 8 says why).
+- **Native Windows.** Mode bits don't exist there: `chmod` and the `mode` passed when
+  creating files only toggle the read-only attribute. The state directory's privacy comes
+  from its NTFS ACL, which it inherits from its parent; the default `%USERPROFILE%` ACL
+  grants only the user, SYSTEM and Administrators. The INV-9 check
+  (`checkStatePermissions`) is not run on Windows, because reading an ACL needs native
+  code or a child process and the client takes neither for it. `doctor` says that the check
+  was skipped, and warns when the state directory (for example a `PAIRWIRE_HOME`) is not
+  inside the user's profile directory, where it may inherit an ACL that lets other users
+  read it. Paths are built with `node:path`, so separators are native; nothing assumes `/`
+  or `/tmp`.
 - **One room per project directory.** The binding records `owner_pid` (the MCP server)
   and `owner_session`: the `CLAUDE_CODE_SESSION_ID` the harness gives the MCP server, or
   `null` in a harness that sets none. When the MCP server starts, it reads the binding:
@@ -311,6 +334,32 @@ rule also holds when Node is missing:
 3. Otherwise `exec node "<plugin root>/dist/pairwire.mjs" hook <event>`, with stdin
    passed through. The wrapper derives the plugin root from its own path.
 
+**On native Windows** `run.sh` stays the single entry point; there is no PowerShell or
+`.cmd` variant. Claude Code runs a shell-form hook command (section 9) with Git Bash, or
+with PowerShell when Git Bash is missing ([hooks reference, "Exec form and shell
+form"](https://code.claude.com/docs/en/hooks)). Git for Windows is optional for Claude Code,
+which falls back to its PowerShell tool without it
+([setup](https://code.claude.com/docs/en/setup#install-on-native-windows)), but pairwire's
+hooks need it. Under Git Bash, `sh` is Git's bash in POSIX mode, and the wrapper behaves as
+above with three differences, all taken only when `OS` is `Windows_NT`:
+
+- The default state directory is `$USERPROFILE/.pairwire`, because Node's `os.homedir()`
+  reads `USERPROFILE` on Windows and ignores `HOME`, which a user or Git Bash may set to
+  something else.
+- After the fast-path check (which stays builtins only: forks are slow under Git Bash),
+  backslashes in the wrapper's own path are turned into `/`, since `${CLAUDE_PLUGIN_ROOT}` and
+  the Codex install path (section 10) are Windows paths.
+- The plugin root is taken with `pwd -W`, which prints a `C:/...` path, so `node` (a native
+  program) gets a path it can open without relying on MSYS argument conversion.
+
+Without Git Bash, Claude Code runs the hook command in PowerShell, which has no `sh`: every
+hook then fails with Claude Code's non-blocking "Failed with non-blocking status code" notice,
+and messages arrive only through D1. No single command string runs the wrapper in both
+shells, and `hooks.json` has no per-platform entries, so this is a documented requirement
+(README, `doctor` check 7) rather than handled. A D3 waiter that Claude Code stops on Windows
+may outlive the wrapper process, because terminating a process there does not end its
+child; it still ends as soon as it is superseded or cancelled, or the MCP server exits.
+
 The MCP server creates the `active` flag when a room becomes `waiting` or `active`. It
 removes the flag when no such room remains.
 
@@ -494,6 +543,24 @@ sees them in the prompt.
 
 `ctl.sock` accepts connections only from the same OS user (socket file mode 0600).
 
+**On Windows** `ctl_path` is a named pipe (section 3), which has no file mode; the listener
+skips the directory check, the stale-file removal and the `chmod`. Node creates the pipe
+with the default security descriptor (libuv passes none to `CreateNamedPipeW`), which grants
+full control to the creating user, SYSTEM and Administrators, and read access to Everyone
+and the anonymous account ([Named Pipe Security and Access
+Rights](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights)).
+Every request starts with the client writing a line, and the server writes only in reply to
+one, so a reader without write access gets nothing and can do nothing; on the server side
+the pipe is as private as the 0600 socket. The client side is weaker: pipe names are
+machine-wide and any user can list them, so another local user who learns a name while the
+server holds it could create a pipe of that name after the server exits, and a client still
+reading the old `ctl_path` would then talk to that user. The fresh nonce on every open
+(section 3) makes the old name useless once the server restarts, and libuv opens the first
+instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a server never shares a name someone else
+holds. What remains is the time between an owning server's exit and its restart: `ctl say`
+text could reach that user, and a reply (or a D3 `wake`) from them would be shown to the
+human or the agent. ADR-021 records this as a known gap on Windows.
+
 Residual risk, stated in `05-security.md`: an agent with unrestricted Bash permission
 could invoke `pairwire ctl` itself. The protections assume the harness's normal permission
 prompts are on.
@@ -545,21 +612,29 @@ plugins/claude-code/
 ```
 
 `hooks/hooks.json`: one entry per event, each running the `hooks/run.sh` wrapper from
-section 6 in exec form (no shell quoting). The wrapper finds `dist/pairwire.mjs` relative
-to its own path. S1 confirmed that both the shell-string and exec (`args`) forms work, that
-`${CLAUDE_PLUGIN_ROOT}` expands inside `args`, and that a matcher of `"*"`, `""` or none
-matches every tool, MCP tools included.
+section 6 in shell form, `sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <event>`. The wrapper finds
+`dist/pairwire.mjs` relative to its own path. S1 confirmed that both the shell-string and
+exec (`args`) forms work, that `${CLAUDE_PLUGIN_ROOT}` expands inside `args`, and that a
+matcher of `"*"`, `""` or none matches every tool, MCP tools included.
+
+Shell form, not exec form, because of Windows (ADR-021). Exec form looks `sh` up on `PATH`
+and needs a real `.exe`; Git for Windows' default install puts only its `cmd` directory on
+`PATH`, which has no `sh.exe`. Shell form runs the string with `sh -c` on macOS and Linux and
+with Git Bash on Windows, where `sh` is always found. Claude Code exports
+`CLAUDE_PLUGIN_ROOT` to the hook process, so the shell expands it, inside double quotes, as
+one word whatever characters the path contains. On macOS and Linux this adds one `sh -c`
+process in front of `run.sh`, about a millisecond.
 
 ```json
 {
   "description": "pairwire: deliver messages from your paired collaborator",
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "session-start"], "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "user-prompt-submit"], "timeout": 10 }] }],
-    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "post-tool-use"], "timeout": 10 }] }],
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session-start", "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" user-prompt-submit", "timeout": 10 }] }],
+    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" post-tool-use", "timeout": 10 }] }],
     "Stop":             [{ "hooks": [
-                            { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop"], "timeout": 10 },
-                            { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop-wait"], "async": true, "asyncRewake": true, "timeout": 86400 }
+                            { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop", "timeout": 10 },
+                            { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop-wait", "async": true, "asyncRewake": true, "timeout": 86400 }
                           ] }]
   }
 }
@@ -607,6 +682,10 @@ Because the marketplace installs straight from the git repository's default bran
 releases. Any commit that changes client code also commits the rebuilt bundle. CI fails
 on any push to `main` (and on any tag) if the committed bundle doesn't match a fresh
 build. The release script bumps the version, rebuilds, commits and tags.
+
+The repository's `.gitattributes` sets `* text=auto eol=lf`, so every text file, `run.sh`
+included, is checked out with LF line endings even where Git converts to CRLF by default
+(Git for Windows' recommended setting). A `run.sh` with CRLF would fail under `sh`.
 
 ## 10. Other harnesses (M6)
 
