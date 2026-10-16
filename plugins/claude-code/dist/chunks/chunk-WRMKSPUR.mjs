@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   errorCode
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-5S434TG7.mjs";
 import {
   configPath
 } from "./chunk-AOSSRO7Z.mjs";
@@ -11,7 +11,7 @@ import {
   external_exports,
   formatRelayAddress,
   parseRelayAddress
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-RXHLPIRV.mjs";
 
 // packages/client/src/config.ts
 import { spawnSync } from "node:child_process";

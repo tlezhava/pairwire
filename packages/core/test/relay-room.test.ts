@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CLIENT_LIMITS, RELAY_LIMITS, relayInfo } from "../src/limits.js";
-import { RelayRoom, type Effect, type Output, type RoomState } from "../src/relay-room.js";
+import { RelayRoom, decodeRoomState, encodeRoomState, type Effect, type Output, type RoomState } from "../src/relay-room.js";
 
 const T0 = Date.UTC(2026, 9, 15, 12, 0, 0);
 const S = 1000;
@@ -435,6 +435,72 @@ describe("persisted state", () => {
   });
 });
 
+describe("RoomState codec (03, Room state machine)", () => {
+  function liveState(): RoomState {
+    const h = harness();
+    h.join("s1");
+    h.join("s2");
+    h.room.disconnect("s2");
+    h.room.binary("s1", msg(1));
+    h.advance(5 * S);
+    h.room.binary("s1", Uint8Array.from({ length: 300 }, (_, i) => (i * 13) & 0xff));
+    return h.room.state!;
+  }
+
+  it("round-trips a state with tokens, epoch and buffered frames", () => {
+    const state = liveState();
+    expect(state.slots.b!.buffer).toHaveLength(2);
+    const text = encodeRoomState(state);
+    expect(typeof text).toBe("string");
+    const back = decodeRoomState(text);
+    expect(back).toEqual(state);
+    expect(back.slots.b!.buffer[1]!.bytes).toBeInstanceOf(Uint8Array);
+    expect(back.slots.b!.buffer[1]!.bytes).toEqual(state.slots.b!.buffer[1]!.bytes);
+  });
+
+  it("round-trips a tombstone and an empty buffer", () => {
+    const tomb: RoomState = { createdAt: T0, lastActivityAt: T0 + S, epoch: 3, ended: { at: T0 + H, reason: "left" }, slots: {} };
+    expect(decodeRoomState(encodeRoomState(tomb))).toEqual(tomb);
+    const empty = new Uint8Array(0);
+    const one: RoomState = { ...tomb, ended: null, slots: { a: { token: "x".repeat(43), connected: true, buffer: [{ at: T0, bytes: empty }] } } };
+    expect(decodeRoomState(encodeRoomState(one))).toEqual(one);
+  });
+
+  it("stores frame bytes as base64url text, so the encoding never holds raw binary", () => {
+    const state = liveState();
+    const parsed = JSON.parse(encodeRoomState(state)) as { slots: { b: { buffer: { bytes: unknown }[] } } };
+    for (const f of parsed.slots.b.buffer) expect(f.bytes).toMatch(/^[A-Za-z0-9_-]*$/);
+    expect(parsed.slots.b.buffer[0]!.bytes).toBe(Buffer.from(state.slots.b!.buffer[0]!.bytes).toString("base64url"));
+  });
+
+  it("decodes into a state a RelayRoom keeps using", () => {
+    const state = liveState();
+    const room = new RelayRoom({ now: () => T0 + 10 * S, state: decodeRoomState(encodeRoomState(state)) });
+    room.connect("s3");
+    const out = room.text("s3", JSON.stringify({ t: "join", v: 1, token: state.slots.b!.token }));
+    expect(json(out, "s3")[0]).toMatchObject({ t: "joined", member: "b", epoch: state.epoch + 1, buffered: 2 });
+    expect(sent(out, "s3").filter((d) => typeof d !== "string")).toEqual(state.slots.b!.buffer.map((f) => f.bytes));
+  });
+
+  it("rejects malformed input", () => {
+    const good = JSON.parse(encodeRoomState(liveState())) as Record<string, unknown>;
+    const bad: string[] = [
+      "",
+      "not json",
+      "null",
+      "[]",
+      JSON.stringify({ ...good, epoch: "1" }),
+      JSON.stringify({ ...good, extra: 1 }),
+      JSON.stringify({ ...good, ended: { at: 1, reason: "bored" } }),
+      JSON.stringify({ ...good, slots: { c: (good.slots as Record<string, unknown>).a } }),
+      JSON.stringify({ ...good, slots: { a: { token: "t", connected: false, buffer: [{ at: 1, bytes: "not base64!" }] } } }),
+      JSON.stringify({ ...good, slots: { a: { token: "t", connected: false, buffer: [{ at: 1, bytes: "A" }] } } }),
+      JSON.stringify({ ...good, slots: { a: { token: "t", connected: false } } }),
+    ];
+    for (const text of bad) expect(() => decodeRoomState(text), text).toThrow();
+  });
+});
+
 describe("token encoding", () => {
   it("base64url matches Node's encoder for every length up to 40 bytes", async () => {
     const { base64url } = await import("../src/relay-room.js");
@@ -442,6 +508,18 @@ describe("token encoding", () => {
       const bytes = Uint8Array.from({ length: n }, (_, i) => (i * 73 + n * 11) & 0xff);
       expect(base64url(bytes)).toBe(Buffer.from(bytes).toString("base64url"));
     }
+  });
+
+  it("base64urlDecode inverts base64url for every length up to 40 bytes and rejects bad input", async () => {
+    const { base64url, base64urlDecode } = await import("../src/relay-room.js");
+    for (let n = 0; n <= 40; n++) {
+      const bytes = Uint8Array.from({ length: n }, (_, i) => (i * 73 + n * 11) & 0xff);
+      expect(base64urlDecode(base64url(bytes))).toEqual(bytes);
+    }
+    for (const bad of ["A", "AAAAA", "AA==", "A+B/", "AA AA", "\u00e9A"]) expect(() => base64urlDecode(bad), bad).toThrow();
+    // Non-canonical: the unused low bits of the last character must be zero.
+    expect(() => base64urlDecode("AB")).toThrow();
+    expect(base64urlDecode("AA")).toEqual(Uint8Array.of(0));
   });
 });
 

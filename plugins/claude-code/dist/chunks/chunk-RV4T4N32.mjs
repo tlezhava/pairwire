@@ -5,14 +5,14 @@ import {
   errorCode,
   withLock,
   writeFileAtomic
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-5S434TG7.mjs";
 import {
   roomFile
 } from "./chunk-AOSSRO7Z.mjs";
 import {
   envelopeSchema,
   external_exports
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-RXHLPIRV.mjs";
 
 // packages/client/src/room-files.ts
 import { appendFileSync, readFileSync } from "node:fs";

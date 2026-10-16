@@ -57,11 +57,19 @@ From then on it fails CI.
   buffering order; HELLO never buffered; every limit in `03-relay.md` (rate limit counts
   binary frames only); expiry and max age with a fake clock; unknown token with a free
   slot → 4002; any join to an ended room → `peer_left` (if left) then 4003, with or
-  without a token; `joined` carries `expires_at`.
+  without a token; `joined` carries `expires_at`. `encodeRoomState`/`decodeRoomState`
+  round-trip a state with buffered frames and a tombstone, and decoding rejects malformed
+  input.
 
 ### relay
 
-- Conformance suite (same file) passes against relay-worker and relay-node.
+- Conformance suite (same file) passes against relay-worker and relay-node, and again
+  against relay-node with SQLite state.
+- relay-node restart (SQLite): a member's token, epoch and buffered frames survive a
+  restart and the member rejoins and receives them; idle expiry and max age still fire
+  after a restart with the fake clock, including expiry that fell due while it was down;
+  a tombstone stays a tombstone; `sqlite:` on a Node without `node:sqlite` fails with a
+  clear message.
 - INV-1: a test relay wrapper records every byte received; after a full session the
   recording contains no share secret, `psk`, display name or plaintext body.
 - Durable Object hibernation: sockets survive a simulated hibernation (attachment

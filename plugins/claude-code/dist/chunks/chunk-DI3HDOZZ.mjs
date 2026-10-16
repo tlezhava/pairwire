@@ -5,7 +5,7 @@ import {
   ensurePrivateDir,
   errorCode,
   removeFile
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-5S434TG7.mjs";
 import {
   roomFile
 } from "./chunk-AOSSRO7Z.mjs";
@@ -13,7 +13,7 @@ import {
   displayName,
   redact,
   sanitizeText
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-RXHLPIRV.mjs";
 
 // packages/client/src/transcript.ts
 import { appendFileSync, readFileSync } from "node:fs";
