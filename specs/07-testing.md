@@ -179,6 +179,52 @@ From then on it fails CI.
   output; it has no timer of its own.
 - Internal error → exit 0, no output, error logged.
 
+### Structured kinds (Proposed (M5), not implemented)
+
+**Proposed (M5), not implemented** (ADR-027). Required once the proposal is accepted; until
+then the REQ-COLLAB ids are `deferred` to M5 in `tests/traceability.json`.
+
+- core, envelope schema (test-first): each M5 kind's `data` bounds; `data` present on an old
+  kind (also `"data": null`) rejected; `data` missing on an M5 kind rejected; unknown keys in
+  `data` rejected (INV-8); `author: "human"` on an M5 kind rejected; every `RelPath`
+  rejection class, including a glob in the first segment, a `.` or `..` segment, `\`, `,`,
+  bidi, zero-width and tag-block characters; `ContractPath` rejects globs and dot-segments;
+  inline content whose hash differs, or that the sanitizer would change, is rejected.
+- core, `coordView()` (pure, fake clock): claim expiry from `received_at`/`sent_at` capped
+  at the room's `expires_at`, ignoring a future `ts`; release only by the same side; the
+  16-claim and 50-name limits (`over_limit`); per-side id resolution; every `match` value;
+  live proposal by version, equal versions ordered by id so both sides agree; first valid
+  response wins; held and dropped messages invisible; ending the room ends claims.
+- core, overlap check and fallback body: prefix overlap cases; the fallback body is
+  deterministic and its header matches `02` §6.3.6 for each kind.
+- REQ-COLLAB-1: a `heads_up` reaches the peer agent with sanitized `paths` attributes.
+- REQ-COLLAB-2: claim, then release, then expiry, seen in both sides' `status` and footer;
+  `send` refuses a seventeenth active claim and a release of a claim that isn't ours.
+- REQ-COLLAB-3: propose (ref-only and inline), accept with a matching `local_path`, accept
+  with a mismatching `local_path` refused, reject; a response to a superseded proposal
+  refused by `send` and rendered `match="superseded"` when it arrives anyway; a held
+  proposal id gets the same `send` error as a nonexistent one.
+- REQ-COLLAB-4: an e2e pair with one client pinned to 0.1.0's kind list and no `collab1`:
+  a claim arrives as `chat` with its header, is acked, and later `seq`s keep flowing; a
+  peer downgrade between sessions resends unacked structured envelopes as chat under the
+  same id and seq; an upgrade resends structured.
+- REQ-COLLAB-5: unknown kinds, invalid `data` and an extra top-level field are acked, advance
+  `peer_max_seq`, write a quarantine line, render nothing, and queue exactly one
+  `peer_unreadable` notice per unread cycle; a non-orderable envelope is still dropped.
+- REQ-COLLAB-6 and INV-2: claim, release, contract_propose and contract_response from the
+  peer, including paths that name real files and `.claude/settings.json`, leave the project
+  tree and `.claude/` byte-identical, open no file the peer named (fs spy), spawn no
+  process and send nothing.
+- REQ-COLLAB-7 and INV-5: `contract_propose` refuses a symlink that leaves the project, a
+  dot-segment path, each sensitive name, a file over 1 MiB, and a file containing a
+  scanner match (the error carries no content); the scan covers every new input field and
+  the fallback body.
+- INV-3: injection-corpus samples placed in a body, a path (where the schema allows the
+  characters) and inline content can't close the wrapper, forge a `match` attribute or
+  forge a `<pairwire_contract_content>` element; `status` lines with peer paths are
+  sanitized and labeled.
+- INV-7: no path, hash or body in any log line after a session with every structured kind.
+
 ### Injection corpus (SEC)
 
 `tests/security/injection-corpus/` holds hostile message bodies: tag breaking, fake

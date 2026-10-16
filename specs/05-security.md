@@ -70,6 +70,60 @@ something within the permissions its human has granted. Labeling reduces this; i
 eliminate it. The README says so plainly and recommends keeping normal permission prompts
 on while paired.
 
+## Structured kinds (Proposed (M5), not implemented)
+
+**Proposed (M5), not implemented** (ADR-027, `02-protocol.md` §6.3). This section analyzes
+the proposal against the invariants above. It changes no invariant text.
+
+- **INV-2.** Receiving a `claim`, `release`, `contract_propose` or `contract_response`
+  changes nothing outside pairwire's own display and the view it computes from its own
+  files. No code path writes, pulls, stats or opens a path the peer named; there is no
+  auto-release, auto-reply or git action. Claims are deliberately **not** turned into
+  `PreToolUse` denies or permission rules: that would let the peer make permission
+  decisions on the receiver's machine. They stay advisory text, and the agent guide sends
+  conflicts to the human. The contract file is read only on the sender's side, for a path
+  the local agent named in its own approved `send` (or later in `status`).
+- **INV-3.** Every new value is shown only as a sanitized, escaped attribute or, for inline
+  contract content, inside a renderer-made sibling element whose content must be
+  sanitizer-invariant. The attributes that carry meaning (`match`, `expires`, `status`,
+  `overlaps_yours`) are computed by the client, never copied from the envelope, and the
+  preamble tells the agent to trust only those. The path schema rejecting controls, Cf and
+  tag-block characters is defense in depth; the sanitizer still runs.
+- **INV-4.** The new kinds go only through `send`, behind the same approval prompt. A field
+  that doesn't belong to the kind is rejected, so the prompt shows exactly what is used.
+  Hashes, versions and the fallback body are derived deterministically from what the prompt
+  shows. Structured kinds require `author: "agent"`, so a claim or contract decision can
+  never claim to be the human's.
+- **INV-5.** The scan covers the body, every path, the contract name, path and rev, inline
+  content, the content of every file read to hash it, and the fallback body. Without the
+  file-content scan and the sensitive-name and dot-segment rules, a peer could ask the
+  agent to "propose `.env`" and get a hash oracle for a low-entropy secret.
+- **INV-6.** Every structured send counts toward the hop budget and the rate limit.
+  Receiving one never triggers a send.
+- **INV-7.** Logs carry kinds and counts only, never paths, hashes or bodies. The transcript
+  passes paths through `redact()`.
+- **INV-8.** `data` is a strict per-kind schema and is forbidden on old kinds; bounds are
+  fixed (TTL at most 24 h, at most 20 paths, 16 active claims per side, 50 contract names).
+  The peer can only end its **own** claims and answer **our** proposals; anything else
+  renders with a `match` value other than `yes` and changes nothing. The ack-and-skip rule
+  for unreadable envelopes changes only `peer_max_seq`, which the peer already controls
+  through its own sequence numbers. No value maps to config, delivery mode, hold mode,
+  membership or the hop budget.
+- **Hold mode.** The view leaves out held and dropped messages, so a held claim's paths or
+  a held proposal's name never reach the agent through `status`, the footer, overlap
+  warnings or `send` errors (held ids get the same "unknown id" error as nonexistent ones).
+
+New risks and their mitigations:
+
+- *Claim squatting* (the peer claims everything for 24 h to stall the other agent): the
+  first path segment must be literal, at most 16 claims per side count, claims are
+  advisory, and the guide makes every conflict a question for the user.
+- *Social engineering on contracts* ("you already accepted v3"): the view computed from the
+  local inbox and `coord-sent.jsonl` is the authority, `status` shows it, and a response
+  that doesn't match renders with a non-`yes` `match`.
+- *Forged header lines* in a peer's `chat` that imitate the fallback encoding: plain text
+  with no effect on the view; the guide says to trust only client-added attributes.
+
 ## Residual risks (accepted for v1)
 
 1. **Active attacker with share string and relay control** can impersonate a peer during
@@ -98,6 +152,20 @@ on while paired.
    the user profile. The control pipe accepts only the user, but while the owning session is
    down, another local user could create a pipe with the same name. Clients don't connect
    when the owner's process isn't running, which narrows this (`04` §8, ADR-024).
+9. **(Proposed, M5) Claims are advisory.** A peer can claim up to 16 rooted patterns (such
+   as `src/**`) for up to 24 h. pairwire blocks nothing either way, so a claim slows the
+   other agent only as far as its user lets it, and an agent may ignore a claim its user
+   never hears about.
+10. **(Proposed, M5) A contract hash proves bytes, not understanding.** An acceptance shows
+    which bytes were agreed, not that anyone read them. A ref-only proposal can't be
+    checked by the receiver until its user pulls the file (`local_path`).
+11. **(Proposed, M5) Unreadable envelopes are acked.** The sender sees "delivered" for a
+    message the receiver's agent never saw; only the receiving side's `peer_unreadable`
+    notice says so.
+12. **(Proposed, M5) A file hash leaves the machine.** `contract_propose` sends the SHA-256
+    of a project file the local agent named. For a short or guessable file the hash reveals
+    its content. The dot-segment and sensitive-name rules, the content secret scan and the
+    approval prompt narrow this; they don't remove it.
 
 ## Security review gate
 
