@@ -15,7 +15,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-JKG4XIAG.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-7V3HTHKP.mjs");
     await runMcpServer();
     return -1;
   }
@@ -39,7 +39,7 @@ async function main(argv) {
     return 0;
   }
   if (command === "ctl") {
-    const { runCtl } = await import("./chunks/ctl-SK63QJMD.mjs");
+    const { runCtl } = await import("./chunks/ctl-4OE4SFLH.mjs");
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "doctor") {

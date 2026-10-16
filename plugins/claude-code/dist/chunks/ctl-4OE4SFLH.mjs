@@ -5,7 +5,7 @@ import {
   appendTranscript,
   noticeLine,
   transcriptTail
-} from "./chunk-JGL4B7D4.mjs";
+} from "./chunk-ZJZWXAP6.mjs";
 import {
   dropHeld,
   hiddenBodies,
@@ -129,7 +129,10 @@ async function runCtl(args, io) {
     case "log": {
       const given = arg ?? (io.stdin.isTTY ? "" : await readAll(io.stdin));
       const n = Math.min(MAX_LOG_ENTRIES, Math.max(1, Number.parseInt(given.trim(), 10) || DEFAULT_LOG_ENTRIES));
-      print(renderTranscript(transcriptTail(home, roomId, n, hiddenBodies(home, roomId, holdMode(home, io.env)), acceptHint(harness))));
+      const hidden = /* @__PURE__ */ new Map();
+      const holding = holdMode(home, io.env);
+      for (const [id, why] of hiddenBodies(home, roomId, true)) hidden.set(id, why === "held" && !holding ? "pending" : why);
+      print(renderTranscript(transcriptTail(home, roomId, n, hidden, acceptHint(harness))));
       return 0;
     }
     case "accept": {

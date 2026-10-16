@@ -71,7 +71,11 @@ function transcriptEvents(home, roomId, now, onError, sessionHasCurrent) {
   };
 }
 function transcriptTail(home, roomId, n, hidden = /* @__PURE__ */ new Map(), accept = "/pairwire:accept") {
-  const placeholder = { held: `> (held for your review: run ${accept})`, dropped: "> (dropped by your user)" };
+  const placeholder = {
+    held: `> (held for your review: run ${accept})`,
+    dropped: "> (dropped by your user)",
+    pending: "> (not shown to your agent yet; it arrives with the next hook or inbox call)"
+  };
   let text;
   try {
     text = readFileSync(roomFile(home, roomId, "transcript.md"), "utf8");

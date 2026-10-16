@@ -195,6 +195,15 @@ describe("hold mode", () => {
     expect(await ctl(a, ["log"], "\n")).toContain("SECRETPLAN");
   });
 
+  it("REQ-SAFE-6 INV-3 ctl log hides an undelivered body even when its own hold setting is off", async () => {
+    const { a, fromB } = await holdA();
+    await fromB("the OTHERPLAN");
+    // The server holds (config.json); this ctl process is told hold is off.
+    const log = await ctl(a, ["log"], "\n", false, { PAIRWIRE_HOLD: "0" });
+    expect(log).not.toContain("OTHERPLAN");
+    expect(log).toContain("> (not shown to your agent yet; it arrives with the next hook or inbox call)");
+  });
+
   it("ctl accept explains when hold mode is off and refuses other arguments", async () => {
     const { a } = await holdA();
     expect(await ctl(a, ["accept"], "please\n")).toBe("pairwire: usage: /pairwire:accept [drop]\n");

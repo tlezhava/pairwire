@@ -83,10 +83,14 @@ export function transcriptTail(
   home: string,
   roomId: string,
   n: number,
-  hidden: ReadonlyMap<string, "held" | "dropped"> = new Map(),
+  hidden: ReadonlyMap<string, "held" | "dropped" | "pending"> = new Map(),
   accept = "/pairwire:accept",
 ): string {
-  const placeholder = { held: `> (held for your review: run ${accept})`, dropped: "> (dropped by your user)" } as const;
+  const placeholder = {
+    held: `> (held for your review: run ${accept})`,
+    dropped: "> (dropped by your user)",
+    pending: "> (not shown to your agent yet; it arrives with the next hook or inbox call)",
+  } as const;
   let text: string;
   try {
     text = readFileSync(roomFile(home, roomId, "transcript.md"), "utf8");
