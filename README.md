@@ -176,6 +176,19 @@ docker run -d -p 8787:8787 pairwire-relay
 # after the release: docker run -d -p 8787:8787 ghcr.io/tlezhava/pairwire-relay
 ```
 
+By default the relay keeps rooms in memory, so a restart or upgrade ends every room. To
+keep them, give it a volume at `/data` and a SQLite file there:
+
+```
+docker run -d -p 8787:8787 -v pairwire-relay:/data \
+  -e PAIRWIRE_RELAY_STATE=sqlite:/data/relay.db pairwire-relay
+```
+
+The file holds room ids, member tokens and encrypted frames waiting for an offline member,
+never message text. Outside Docker this needs Node 22.13 or later (Node 22 prints one
+`ExperimentalWarning` for `node:sqlite`; Node 24 doesn't); without it the relay refuses to
+start rather than silently keeping state in memory.
+
 Put TLS in front of it, for example with Caddy:
 
 ```
