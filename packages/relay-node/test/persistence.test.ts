@@ -61,6 +61,42 @@ describe("PAIRWIRE_RELAY_STATE (03, Persistence)", () => {
     expect(run.stderr).toContain('"event":"bad_state"');
     expect(run.stderr).not.toContain('"event":"listening"');
   });
+
+  it("logs state_write_failed when a write fails and keeps serving the room from memory", async () => {
+    const failing: RoomStore = {
+      load: () => ({ rooms: new Map(), dropped: 0 }),
+      save: () => {
+        throw new Error("disk full");
+      },
+      delete: () => {
+        throw new Error("disk full");
+      },
+      close: () => {},
+    };
+    const lines: string[] = [];
+    const relay = await startNodeRelay((line) => lines.push(line), { store: failing });
+    try {
+      const roomId = room();
+      const a = await relay.connect(roomId);
+      a.sendText(joinFrame(null));
+      const joinedA = await text(a);
+      expect(joinedA).toMatchObject({ t: "joined", member: "a" });
+      const b = await relay.connect(roomId);
+      b.sendText(joinFrame(null));
+      expect(await text(b)).toMatchObject({ t: "joined", member: "b", peer_present: true });
+      expect(await text(a)).toMatchObject({ t: "peer_joined" });
+      a.sendBinary(msg(1));
+      expect(await b.next()).toEqual({ kind: "binary", data: msg(1) });
+
+      const failures = lines.filter((l) => l.includes('"event":"state_write_failed"'));
+      expect(failures.length).toBeGreaterThan(0);
+      expect(failures.every((l) => l.includes('"level":"warn"'))).toBe(true);
+      expect(lines.join("\n")).not.toContain(roomId);
+      expect(lines.join("\n")).not.toContain(String(joinedA.token));
+    } finally {
+      await relay.close();
+    }
+  });
 });
 
 describe.runIf(sqlite)("relay-node SQLite persistence (03, Persistence)", () => {

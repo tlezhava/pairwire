@@ -102,7 +102,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
 
   function apply(roomId: string, entry: RoomEntry, out: Output): void {
     if (closed) return; // sockets dropped by close() change nothing on disk
-    // Save before sending, so no member sees a token that isn't stored yet.
+    // Save before sending, so no member sees a token that isn't stored yet. A failed write
+    // is logged and the room keeps running from memory (03, Persistence).
     if (store && (out.persist || out.deleteAll)) {
       try {
         if (entry.room.state && !out.deleteAll) store.save(roomId, entry.room.state);
