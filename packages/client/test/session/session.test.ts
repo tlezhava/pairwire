@@ -219,7 +219,10 @@ describe("MCP server", () => {
     expect(tools.map((t) => t.name).sort()).toEqual(["inbox", "join", "leave", "send", "start", "status"]);
     const send = tools.find((t) => t.name === "send")!;
     expect(send.description).toContain("it goes to another person's coding agent");
-    expect(Object.keys(send.inputSchema.properties ?? {}).sort()).toEqual(["body", "kind", "reply_to"]);
+    expect(Object.keys(send.inputSchema.properties ?? {}).sort()).toEqual(
+      ["body", "contract_content", "contract_name", "contract_path", "decision", "kind", "local_path", "paths", "reply_to", "rev", "ttl_minutes"],
+    );
+    expect(Object.keys(send.inputSchema.properties ?? {})).not.toContain("author");
     const res = await client.callTool({ name: "status", arguments: {} });
     expect((res.content as { text: string }[])[0]!.text).toContain("[pairwire] not in a room");
     await client.close();

@@ -11,7 +11,8 @@ import { pairwireHome } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
 import { isOpen, readState, updateState } from "./state.js";
-import { dropHeld, hiddenBodies, releaseHeld, toRenderItem, type InboxEntry } from "./room-files.js";
+import { renderItemsFor } from "./coord.js";
+import { dropHeld, hiddenBodies, releaseHeld, type InboxEntry } from "./room-files.js";
 import { appendTranscript, noticeLine, transcriptTail } from "./transcript.js";
 
 export interface CtlIo {
@@ -87,9 +88,11 @@ function accept(home: string, roomId: string, harness: string, action: string, i
     return `pairwire: dropped ${plural(dropped.length, "held message")} from ${senders(dropped)}; your agent will not see them.`;
   }
   const terminal = (io.stdout as { isTTY?: boolean }).isTTY === true;
-  const { released, result } = releaseHeld(home, roomId, (held) => {
-    if (terminal) return { ids: [], result: renderItems(held.map(toRenderItem)) };
-    const r = renderForHook(held.map(toRenderItem));
+  const { released, result } = releaseHeld(home, roomId, (held, ledger) => {
+    // Every held message is being released, so the view counts them all as visible.
+    const items = renderItemsFor(home, roomId, held, { hold: true, now, ledger });
+    if (terminal) return { ids: [], result: renderItems(items) };
+    const r = renderForHook(items);
     return { ids: r.deliveredIds, result: r.text ?? "" };
   });
   if (released.length === 0) return nothing();

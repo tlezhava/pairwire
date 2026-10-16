@@ -46,7 +46,9 @@ export function createMcpServer(session: ClientSession): McpServer {
       description:
         "Send this message to your paired collaborator: it goes to another person's coding agent and is shown to that person. " +
         "Use kind \"question\" when you need an answer and \"answer\" (with reply_to) to answer one. Never include secrets, " +
-        "credentials, private data or the pairwire share string; messages containing likely secrets are blocked.",
+        "credentials, private data or the pairwire share string; messages containing likely secrets are blocked. " +
+        "The coordination kinds (heads_up, claim, release, contract_propose, contract_response) are records shown to the peer: " +
+        "pairwire never locks, fetches or writes files because of them, and a claim is a request, not a lock.",
       inputSchema: sendInputSchema.shape,
       // Open-world, so harnesses that skip prompts for closed-world tools (Codex) still ask (INV-4).
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },

@@ -1,6 +1,6 @@
 // inbox.jsonl and outbox.jsonl of a room (04 §3, ADR-019).
 import { appendFileSync, readFileSync } from "node:fs";
-import { envelopeSchema, type RenderItem } from "@pairwire/core";
+import { envelopeSchema, type CoordAttrs, type RenderItem } from "@pairwire/core";
 import { z } from "zod";
 import { errorCode, PRIVATE_FILE_MODE, withLock, writeFileAtomic } from "./fs-util.js";
 import { createLogger, fileSink, roomTag } from "./log.js";
@@ -32,6 +32,8 @@ export const outboxEntrySchema = z.strictObject({
   status: z.enum(["queued", "sent", "delivered"]),
   sent_at: millis.nullable(),
   delivered_at: millis.nullable(),
+  /** Structured kinds: the chat body for a peer without `collab1`, built and checked at send time (02 §6.3.6). */
+  fallback_body: z.string().optional(),
 });
 export type OutboxEntry = z.infer<typeof outboxEntrySchema>;
 
@@ -195,7 +197,7 @@ export function markDelivered(home: string, roomId: string, ids: readonly string
 }
 
 /** A peer message the human hasn't released yet, in hold mode (04 §5, Hold mode). */
-function isHeld(e: InboxEntry, l: DeliveryLedger, hold: boolean): boolean {
+export function isHeld(e: InboxEntry, l: DeliveryLedger, hold: boolean): boolean {
   return hold && e.source === "peer" && !l.ids.has(e.id) && !l.released.has(e.id);
 }
 
@@ -230,10 +232,13 @@ export function claimUndelivered<T>(
   home: string,
   roomId: string,
   opts: { hold: boolean },
-  pick: (items: InboxEntry[]) => { ids: readonly string[]; result: T },
+  pick: (items: InboxEntry[], ledger: DeliveryLedger) => { ids: readonly string[]; result: T },
 ): T {
   return withLedger(home, roomId, (l, save) => {
-    const { ids, result } = pick(readInbox(home, roomId).filter((e) => !l.ids.has(e.id) && !isHeld(e, l, opts.hold)));
+    const { ids, result } = pick(
+      readInbox(home, roomId).filter((e) => !l.ids.has(e.id) && !isHeld(e, l, opts.hold)),
+      l,
+    );
     if (ids.length > 0) {
       for (const id of ids) l.ids.add(id);
       save();
@@ -264,11 +269,11 @@ function heldAndNotices(home: string, roomId: string, l: DeliveryLedger): { held
 export function releaseHeld<T>(
   home: string,
   roomId: string,
-  pick: (released: InboxEntry[]) => { ids: readonly string[]; result: T },
+  pick: (released: InboxEntry[], ledger: DeliveryLedger) => { ids: readonly string[]; result: T },
 ): { released: InboxEntry[]; result: T } {
   return withLedger(home, roomId, (l, save) => {
     const { held, notices } = heldAndNotices(home, roomId, l);
-    const { ids, result } = pick(held);
+    const { ids, result } = pick(held, l);
     if (held.length === 0) return { released: held, result };
     for (const e of held) l.released.add(e.id);
     for (const id of [...ids, ...notices]) l.ids.add(id);
@@ -304,8 +309,36 @@ export function hiddenBodies(home: string, roomId: string, hold: boolean): Map<s
   return out;
 }
 
-/** The renderer's view of an inbox entry (core render.ts). */
-export function toRenderItem(e: InboxEntry): RenderItem {
+/** The renderer's view of an inbox entry (core render.ts); `coord` is what coordView() computed for it. */
+export function toRenderItem(e: InboxEntry, coord?: CoordAttrs): RenderItem {
   if (e.source === "local") return { source: "local", id: e.id, event: e.event, text: e.text };
-  return { source: "peer", id: e.id, from: e.from, harness: e.harness, receivedAt: new Date(e.received_at).toISOString(), envelope: e.envelope };
+  const item: RenderItem = { source: "peer", id: e.id, from: e.from, harness: e.harness, receivedAt: new Date(e.received_at).toISOString(), envelope: e.envelope };
+  return coord ? { ...item, coord } : item;
+}
+
+// --- coord-sent.jsonl (04 §3, Coordination state) ---------------------------------------
+
+export const coordSentSchema = z.strictObject({
+  envelope: envelopeSchema,
+  sent_at: millis,
+  /** contract_response with accept: our own copy of the contract, never sent. */
+  local_path: z.string().optional(),
+});
+export type CoordSent = z.infer<typeof coordSentSchema>;
+
+/** Our structured sends, oldest first. A missing file means none. */
+export function readCoordSent(home: string, roomId: string): CoordSent[] {
+  return readLines(roomFile(home, roomId, "coord-sent.jsonl")).flatMap((v) => {
+    const p = coordSentSchema.safeParse(v);
+    return p.success ? [p.data] : [];
+  });
+}
+
+/** Appends `entry` unless one with the same envelope id is there (idempotent, 04 §3). */
+export function appendCoordSent(home: string, roomId: string, entry: CoordSent): void {
+  const path = roomFile(home, roomId, "coord-sent.jsonl");
+  withLock(path, () => {
+    if (readCoordSent(home, roomId).some((e) => e.envelope.id === entry.envelope.id)) return;
+    appendFileSync(path, JSON.stringify(coordSentSchema.parse(entry)) + "\n", { mode: PRIVATE_FILE_MODE });
+  });
 }

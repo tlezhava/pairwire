@@ -1,8 +1,12 @@
 // The MCP server's state for one agent session (04 §3–4, §7): project ownership, the room's
 // connection, and the six tools. Tool methods return text for the agent and never throw.
 import {
+  CLAIM_TTL_MIN,
+  COLLAB_CAP,
   DEFAULT_RELAY_HOST,
+  MAX_PATHS,
   acceptHint,
+  isCollabKind,
   noticeHeld,
   deriveRoomKeys,
   displayName,
@@ -24,13 +28,15 @@ import {
 import { z } from "zod";
 import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, PassiveSessionError } from "./binding.js";
 import { holdMode, loadConfig, resolveDisplayName, type Config } from "./config.js";
-import { RoomConnection, type ConnectionEvents, type SocketFactory, type Timers, type Tuning } from "./connection.js";
+import { RoomConnection, type ConnectionEvents, type SendInput, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 import type { Logger } from "./log.js";
 import { chooseCtlPath, roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
-import { claimUndelivered, inboxCounts, readOutbox, toRenderItem, type InboxCounts, type InboxEntry } from "./room-files.js";
-import { createRoom, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
+import { appendCoordSent, claimUndelivered, inboxCounts, readOutbox, type InboxCounts, type InboxEntry } from "./room-files.js";
+import { createRoom, expiresAt, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
+import { CollabSendError, planStructured, type CollabPlan } from "./collab-send.js";
+import { coordFooter, coordStatusLines, loadView, renderItemsFor } from "./coord.js";
 import { transcriptEvents } from "./transcript.js";
 import { CLIENT_VERSION } from "./version.js";
 import { listenCtl, type CtlReply, type CtlRequest, type CtlServer, type WaitFrame } from "./ctl-server.js";
@@ -58,6 +64,8 @@ export interface SessionOptions {
   timers?: Timers;
   tuning?: Partial<Tuning>;
   events?: ConnectionEvents;
+  /** HELLO caps (tests stand in for an older client with them); default HELLO_CAPS. */
+  helloCaps?: string[];
 }
 
 /** First line of a D3 wake (04 §6). */
@@ -68,16 +76,57 @@ const SENDS_PER_MINUTE = 20;
 const MINUTE = 60_000;
 const ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
 
+const SEND_KINDS = ["chat", "question", "answer", "heads_up", "claim", "release", "contract_propose", "contract_response"] as const;
+type SendKind = (typeof SEND_KINDS)[number];
+
+/**
+ * Flat, so the approval prompt stays readable; the handler checks which fields each kind
+ * takes (04 §4, Structured kinds in the tools).
+ */
 export const sendInputSchema = z.object({
-  kind: z.enum(["chat", "question", "answer"]),
-  body: z.string().min(1, "body is empty"),
-  reply_to: z.string().regex(ULID, "reply_to must be a message id").optional(),
+  kind: z
+    .enum(SEND_KINDS)
+    .describe(
+      "chat, question, answer; or a coordination record: heads_up (a change that affects the peer), claim / release (ask the peer not to edit paths for a while), contract_propose / contract_response (agree on a contract file by its SHA-256)",
+    ),
+  body: z.string().optional().describe("The message. Required except for release and an accepting contract_response."),
+  reply_to: z
+    .string()
+    .regex(ULID, "reply_to must be a message id")
+    .optional()
+    .describe("answer: the question's id; release: your claim's id; contract_response: the proposal's id; contract_propose: a proposal it counters (optional)"),
+  paths: z.array(z.string()).max(MAX_PATHS).optional().describe("heads_up (optional), claim (required): project-relative paths or globs, first segment literal"),
+  ttl_minutes: z.number().int().optional().describe(`claim only: minutes until it expires, ${CLAIM_TTL_MIN.min} to ${CLAIM_TTL_MIN.max} (default ${CLAIM_TTL_MIN.default})`),
+  contract_name: z.string().optional().describe("contract_propose only: lowercase name, e.g. orders-api"),
+  contract_path: z.string().optional().describe("contract_propose only: the contract file in this project (no globs); pairwire hashes it"),
+  contract_content: z.string().optional().describe("contract_propose only: the file's exact text, to send it inline; otherwise only its hash is sent"),
+  rev: z.string().optional().describe("contract_propose only: the git commit that has the file (7 to 40 hex)"),
+  decision: z.enum(["accept", "reject"]).optional().describe("contract_response only"),
+  local_path: z.string().optional().describe("contract_response with accept only: your copy of the contract file; it must match the proposal's hash. Not sent."),
 });
+
+/** Which optional fields each kind takes; any other one is an error that names it. */
+const KIND_FIELDS: Record<SendKind, readonly string[]> = {
+  chat: ["body", "reply_to"],
+  question: ["body", "reply_to"],
+  answer: ["body", "reply_to"],
+  heads_up: ["body", "paths"],
+  claim: ["body", "paths", "ttl_minutes"],
+  release: ["body", "reply_to"],
+  contract_propose: ["body", "reply_to", "contract_name", "contract_path", "contract_content", "rev"],
+  contract_response: ["body", "reply_to", "decision", "local_path"],
+};
+const OPTIONAL_FIELDS = Object.keys(sendInputSchema.shape).filter((k) => k !== "kind");
+
+/** The HELLO caps of an M5 client (02 §6.3.2). */
+export const HELLO_CAPS = ["ack", "say", COLLAB_CAP];
 export const startInputSchema = z.object({ name: z.string().max(200).optional() });
 export const joinInputSchema = z.object({ share: z.string().max(4096), name: z.string().max(200).optional() });
 export const leaveInputSchema = z.object({ message: z.string().optional() });
 
 class ToolError extends Error {}
+
+type StructuredSend = Extract<SendInput, { fallbackBody: string }>;
 
 export class ClientSession {
   readonly #o: SessionOptions;
@@ -196,8 +245,9 @@ export class ClientSession {
     const state = this.#roomState();
     if (this.#waiters.size === 0 || !state) return;
     for (const [session, socket] of this.#waiters) {
-      const rendered = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => {
-        const r = renderForHook(items.map(toRenderItem));
+      const hold = this.#hold();
+      const rendered = claimUndelivered(this.#o.home, state.roomId, { hold }, (items, ledger) => {
+        const r = renderForHook(renderItemsFor(this.#o.home, state.roomId, items, { hold, now: this.#now(), ledger }));
         return { ids: r.deliveredIds, result: r.text };
       });
       if (rendered === null) return;
@@ -304,21 +354,46 @@ export class ClientSession {
     return this.#tool(async () => {
       const config = this.#ready();
       const state = this.#requireRoom();
-      if (input.kind === "answer" && !input.reply_to) throw new ToolError("An answer needs reply_to: the id of the question it answers.");
-      this.#checkOutbound(input.body, state, input.kind, input.reply_to ?? null);
-      if (state.hop_count >= config.hopBudget) throw new ToolError("Hop budget reached. Ask your human whether to continue.");
+      const given = input as Record<string, unknown>;
+      const extra = OPTIONAL_FIELDS.filter((k) => given[k] !== undefined && !KIND_FIELDS[input.kind].includes(k));
+      if (extra.length > 0) throw new ToolError(`${extra.join(", ")} ${extra.length === 1 ? "doesn't" : "don't"} apply to kind "${input.kind}"; nothing was sent.`);
       const now = this.#now();
+      let plan: CollabPlan | null = null;
+      if (isCollabKind(input.kind)) {
+        plan = planStructured({ ...input, kind: input.kind }, {
+          loaded: loadView(this.#o.home, state.roomId, { hold: this.#hold(), now }),
+          projectDir: this.projectDir,
+          peerName: state.peer ? displayName(state.peer.name) : "your collaborator",
+          now,
+          roomExpiresAt: expiresAt(state),
+          nextSeq: state.my_seq + 1,
+        });
+        this.#scan(plan.scan);
+      } else {
+        if (input.kind === "answer" && !input.reply_to) throw new ToolError("An answer needs reply_to: the id of the question it answers.");
+        if (!input.body) throw new ToolError("body is empty; nothing was sent.");
+        this.#checkOutbound(input.body, state, input.kind, input.reply_to ?? null);
+      }
+      if (state.hop_count >= config.hopBudget) throw new ToolError("Hop budget reached. Ask your human whether to continue.");
       this.#sendTimes = this.#sendTimes.filter((t) => now - t < MINUTE);
       if (this.#sendTimes.length >= SENDS_PER_MINUTE) {
         const wait = Math.ceil((this.#sendTimes[0]! + MINUTE - now) / 1000);
         throw new ToolError(`Rate limit: at most ${SENDS_PER_MINUTE} messages per minute. Try again in ${wait} s.`);
       }
-      const sent = this.#conn!.send({ kind: input.kind, body: input.body, reply_to: input.reply_to ?? null, author: "agent" });
+      const sent = plan
+        ? this.#conn!.send({ kind: plan.kind, data: plan.data, body: plan.body, reply_to: plan.reply_to, author: "agent", fallbackBody: plan.fallbackBody } as StructuredSend)
+        : this.#conn!.send({ kind: input.kind as "chat" | "question" | "answer", body: input.body!, reply_to: input.reply_to ?? null, author: "agent" });
+      if (plan) appendCoordSent(this.#o.home, state.roomId, { envelope: sent.envelope, sent_at: now, ...(plan.localPath ? { local_path: plan.localPath } : {}) });
       this.#sendTimes.push(now);
       updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: s.hop_count + 1 }));
-      return sent.status === "sent"
-        ? `Sent (id ${sent.id}). You'll see "delivered" in status once their client receives it.`
-        : `Queued (id ${sent.id}): it goes out as soon as your collaborator connects.`;
+      const lines = [
+        sent.status === "sent"
+          ? `Sent (id ${sent.id}). You'll see "delivered" in status once their client receives it.`
+          : `Queued (id ${sent.id}): it goes out as soon as your collaborator connects.`,
+        ...(plan?.lines ?? []),
+        ...(sent.encoding === "chat" ? ["Your collaborator's pairwire is older, so this went out as a chat message with a header line."] : []),
+      ];
+      return lines.join("\n");
     });
   }
 
@@ -328,9 +403,10 @@ export class ClientSession {
       // An ended room's last messages (the bye, the notice) must stay readable.
       const state = this.#roomState();
       if (!state) throw new ToolError("No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
-      const text = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => ({
+      const hold = this.#hold();
+      const text = claimUndelivered(this.#o.home, state.roomId, { hold }, (items, ledger) => ({
         ids: items.map((i) => i.id),
-        result: items.length > 0 ? renderItems(items.map(toRenderItem)) : "No new messages.",
+        result: items.length > 0 ? renderItems(renderItemsFor(this.#o.home, state.roomId, items, { hold, now: this.#now(), ledger })) : "No new messages.",
       }));
       return `${text}\n\n${this.#recentSends(state.roomId)}`.trimEnd();
     });
@@ -351,6 +427,10 @@ export class ClientSession {
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...(hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : []),
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
+        ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
+          peer: state.peer ? displayName(state.peer.name) : "your collaborator",
+          projectDir: this.projectDir,
+        }),
         `Transcript: ${roomFile(this.#o.home, state.roomId, "transcript.md")}`,
       ];
       return `${lines.join("\n")}\n\n${this.#recentSends(state.roomId)}`.trimEnd();
@@ -375,7 +455,12 @@ export class ClientSession {
     try {
       result = { text: await fn() };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError || (e as Error).name === "ShareStringError";
+      const known =
+        e instanceof ToolError ||
+        e instanceof CollabSendError ||
+        e instanceof EnvelopeTooLargeError ||
+        e instanceof PassiveSessionError ||
+        (e as Error).name === "ShareStringError";
       if (!known) this.#o.log.error("tool_failed", e);
       result = { text: known ? (e as Error).message : "pairwire hit an internal error; details are in its log.", isError: true };
     }
@@ -391,7 +476,9 @@ export class ClientSession {
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
-    return `[pairwire] ${who} · ${unreadText(inboxCounts(this.#o.home, state.roomId, this.#hold()), harnessOf(this.#o.env))} · hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
+    const hold = this.#hold();
+    const coord = coordFooter(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }).view);
+    return `[pairwire] ${who} · ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))} · hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)${coord}`;
   }
 
   #ready(): Config {
@@ -450,7 +537,7 @@ export class ClientSession {
       harness: harnessOf(this.#o.env),
       client: `pairwire/${CLIENT_VERSION}`,
       instance: state.instance,
-      caps: ["ack", "say"],
+      caps: this.#o.helloCaps ?? HELLO_CAPS,
     };
     const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${roomId}`;
     this.#roomId = roomId;
@@ -463,7 +550,14 @@ export class ClientSession {
       events: mergeEvents(
         // Messages and notices (never acks) wake an idle session (D3).
         { inbound: () => this.#wake() },
-        transcriptEvents(this.#o.home, roomId, this.#now, (e) => this.#o.log.error("transcript_failed", e), () => !!readState(this.#o.home, roomId)?.sessions.current),
+        transcriptEvents(
+          this.#o.home,
+          roomId,
+          this.#now,
+          (e) => this.#o.log.error("transcript_failed", e),
+          () => !!readState(this.#o.home, roomId)?.sessions.current,
+          () => this.#conn?.peerHasCollab() ?? false,
+        ),
         // After the transcript has the message, so the notice's line follows it.
         { inbound: (entry) => this.#noteHeld(entry) },
         this.#o.events,
@@ -516,9 +610,15 @@ export class ClientSession {
       body,
       acks: null,
     });
-    const findings = scanSecrets(body);
-    if (findings.length > 0) {
-      const where = findings.map((f) => `${f.rule} at character ${f.offset}`).join(", ");
+    this.#scan([["body", body]]);
+  }
+
+  /** The secret scan over every labeled text (04 §7 step 3, INV-5); names rules and offsets, never the match. */
+  #scan(texts: readonly [label: string, text: string][]): void {
+    for (const [label, text] of texts) {
+      const findings = scanSecrets(text);
+      if (findings.length === 0) continue;
+      const where = findings.map((f) => `${f.rule} at character ${f.offset}`).join(", ") + (label === "body" ? "" : ` in ${label}`);
       throw new ToolError(`Blocked: the message looks like it contains a secret (${where}). Remove it and send again; nothing was sent.`);
     }
   }

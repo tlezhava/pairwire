@@ -7,10 +7,12 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 /** Where peer bytes travel: decrypt, envelope, inbox, transcript, render. */
 export const INBOUND_MODULES = [
   "packages/core/src/envelope.ts",
+  "packages/core/src/coord.ts",
   "packages/core/src/handshake.ts",
   "packages/core/src/render.ts",
   "packages/core/src/sanitize.ts",
   "packages/client/src/connection.ts",
+  "packages/client/src/coord.ts",
   "packages/client/src/room-files.ts",
   "packages/client/src/transcript.ts",
 ];
