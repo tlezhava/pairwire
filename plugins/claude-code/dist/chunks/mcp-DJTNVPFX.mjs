@@ -26987,7 +26987,7 @@ var RoomConnection = class {
 };
 
 // packages/client/src/version.ts
-var CLIENT_VERSION = "0.0.0";
+var CLIENT_VERSION = "0.1.0";
 
 // packages/client/src/session.ts
 var WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";

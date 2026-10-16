@@ -15,7 +15,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-Z7COBPMN.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-DJTNVPFX.mjs");
     await runMcpServer();
     return -1;
   }
