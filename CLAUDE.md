@@ -86,6 +86,8 @@ These are created in task M1-1; keep this list in sync with `package.json`.
 npm install
 npm run build          # build all packages
 npm run build:plugin   # bundle the client into plugins/claude-code/dist and generate SKILL.md (M4-3)
+npm run pack:npm       # assemble the publishable `pairwire` npm package in build/npm (M4-8)
+npm run release -- <version>  # bump all versions, rebuild, check, commit, tag locally; never pushes
 npm test               # unit + integration tests
 npm run test:e2e       # two-client end-to-end tests against a local relay (M3-8)
 PAIRWIRE_LIVE_RELAY=<host> npm run test:live  # conformance + INV-1 against a deployed relay
