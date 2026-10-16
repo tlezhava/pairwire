@@ -11,6 +11,7 @@ import {
   noticePeerChanged,
   noticePeerJoined,
   noticePeerLeft,
+  noticePeerUnreadable,
   noticeWrongKey,
   openMsg,
   receiveDecision,
@@ -184,6 +185,7 @@ export class RoomConnection {
   #attempt = 0;
   #leaving: (() => void) | null = null;
   #leaveRequested = false;
+  #unreadableNoticed = false;
 
   #queue: QueueItem[] = [];
   #sentTimes: number[] = [];
@@ -409,7 +411,10 @@ export class RoomConnection {
     if (!s) return;
     const sessions = [s.sessions.current, s.sessions.previous].filter((x): x is StoredSession => x !== null).map(fromStored);
     const opened = openMsg(data, { roomIdBytes: this.#o.keys.roomIdBytes, sessions });
-    if (!opened.ok) return this.#o.log.debug("frame_dropped", { reason: opened.reason });
+    if (!opened.ok) {
+      if (opened.skipSeq !== undefined) return this.#onUnreadable(opened.skipSeq, opened.reason);
+      return this.#o.log.debug("frame_dropped", { reason: opened.reason });
+    }
     this.#onEnvelope(opened.envelope);
   }
 
@@ -453,6 +458,26 @@ export class RoomConnection {
       const added = appendInbox(this.#o.home, this.#roomId, entry);
       updateState(this.#o.home, this.#roomId, (st) => ({ ...st, peer_max_seq: Math.max(st.peer_max_seq, env.seq) }));
       if (added) this.#o.events?.inbound?.(entry);
+    }
+    this.#scheduleAck();
+  }
+
+  /**
+   * An envelope that decrypted but can't be used still counts for ordering, so a newer peer's
+   * message never stalls the ones after it (02 §6.1, ADR-025). Never shown; one notice per
+   * connection tells the humans something didn't arrive.
+   */
+  #onUnreadable(seq: number, reason: string): void {
+    const s = this.#state();
+    if (!s) return;
+    this.#o.log.info("frame_skipped", { reason, seq });
+    if (seq > s.peer_max_seq + 1) return; // out of order: the resend comes back in order
+    if (seq === s.peer_max_seq + 1) {
+      updateState(this.#o.home, this.#roomId, (st) => ({ ...st, peer_max_seq: Math.max(st.peer_max_seq, seq) }));
+      if (!this.#unreadableNoticed) {
+        this.#unreadableNoticed = true;
+        this.#notice(noticePeerUnreadable(s.peer?.name ?? ""));
+      }
     }
     this.#scheduleAck();
   }

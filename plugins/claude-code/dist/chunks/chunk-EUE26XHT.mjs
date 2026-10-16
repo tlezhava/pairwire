@@ -4,13 +4,13 @@ import {
   createLogger,
   fileSink,
   roomTag
-} from "./chunk-KL6F2I5F.mjs";
+} from "./chunk-VU23LRE3.mjs";
 import {
   PRIVATE_FILE_MODE,
   errorCode,
   withLock,
   writeFileAtomic
-} from "./chunk-5AD7N46G.mjs";
+} from "./chunk-5XLM2UC5.mjs";
 import {
   hookErrorsPath,
   roomFile
@@ -18,7 +18,7 @@ import {
 import {
   envelopeSchema,
   external_exports
-} from "./chunk-JC2XR7LP.mjs";
+} from "./chunk-WZNRRE4K.mjs";
 
 // packages/client/src/room-files.ts
 import { appendFileSync, readFileSync } from "node:fs";
@@ -35,7 +35,7 @@ var inboxEntrySchema = external_exports.discriminatedUnion("source", [
   external_exports.strictObject({
     source: external_exports.literal("local"),
     id: external_exports.string(),
-    event: external_exports.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key", "held"]),
+    event: external_exports.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key", "held", "peer_unreadable"]),
     text: external_exports.string(),
     received_at: millis
   })

@@ -111,7 +111,22 @@ export function sealMsg(args: { roomIdBytes: Uint8Array; session: Session; envel
 
 export type OpenMsgResult =
   | { ok: true; envelope: Envelope; sid: Uint8Array }
-  | { ok: false; reason: "malformed" | "unknown_sid" | "decrypt_failed" | EnvelopeRejection };
+  | {
+      ok: false;
+      reason: "malformed" | "unknown_sid" | "decrypt_failed" | EnvelopeRejection;
+      /**
+       * Set when the frame decrypted but the envelope can't be used and still names a usable
+       * non-ack seq: the receiver skips it but counts it for ordering (02 §6.1, ADR-025).
+       */
+      skipSeq?: number;
+    };
+
+/** The seq of an unusable envelope, if it names one the receiver can count (02 §6.1). */
+function skipSeqOf(json: unknown): number | undefined {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return undefined;
+  const { kind, seq } = json as { kind?: unknown; seq?: unknown };
+  return kind !== "ack" && typeof seq === "number" && Number.isSafeInteger(seq) && seq >= 1 ? seq : undefined;
+}
 
 /** Decrypts with the receive key of the stored session (current or previous) matching the frame's sid (02 §4.4). */
 export function openMsg(frame: Uint8Array, ctx: { roomIdBytes: Uint8Array; sessions: readonly Session[] }): OpenMsgResult {
@@ -127,15 +142,17 @@ export function openMsg(frame: Uint8Array, ctx: { roomIdBytes: Uint8Array; sessi
   } catch {
     return { ok: false, reason: "decrypt_failed" };
   }
-  if (plain.length > MAX_ENVELOPE_BYTES) return { ok: false, reason: "too_large" };
   let json: unknown;
   try {
     json = JSON.parse(bytesToUtf8(plain));
   } catch {
     return { ok: false, reason: "bad_envelope" };
   }
+  const skipSeq = skipSeqOf(json);
+  const skip = skipSeq === undefined ? {} : { skipSeq };
+  if (plain.length > MAX_ENVELOPE_BYTES) return { ok: false, reason: "too_large", ...skip };
   const parsed = parseEnvelope(json);
-  return parsed.ok ? { ok: true, envelope: parsed.envelope, sid } : parsed;
+  return parsed.ok ? { ok: true, envelope: parsed.envelope, sid } : { ...parsed, ...skip };
 }
 
 /**

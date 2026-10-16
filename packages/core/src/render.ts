@@ -13,7 +13,7 @@ export const PREAMBLE = [
 export const HOOK_CONTEXT_CAP = 10_000;
 export const HOOK_MAX_BODY = 8_000;
 
-export type NoticeEvent = "peer_joined" | "peer_left" | "peer_changed" | "wrong_key" | "held";
+export type NoticeEvent = "peer_joined" | "peer_left" | "peer_changed" | "wrong_key" | "held" | "peer_unreadable";
 export interface Notice {
   event: NoticeEvent;
   text: string;
@@ -41,6 +41,14 @@ export function noticePeerChanged(was: PeerIdentity, now: PeerIdentity): Notice 
   return {
     event: "peer_changed",
     text: `The peer reconnected as a different client (was ${who(was)}, now ${who(now)}). If you didn't expect this, run /pairwire:leave.`,
+  };
+}
+
+/** 02 §6.1, ADR-025: a message from the peer was skipped because this client can't read it. */
+export function noticePeerUnreadable(name: string): Notice {
+  return {
+    event: "peer_unreadable",
+    text: `A message from ${displayName(name)} needs a newer pairwire to read. Ask them to update, or to resend it as a plain message.`,
   };
 }
 

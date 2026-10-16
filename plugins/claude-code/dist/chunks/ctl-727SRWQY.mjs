@@ -5,27 +5,27 @@ import {
   appendTranscript,
   noticeLine,
   transcriptTail
-} from "./chunk-WIPM7H4E.mjs";
+} from "./chunk-M7U4EUTR.mjs";
 import {
   dropHeld,
   hiddenBodies,
   releaseHeld,
   toRenderItem
-} from "./chunk-5OG6GEYB.mjs";
+} from "./chunk-EUE26XHT.mjs";
 import {
   isProcessAlive,
   readBinding,
   resolveProjectDir
-} from "./chunk-KL6F2I5F.mjs";
+} from "./chunk-VU23LRE3.mjs";
 import {
   assertStatePrivate
-} from "./chunk-MCBELISQ.mjs";
+} from "./chunk-QXIUGJEG.mjs";
 import {
   holdMode,
   isOpen,
   readState,
   updateState
-} from "./chunk-5AD7N46G.mjs";
+} from "./chunk-5XLM2UC5.mjs";
 import {
   pairwireHome
 } from "./chunk-GVGSGJLD.mjs";
@@ -36,7 +36,7 @@ import {
   renderForHook,
   renderItems,
   renderTranscript
-} from "./chunk-JC2XR7LP.mjs";
+} from "./chunk-WZNRRE4K.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/ctl.ts

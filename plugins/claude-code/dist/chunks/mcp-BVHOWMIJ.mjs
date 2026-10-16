@@ -3,7 +3,7 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   listenCtl,
   transcriptEvents
-} from "./chunk-WIPM7H4E.mjs";
+} from "./chunk-M7U4EUTR.mjs";
 import {
   appendInbox,
   claimUndelivered,
@@ -12,7 +12,7 @@ import {
   toRenderItem,
   unacked,
   updateOutbox
-} from "./chunk-5OG6GEYB.mjs";
+} from "./chunk-EUE26XHT.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -22,10 +22,10 @@ import {
   isProcessAlive,
   removeBindingFor,
   resolveProjectDir
-} from "./chunk-KL6F2I5F.mjs";
+} from "./chunk-VU23LRE3.mjs";
 import {
   assertStatePrivate
-} from "./chunk-MCBELISQ.mjs";
+} from "./chunk-QXIUGJEG.mjs";
 import {
   createRoom,
   expiresAt,
@@ -37,7 +37,7 @@ import {
   removeFile,
   resolveDisplayName,
   updateState
-} from "./chunk-5AD7N46G.mjs";
+} from "./chunk-5XLM2UC5.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -80,6 +80,7 @@ import {
   noticePeerChanged,
   noticePeerJoined,
   noticePeerLeft,
+  noticePeerUnreadable,
   noticeWrongKey,
   number,
   object,
@@ -105,7 +106,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-JC2XR7LP.mjs";
+} from "./chunk-WZNRRE4K.mjs";
 import {
   __commonJS,
   __require,
@@ -26542,6 +26543,7 @@ var RoomConnection = class {
   #attempt = 0;
   #leaving = null;
   #leaveRequested = false;
+  #unreadableNoticed = false;
   #queue = [];
   #sentTimes = [];
   #pausedUntil = 0;
@@ -26747,7 +26749,10 @@ var RoomConnection = class {
     if (!s) return;
     const sessions = [s.sessions.current, s.sessions.previous].filter((x) => x !== null).map(fromStored);
     const opened = openMsg(data, { roomIdBytes: this.#o.keys.roomIdBytes, sessions });
-    if (!opened.ok) return this.#o.log.debug("frame_dropped", { reason: opened.reason });
+    if (!opened.ok) {
+      if (opened.skipSeq !== void 0) return this.#onUnreadable(opened.skipSeq, opened.reason);
+      return this.#o.log.debug("frame_dropped", { reason: opened.reason });
+    }
     this.#onEnvelope(opened.envelope);
   }
   #onSession(session, peer) {
@@ -26789,6 +26794,25 @@ var RoomConnection = class {
       const added = appendInbox(this.#o.home, this.#roomId, entry);
       updateState(this.#o.home, this.#roomId, (st) => ({ ...st, peer_max_seq: Math.max(st.peer_max_seq, env.seq) }));
       if (added) this.#o.events?.inbound?.(entry);
+    }
+    this.#scheduleAck();
+  }
+  /**
+   * An envelope that decrypted but can't be used still counts for ordering, so a newer peer's
+   * message never stalls the ones after it (02 §6.1, ADR-025). Never shown; one notice per
+   * connection tells the humans something didn't arrive.
+   */
+  #onUnreadable(seq, reason) {
+    const s = this.#state();
+    if (!s) return;
+    this.#o.log.info("frame_skipped", { reason, seq });
+    if (seq > s.peer_max_seq + 1) return;
+    if (seq === s.peer_max_seq + 1) {
+      updateState(this.#o.home, this.#roomId, (st) => ({ ...st, peer_max_seq: Math.max(st.peer_max_seq, seq) }));
+      if (!this.#unreadableNoticed) {
+        this.#unreadableNoticed = true;
+        this.#notice(noticePeerUnreadable(s.peer?.name ?? ""));
+      }
     }
     this.#scheduleAck();
   }

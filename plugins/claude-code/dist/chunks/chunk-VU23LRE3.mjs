@@ -9,7 +9,7 @@ import {
   removeFile,
   withLock,
   writeFileAtomic
-} from "./chunk-5AD7N46G.mjs";
+} from "./chunk-5XLM2UC5.mjs";
 import {
   ROOM_ID_PATTERN,
   bindingsDir,
@@ -18,7 +18,7 @@ import {
 import {
   external_exports,
   redact
-} from "./chunk-JC2XR7LP.mjs";
+} from "./chunk-WZNRRE4K.mjs";
 import {
   bytesToHex,
   sha256,

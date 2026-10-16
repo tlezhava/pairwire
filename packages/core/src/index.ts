@@ -64,6 +64,7 @@ export {
   noticePeerChanged,
   noticePeerJoined,
   noticePeerLeft,
+  noticePeerUnreadable,
   noticeWrongKey,
   renderForHook,
   renderItems,
