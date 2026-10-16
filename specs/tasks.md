@@ -122,8 +122,9 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
     `.github/workflows/release.yml` publishes npm (provenance), the multi-arch GHCR image and
     the GitHub release when a `v*` tag is pushed.
   - Left for the human: decide the production relay host (keep or change
-    `DEFAULT_RELAY_HOST`) and deploy it; add the `NPM_TOKEN` repository secret; run
-    `npm run release -- 0.1.0`, then push `main` and the tag.
+    `DEFAULT_RELAY_HOST`) and deploy it; make the repository public (npm provenance needs
+    it); add the `NPM_TOKEN` repository secret; run `npm run release -- 0.1.0`, then push
+    `main` and the tag; after the first image push, make the GHCR package public.
 
 ## M5 — Collaboration features
 

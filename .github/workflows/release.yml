@@ -1,0 +1,112 @@
+# Release (specs/04-client.md section 9, ADR-021). Runs when a v* tag is pushed; the tag comes
+# from `npm run release -- <version>`, which never pushes.
+#
+# Needs one repository secret: NPM_TOKEN, an npm automation (or granular publish) token for the
+# `pairwire` package. The image is pushed with the workflow's own GITHUB_TOKEN. npm provenance
+# requires a public repository, and a new GHCR package starts private: make it public once.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      prerelease: ${{ steps.v.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Every version location matches the tag
+        id: v
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          npx tsx scripts/release.ts --check "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
+
+  npm:
+    needs: [ci, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run pack:npm
+      - name: Publish pairwire
+        working-directory: build/npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DIST_TAG: ${{ needs.version.outputs.prerelease == 'true' && 'next' || 'latest' }}
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
+
+  image:
+    needs: [ci, version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/tlezhava/pairwire-relay
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.version.outputs.prerelease != 'true' }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/relay-node/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  github-release:
+    needs: [version, npm, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          set -- --verify-tag --generate-notes --title "pairwire $GITHUB_REF_NAME"
+          [ "$PRERELEASE" = true ] && set -- "$@" --prerelease --latest=false
+          gh release create "$GITHUB_REF_NAME" "$@"
