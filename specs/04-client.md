@@ -837,7 +837,8 @@ Releases follow ADR-021. One version covers the npm package, the plugin and both
   npm >= 11.5.1; 0.1.0 itself was published with a temporary granular token, ADR-021)
   and pushes the relay-node image to `ghcr.io/tlezhava/pairwire-relay` for linux/amd64 and
   linux/arm64 with the repository's `GITHUB_TOKEN`; finally it creates the GitHub release
-  with generated notes. Each job has only the permissions it needs (`id-token: write` for provenance,
+  with generated notes. A manual run (`workflow_dispatch` with an existing `tag`) repeats only the
+  npm publish and the GitHub release, for when a publish failed after the image went out. Each job has only the permissions it needs (`id-token: write` for provenance,
   `packages: write` for the image, `contents: write` for the release). A prerelease tag
   (`v0.2.0-rc.1`) publishes to the npm dist-tag `next`, leaves the image's `latest` alone and
   makes a GitHub prerelease.
