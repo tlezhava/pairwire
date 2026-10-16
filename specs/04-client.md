@@ -623,7 +623,8 @@ Releases follow ADR-021. One version covers the npm package, the plugin and both
   installs the tarball into a temporary prefix and runs the installed `pairwire doctor`,
   `install --print-config` and `install --codex`.
 - **Release script.** `npm run release -- <version>` (`scripts/release.ts`) needs a clean
-  working tree, a version greater than the current one and a tag that doesn't exist yet. It
+  working tree, a version greater than the npm package's current one
+  (`packages/client/package.json`) and a tag that doesn't exist yet. It
   writes the version to `packages/client/package.json`, `packages/client/src/version.ts`,
   `plugins/claude-code/.claude-plugin/plugin.json`, `packages/relay-node/package.json`,
   `packages/relay-worker/package.json`, `packages/relay-worker/src/version.ts` and their
