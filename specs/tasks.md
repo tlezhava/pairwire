@@ -154,4 +154,4 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   squatted socket or pipe name is detected. Deferred by the human on 2026-10-16.
 - [x] relay-node SQLite persistence (ADR-022): `PAIRWIRE_RELAY_STATE=sqlite:<path>` on Node 22.13+.
 - [ ] External security review (`05-security.md` gate).
-- [ ] Consider single-binary distribution to drop the Node requirement.
+- [x] Consider single-binary distribution to drop the Node requirement: not now (ADR-026).

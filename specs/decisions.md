@@ -478,6 +478,22 @@ the counter gives it nothing it couldn't already do by sending a valid message. 
 ship (0.1.1) before any client sends new kinds; M5 still gates new kinds on a capability so
 newer clients don't send them to 0.1.0 peers.
 
+## ADR-026 Single-binary distribution: not now (M7)
+
+Status: accepted (2026-10-16)
+
+A spike (branch `wf/sea-spike`, `spikes/sea/`) built the client as a Node single executable,
+a Bun binary and a Deno binary for macOS arm64; all three ran `mcp`, `doctor`, the hooks and a
+full pairing. They cost 65 to 110 MB per OS and architecture (the Node one is over GitHub's
+100 MB file limit), need per-platform release builds and code signing to pass Gatekeeper and
+SmartScreen, and don't fit a plugin that the marketplace installs from git. An independent
+review of the measurements showed most of the hook-start gain came from things that need no
+binary: `run.sh` now remembers the Node version check and the client enables Node's compile
+cache, which took the hook from about 75 to 53 ms p50 with a room active. Node >= 20 stays a
+requirement (ADR-010). If it is revisited, `bun build --compile` (all targets from one machine,
+about 17 ms starts) with a first-run download into `${CLAUDE_PLUGIN_DATA}` and a pinned
+checksum is the starting point.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
