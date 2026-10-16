@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { extractSkill } from "../../scripts/build-plugin.js";
-import { onWindows, person, runShellCommand, SHARE, startRelay, tempDir, until } from "./harness.js";
+import { onWindows, person, runExecHook, SHARE, startRelay, tempDir, until, type Person } from "./harness.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PLUGIN = join(ROOT, "plugins/claude-code");
@@ -14,12 +14,12 @@ const BUNDLE = join(PLUGIN, "dist/pairwire.mjs");
 const RUN_SH = join(PLUGIN, "hooks/run.sh");
 const read = (p: string) => readFileSync(join(PLUGIN, p), "utf8");
 
-type HookEntry = Record<string, unknown> & { event: string; command: string };
+type HookEntry = Record<string, unknown> & { event: string; command: string; args: string[] };
 function hookEntries(): HookEntry[] {
   const hooks = JSON.parse(read("hooks/hooks.json")) as { hooks: Record<string, { hooks: Record<string, unknown>[] }[]> };
   return Object.entries(hooks.hooks).flatMap(([event, groups]) => groups.flatMap((g) => g.hooks.map((h) => ({ event, ...h }) as HookEntry)));
 }
-const hookCommand = (event: string) => hookEntries().find((e) => e.command.endsWith(` ${event}`))!.command;
+const hookEntry = (event: string) => hookEntries().find((e) => e.args[1] === event)!;
 
 function frontmatter(md: string): Record<string, string> {
   const m = md.match(/^---\n([\s\S]*?)\n---\n/);
@@ -49,16 +49,11 @@ describe("plugin files", () => {
     }
   });
 
-  it("wires every hook through run.sh in shell form, so Windows runs it with Git Bash, with the D3 waiter async", () => {
+  it("wires every hook through run.sh in exec form, with the D3 waiter async", () => {
+    // Exec form is what S1 and S3 verified on macOS; Windows wiring is unverified (ADR-024).
     const entries = hookEntries();
-    const events = ["session-start", "user-prompt-submit", "post-tool-use", "stop", "stop-wait"];
-    expect(entries.map((e) => e.command)).toEqual(events.map((ev) => `sh "\${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" ${ev}`));
-    for (const e of entries) {
-      expect(e.type).toBe("command");
-      // Exec form would look `sh` up on PATH, where Windows usually lacks it (ADR-021).
-      expect(e).not.toHaveProperty("args");
-      expect(e).not.toHaveProperty("shell");
-    }
+    expect(entries.map((e) => e.args[1])).toEqual(["session-start", "user-prompt-submit", "post-tool-use", "stop", "stop-wait"]);
+    for (const e of entries) expect(e).toMatchObject({ type: "command", command: "sh", args: ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", expect.any(String)] });
     expect(entries.at(-1)).toMatchObject({ async: true, asyncRewake: true, timeout: 86400 });
     expect(JSON.parse(read(".mcp.json")).mcpServers.pairwire.env).toEqual({ PAIRWIRE_HARNESS: "claude-code", PAIRWIRE_PROJECT_DIR: "${CLAUDE_PROJECT_DIR}" });
   });
@@ -77,7 +72,7 @@ describe("plugin files", () => {
 });
 
 // These run run.sh against a fake `node` shell script on a ':'-separated PATH, which Windows
-// cannot execute; "the bundle" below runs the real wrapper through Git Bash there.
+// cannot execute; "the bundle" below runs the real wrapper through Git's sh there.
 describe.skipIf(onWindows)("hooks/run.sh", () => {
   /** A PATH whose `node` prints `version` and records its arguments. */
   function fakeNode(version: string | null) {
@@ -137,26 +132,48 @@ describe.skipIf(onWindows)("hooks/run.sh", () => {
 });
 
 describe("the bundle", () => {
-  it("pairs, injects through run.sh, and reports doctor ok, all from plugins/claude-code/dist", async () => {
+  /** A Claude Code user (A) paired with a Codex user (B), both running the bundle; B has sent A a chat. */
+  async function pairedThroughBundle(home?: string) {
     const relay = await startRelay();
-    const a = person("Tazo", relay.host, "claude-code", BUNDLE);
+    const a = person("Tazo", relay.host, "claude-code", BUNDLE, home);
     const b = person("Nika", relay.host, "codex", BUNDLE);
     await a.open("sess-a");
     const share = (await a.call("start")).match(SHARE)![0];
     await b.open("sess-b");
     expect(await b.call("join", { share })).toContain("Paired with Tazo (claude-code)");
     await b.call("send", { kind: "chat", body: "hello through the bundle" });
+    return { relay, a, b };
+  }
+
+  /** Runs A's PostToolUse hook from hooks.json, as Claude Code does, until it delivers B's chat. */
+  async function postToolUseDelivers(a: Person, env: Record<string, string>): Promise<string> {
     const input = JSON.stringify({ session_id: "sess-a", cwd: a.project, permission_mode: "default", hook_event_name: "PostToolUse" });
     let out = "";
     await until(() => {
-      // The command from hooks.json, run as Claude Code runs a shell-form hook.
-      out = runShellCommand(hookCommand("post-tool-use"), { env: { ...a.env, CLAUDE_PROJECT_DIR: a.project, CLAUDE_PLUGIN_ROOT: PLUGIN }, input });
+      out = runExecHook(hookEntry("post-tool-use"), { env: { ...env, CLAUDE_PROJECT_DIR: a.project, CLAUDE_PLUGIN_ROOT: PLUGIN }, input, pluginRoot: PLUGIN });
       return out.includes("hello through the bundle");
     }, 10_000, "hook delivery");
+    return out;
+  }
+
+  it("pairs, injects through run.sh, and reports doctor ok, all from plugins/claude-code/dist", async () => {
+    const { relay, a } = await pairedThroughBundle();
+    const out = await postToolUseDelivers(a, a.env);
     expect(JSON.parse(out).hookSpecificOutput.hookEventName).toBe("PostToolUse");
     // Async: the relay runs in this process and must keep answering while doctor checks it.
     const doctor = { stdout: (await promisify(execFile)(process.execPath, [BUNDLE, "doctor"], { env: a.env, encoding: "utf8" })).stdout };
     expect(doctor.stdout).toContain(`ok    relay ${relay.host} answers /health`);
     expect(doctor.stdout).toContain("ok    plugin hooks wired at");
+  });
+
+  // run.sh's Windows branch (04 §6): with no PAIRWIRE_HOME the wrapper and Node must agree that
+  // the state directory is under USERPROFILE, whatever HOME says.
+  it.runIf(onWindows)("on Windows the hook finds the state directory under USERPROFILE when PAIRWIRE_HOME is unset", async () => {
+    const profile = tempDir();
+    const { a } = await pairedThroughBundle(join(profile, ".pairwire"));
+    const env: Record<string, string> = { ...a.env, USERPROFILE: profile, HOME: tempDir() };
+    delete env.PAIRWIRE_HOME;
+    const out = await postToolUseDelivers(a, env);
+    expect(JSON.parse(out).hookSpecificOutput.hookEventName).toBe("PostToolUse");
   });
 });

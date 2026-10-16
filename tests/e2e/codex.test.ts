@@ -16,7 +16,7 @@ const BUNDLE = join(ROOT, "plugins/claude-code/dist/pairwire.mjs");
 
 function machine() {
   const home = tempDir();
-  const env = { ...platformEnv(), PATH: process.env.PATH ?? "", HOME: home, CODEX_HOME: join(home, ".codex"), PAIRWIRE_HOME: join(home, ".pairwire") };
+  const env = { ...platformEnv(home), PATH: process.env.PATH ?? "", HOME: home, CODEX_HOME: join(home, ".codex"), PAIRWIRE_HOME: join(home, ".pairwire") };
   const install = (...args: string[]) => spawnSync(process.execPath, [BUNDLE, "install", ...args], { env, encoding: "utf8" });
   return { home, env, install, codex: (f: string) => join(home, ".codex", f) };
 }
