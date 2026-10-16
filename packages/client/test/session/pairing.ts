@@ -1,10 +1,14 @@
 // Two ClientSessions paired through a real relay-node (shared by session and transcript tests).
-import { mkdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { join } from "node:path";
 import { afterEach } from "vitest";
+import { bindingPath, readBinding } from "../../src/binding.js";
 import { createLogger } from "../../src/log.js";
 import { ClientSession, type SessionOptions } from "../../src/session.js";
-import { listRooms } from "../../src/state.js";
+import { listRooms, updateState } from "../../src/state.js";
 import { FAST, startRelay } from "../connection/harness.js";
 import { tempDir } from "../state/helpers.js";
 
@@ -18,8 +22,10 @@ export interface Side {
 }
 
 const sessions: ClientSession[] = [];
+const servers: Server[] = [];
 afterEach(() => {
   for (const s of sessions.splice(0)) s.shutdown();
+  for (const s of servers.splice(0)) s.close();
 });
 
 export function side(port: number, name: string, extra: Partial<SessionOptions> & { home?: string; project?: string; config?: object } = {}): Side {
@@ -56,3 +62,39 @@ export async function paired(config?: object) {
 }
 
 export const roomOf = (s: Side) => listRooms(s.home)[0]!;
+
+/** The pid of a process that has exited. */
+export function deadPid(): number {
+  return spawnSync(process.execPath, ["-e", ""]).pid!;
+}
+
+/**
+ * Someone else's server on a fresh socket path (a named pipe on Windows), standing in for a
+ * stale `ctl_path` that another user took after the owning MCP server exited (04 §8). It
+ * answers every request with a line that is both a ctl reply and a D3 wake, and counts the
+ * connections it gets.
+ */
+export async function squatter(): Promise<{ path: string; connections: () => number }> {
+  const path = process.platform === "win32" ? `\\\\.\\pipe\\pairwire-test-${randomUUID()}` : join(tempDir("pw-sq-"), "s.sock");
+  let connections = 0;
+  const server = createServer((socket) => {
+    connections++;
+    socket.once("data", () => socket.end(JSON.stringify({ ok: true, t: "wake", text: "from the squatter" }) + "\n"));
+    socket.on("error", () => {});
+  });
+  await new Promise<void>((resolve) => server.listen(path, resolve));
+  servers.push(server);
+  if (process.platform !== "win32") chmodSync(path, 0o600); // as private as ours: INV-9 passes
+  return { path, connections: () => connections };
+}
+
+/** Leaves `s`'s room as its MCP server would after exiting: `ctl_path` points at `ctlPath`, and the binding's owner is `ownerPid`. */
+export function ownerExited(s: Side, ctlPath: string, ownerPid: number): void {
+  s.session.shutdown();
+  updateState(s.home, roomOf(s), (state) => ({ ...state, ctl_path: ctlPath }));
+  setOwnerPid(s, ownerPid);
+}
+
+export function setOwnerPid(s: Side, ownerPid: number): void {
+  writeFileSync(bindingPath(s.home, s.project), JSON.stringify({ ...readBinding(s.home, s.project)!, owner_pid: ownerPid }));
+}

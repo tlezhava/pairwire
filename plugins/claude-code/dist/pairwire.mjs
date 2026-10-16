@@ -25,7 +25,7 @@ async function main(argv) {
     const opts = { home: pairwireHome(), env: process.env, cwd: process.cwd() };
     if (event === "stop-wait") {
       for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(sig, () => process.exit(0));
-      const { runStopWait } = await import("./chunks/waiter-TSYWI733.mjs");
+      const { runStopWait } = await import("./chunks/waiter-5HSUVHY5.mjs");
       return runStopWait(stdin, { ...opts, stderr: process.stderr });
     }
     const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-S4QBFJOI.mjs");
@@ -33,13 +33,13 @@ async function main(argv) {
     const out = runHook(event, stdin, opts);
     if (out) process.stdout.write(out + "\n");
     if (event === "user-prompt-submit" || event === "post-tool-use") {
-      const { cancelWaiter } = await import("./chunks/waiter-TSYWI733.mjs");
+      const { cancelWaiter } = await import("./chunks/waiter-5HSUVHY5.mjs");
       await cancelWaiter(stdin, opts);
     }
     return 0;
   }
   if (command === "ctl") {
-    const { runCtl } = await import("./chunks/ctl-EQQOOUUV.mjs");
+    const { runCtl } = await import("./chunks/ctl-BMXCQHNB.mjs");
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "doctor") {

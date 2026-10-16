@@ -4,6 +4,7 @@ import {
   hookErrorLogger
 } from "./chunk-HKWSNRJC.mjs";
 import {
+  isProcessAlive,
   readBinding,
   resolveProjectDir,
   sessionOwnsBinding
@@ -30,6 +31,7 @@ function locate(stdin, o, forWaiting) {
   }
   const binding = readBinding(o.home, resolveProjectDir(o.env, input.cwd ?? o.cwd));
   if (!sessionOwnsBinding(binding, input.session_id)) return null;
+  if (!isProcessAlive(binding.owner_pid)) return null;
   const state = readState(o.home, binding.room_id);
   if (!state || !isOpen(state)) return null;
   if (forWaiting) {

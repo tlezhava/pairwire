@@ -3,7 +3,7 @@
 import { createConnection } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import { renderTranscript } from "@pairwire/core";
-import { readBinding } from "./binding.js";
+import { isProcessAlive, readBinding } from "./binding.js";
 import { CTL_MAX_REQUEST, type CtlReply, type CtlRequest } from "./ctl-server.js";
 import { pairwireHome } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
@@ -68,6 +68,9 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
     return 0;
   }
   const roomId = binding.room_id;
+  // Only the owning MCP server listens on ctl_path. If its pid is dead, whatever answers there
+  // is not ours (a squatted stale pipe or socket name, 04 §8): act as if nobody listens.
+  const ask = (request: CtlRequest) => (isProcessAlive(binding.owner_pid) ? ctlRequest(state.ctl_path, request) : Promise.reject(new Error("owner not running")));
 
   switch (op) {
     case "log": {
@@ -79,7 +82,7 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
     }
     case "continue": {
       try {
-        print((await ctlRequest(state.ctl_path, { op: "continue" })).text);
+        print((await ask({ op: "continue" })).text);
       } catch {
         // No server running: the budget lives in state.json, so reset it there.
         if (isOpen(state)) updateState(home, roomId, (s) => ({ ...s, hop_count: 0 }));
@@ -99,7 +102,7 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
         return 0;
       }
       try {
-        print((await ctlRequest(state.ctl_path, { op: "say", text })).text);
+        print((await ask({ op: "say", text })).text);
       } catch {
         print("pairwire: no running agent session owns this room, so nothing was sent. Start your agent session in this project first.");
       }
