@@ -163,7 +163,7 @@ ADR-027, approved by the human on 2026-10-16. Protocol in `02-protocol.md` §6.3
   most one `peer_unreadable` notice per connection.
 - **REQ-COLLAB-6** (M5) WHEN a structured message arrives THE SYSTEM SHALL NOT
   write, fetch, stat or open any file the peer named, change any setting or permission, or
-  send anything, and the message SHALL change the coordination view only for the peer's own
+  send anything other than the protocol's ack, and the message SHALL change the coordination view only for the peer's own
   claims and for answers to our own proposals.
 - **REQ-COLLAB-7** (M5) WHEN an agent proposes a contract or accepts one with a
   local copy THE SYSTEM SHALL refuse a file outside the project, under a dot-directory, with

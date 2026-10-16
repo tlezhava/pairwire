@@ -191,9 +191,13 @@ ADR-027.
   inline content whose hash differs, or that the sanitizer would change, is rejected.
 - core, `coordView()` (pure, fake clock): claim expiry from `received_at`/`sent_at` capped
   at the room's `expires_at`, ignoring a future `ts`; release only by the same side; the
-  16-claim and 50-name limits (`over_limit`); per-side id resolution; every `match` value;
-  live proposal by version, equal versions ordered by id so both sides agree; first valid
-  response wins; held and dropped messages invisible; ending the room ends claims.
+  16-claim limit and the 25-names-per-side limit (`over_limit`), one side's names not using
+  up the other's; per-side id resolution; every `match` value; live proposal by version,
+  equal versions ordered by id while pending so both sides agree; an answered version not
+  replaced by a same-version proposal with a higher id; `version_gap` for a version more
+  than one above the highest; first valid response wins; held and dropped messages
+  invisible; ending the room ends claims; 50,000 claims from a flooding peer within a fixed
+  time budget (linear cost).
 - core, overlap check and fallback body: prefix overlap cases; the fallback body is
   deterministic and its header matches `02` §6.3.6 for each kind.
 - REQ-COLLAB-1: a `heads_up` reaches the peer agent with sanitized `paths` attributes.
@@ -209,18 +213,24 @@ ADR-027.
   there is nothing to answer), are acked, nothing is dropped as 0.1.0 would drop it, and a
   later `chat` keeps flowing. Client tests (relay-node, injected HELLO caps, dropped
   frames): a peer downgrade between sessions resends unacked structured envelopes as chat
-  under the same id and seq; an upgrade resends structured.
+  under the same id and seq; an upgrade resends structured; a queued structured message's
+  `outbox.jsonl` line parses with 0.1.1's outbox and envelope schemas (a copy in the tests),
+  and an M5 peer still receives it structured.
 - REQ-COLLAB-5: invalid `data`, `data` on an old kind, `author: "human"` on an M5 kind and
   an extra top-level field are skipped like an unknown kind (ADR-025): acked, `peer_max_seq`
   advanced, nothing stored or rendered, one `peer_unreadable` notice per connection.
 - REQ-COLLAB-6 and INV-2: claim, release, contract_propose and contract_response from the
   peer, including paths that name real files and `.claude/settings.json`, leave the project
   tree and `.claude/` byte-identical, open no file the peer named (fs spy in client tests),
-  spawn no process and send nothing but acks (e2e, a hostile raw peer).
+  spawn no process and send nothing but acks (e2e, a hostile raw peer); `send` refuses a
+  new contract name past our own 25, however many the peer proposed.
 - REQ-COLLAB-7 and INV-5: `contract_propose` refuses a symlink that leaves the project, a
   dot-segment path, each sensitive name, a file over 1 MiB, and a file containing a
-  scanner match (the error carries no content); the scan covers every new input field and
-  the fallback body.
+  scanner match (the error carries no content); a `contract_response` accept refuses a
+  `local_path` that is a symlink out of the project, a dot-file or under a dot-directory
+  (directly or through a symlink), a sensitive name, or a file with a secret, naming the
+  rule, sending nothing and writing no `coord-sent.jsonl` line; the scan covers every new
+  input field and the fallback body.
 - INV-3: injection-corpus samples placed in a body, a path (where the schema allows the
   characters) and inline content can't close the wrapper, forge a `match` attribute or
   forge a `<pairwire_contract_content>` element; `status` lines with peer paths are

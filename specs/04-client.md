@@ -245,16 +245,19 @@ file in either repository.
 
 - `rooms/<room_id>/coord-sent.jsonl` (0600, append-only): one line per structured envelope
   **we** sent, `{"envelope": <structured envelope>, "sent_at": <ms>, "local_path"?: <path>}`.
-  Only the room-owning MCP server's `send` handler writes it, right after the outbox append
-  (the seq is already persisted). Appends are idempotent by envelope id, so a crash and
+  Only the room-owning MCP server writes it, from the connection's `send`, after the seq is
+  persisted and right before the outbox append, so the frame pump can find it. Appends are idempotent by envelope id, so a crash and
   retry can't duplicate a line. It exists because the outbox keeps only the 5 most recent
   delivered entries, and our own claims and proposals must outlive that. `local_path` is
   set only on a `contract_response` that named one (section 4) and is never sent. The file
   is kept after leave, like `transcript.md`, and removed by `pairwire purge`. A missing file
   means nothing was sent.
-- `outbox.jsonl` entries for structured kinds gain `fallback_body`: the chat body built and
-  checked at send time (`02` §6.3.6). The entry keeps the structured envelope; the encoding
-  is picked when the frame is encrypted.
+- `outbox.jsonl` keeps the 0.1.x shape. A structured kind's entry holds its fallback chat
+  envelope (same id and seq), built and checked at send time (`02` §6.3.6); the structured
+  envelope is the one in `coord-sent.jsonl`. When the frame is encrypted under a session with
+  `collab1`, the client sends that structured envelope instead. A user who goes back to
+  0.1.1 in an open room therefore keeps every unacked entry, and 0.1.1 resends it as chat
+  (ADR-028).
 - `rooms/<room_id>/caps.json` (0600): `{"<sid hex>": [<caps>], ...}`, the caps of the peer
   HELLO behind each stored session (at most 16 flags of at most 32 characters each), for the
   current and previous session only. The MCP server rewrites it atomically right after it
@@ -269,7 +272,8 @@ file in either repository.
   `inbox.jsonl` (side `peer`, at `received_at`) minus held and dropped ones (the client
   removes them using `delivered.json` and the hold setting; a message being released right
   now counts as visible), and our lines in `coord-sent.jsonl` (side `ours`, at `sent_at`).
-  It processes them in time order (ties by side, then id) and returns the active claims of
+  It processes them in time order (ties by side, then id), in time linear in the number of
+  messages (a peer that floods the room with claims can't make it slow), and returns the active claims of
   each side, the contract table by name, the highest version seen per name, and each
   structured message's `match` value and client-computed attributes (`02` §6.3.4). `status`,
   the footer, `send`'s checks and the renderer all call it, so they can't disagree.
@@ -278,7 +282,7 @@ file in either repository.
     count.
   - Contracts: per name, the live proposal; its state (`pending`, `accepted`, `rejected`);
     who proposed and answered it and when; and for our side the local file state (section
-    4, `status`). At most 50 names.
+    4, `status`). Each side can introduce at most 25 names (`02` §6.3.4), so at most 50.
 - **Local file reads.** The client reads a contract file only on its own side, and only
   for a path the local agent named in a `send` call (`contract_path`, `local_path`), or,
   from `status`, a path recorded in `coord-sent.jsonl` for such a call. It never reads,
@@ -373,8 +377,10 @@ rate limit, then `02` §6.2):
   "contract_content differs from the file at contract_path; not proposed". Only `body` and
   `contract_content` (when given) are sent, both visible in the approval prompt; a ref-only
   proposal sends the hash, never the file. The client sets `version` to one more than the
-  highest version of that name in the view, from either side (at most 1,000,000). `rev` is
-  sent as given; pairwire runs no git command.
+  highest version of that name in the view, from either side (at most 1,000,000). A new
+  name when we already proposed under 25 is refused: "You have already proposed 25 contract
+  names in this room; propose a new version of one of them instead." `rev` is sent as given;
+  pairwire runs no git command.
 - `contract_response`: `reply_to` must be a peer `contract_propose` already shown to the
   agent (in `delivered.json` `ids`, not held or dropped) that is live and unanswered. A
   held, dropped, answered, superseded or nonexistent id gets the same error, "No open

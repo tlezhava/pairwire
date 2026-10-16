@@ -99,11 +99,12 @@ invariants above. It changes no invariant text.
   file-content scan and the sensitive-name and dot-segment rules, a peer could ask the
   agent to "propose `.env`" and get a hash oracle for a low-entropy secret.
 - **INV-6.** Every structured send counts toward the hop budget and the rate limit.
-  Receiving one never triggers a send.
+  Receiving one never triggers a send other than the protocol's ack.
 - **INV-7.** Logs carry kinds and counts only, never paths, hashes or bodies. The transcript
   passes paths through `redact()`.
 - **INV-8.** `data` is a strict per-kind schema and is forbidden on old kinds; bounds are
-  fixed (TTL at most 24 h, at most 20 paths, 16 active claims per side, 50 contract names).
+  fixed (TTL at most 24 h, at most 20 paths, 16 active claims per side, 25 new contract
+  names per side, a version at most one above the highest seen).
   The peer can only end its **own** claims and answer **our** proposals; anything else
   renders with a `match` value other than `yes` and changes nothing. An unreadable M5
   envelope takes 0.1.1's skip-and-ack path (ADR-025), which changes only `peer_max_seq`, a
@@ -120,7 +121,16 @@ New risks and their mitigations:
   advisory, and the guide makes every conflict a question for the user.
 - *Social engineering on contracts* ("you already accepted v3"): the view computed from the
   local inbox and `coord-sent.jsonl` is the authority, `status` shows it, and a response
-  that doesn't match renders with a non-`yes` `match`.
+  that doesn't match renders with a non-`yes` `match`. An answered version can't be
+  replaced: a later proposal of the same version gets `stale_version` whatever its id, so
+  "v1" keeps naming the bytes that were accepted or rejected.
+- *Name and version squatting* (the peer proposes 50 names, or one name at version
+  1,000,000, so the other side can't propose): names count per side, 25 each, and a version
+  more than one above the highest seen gets `version_gap` and doesn't move the next
+  version. `send` refuses a new name past our own 25.
+- *Flooding the view* (thousands of claims so every hook and tool call recomputes a slow
+  view): `coordView()` keeps at most 16 active claims per side in its working set, so its
+  cost is linear in the number of messages; the relay's rate limit bounds that number.
 - *Forged header lines* in a peer's `chat` that imitate the fallback encoding: plain text
   with no effect on the view; the guide says to trust only client-added attributes.
 

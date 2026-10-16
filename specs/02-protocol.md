@@ -433,7 +433,7 @@ Examples (common fields shortened):
   |---|---|
   | `claim` | `yes`; `over_limit` (the sender already has 16 active claims: shown, not counted) |
   | `release` | `yes`; `unknown_claim`; `not_their_claim`; `already_released` |
-  | `contract_propose` | `yes`; `stale_version` (a higher version of the name is live, or the same version with a higher id); `over_limit` (the view already holds 50 names) |
+  | `contract_propose` | `yes`; `version_gap` (`version` is more than one above the highest version of the name seen so far); `stale_version` (a higher version of the name is live, or the same version is live and either answered or has a higher id); `over_limit` (a new name, and the sender has already proposed under 25 names) |
   | `contract_response` | `yes`; `unknown_proposal`; `not_your_proposal`; `hash_mismatch` (`name`, `version` or `sha256` differ from the proposal's); `already_answered`; `superseded` |
 
 - **Claim expiry is local.** A peer claim ends at `min(received_at + ttl_min, room
@@ -441,9 +441,21 @@ Examples (common fields shortened):
   never used, so a future timestamp cannot stretch a claim. The two sides' views may differ
   by the transit time (or by how long the relay buffered the claim).
 - **Live proposal.** For each name, the live proposal is the one with the highest
-  `version`; equal versions are ordered by envelope id (the higher ULID wins), so both sides
-  compute the same live proposal even when both propose at once. Older ones are
-  `superseded`.
+  `version`. Equal versions are ordered by envelope id (the higher ULID wins) only while the
+  live one is still `pending`, so both sides compute the same live proposal when both
+  propose at once. Once the live proposal is answered, a proposal of the same version gets
+  `stale_version`: an answered version is never replaced, whatever id the peer picks. Older
+  ones are `superseded`.
+- **Versions.** A proposal whose `version` is more than one above the highest version of
+  its name seen so far (0 for a new name, so a new name starts at 1) gets `version_gap`
+  and doesn't raise that highest version. Two proposals made at once still fit (both are
+  one above), while a peer can't push a name to the version limit to stop the other side
+  from proposing under it. A proposal following versions the receiver dropped in hold mode
+  also gets `version_gap` there; the sender can use a new name.
+- **Names.** A name counts against each side that has proposed under it (`over_limit` and
+  `version_gap` proposals left out). A proposal that would make a new name live gets
+  `over_limit` when its sender already has 25 names, so each side can always introduce 25
+  names whatever the other side sent, and the view holds at most 50.
 - **Answers.** A live proposal is `pending` until the first `contract_response` from the
   other side with `match="yes"`, which makes it `accepted` or `rejected`. Later responses to
   it get `already_answered`.
@@ -478,8 +490,9 @@ session it is encrypted under (§6.3.2):
   `ts`, `author` and `reply_to`; `kind: "chat"`; `acks: null`; no `data`; `body` = the
   fallback body.
 
-The fallback body is built once, at send time, by a pure function in core, and stored in
-the outbox entry with the structured envelope. It is secret-scanned and size-checked then,
+The fallback body is built once, at send time, by a pure function in core. The outbox
+entry holds the fallback envelope, in exactly the shape 0.1.x reads, and the structured
+envelope is kept in `coord-sent.jsonl` under the same id (`04` §3). It is secret-scanned and size-checked then,
 together with the structured form, and both must meet the §6 limits. A resend never builds
 new text. It is a header line, a blank line, then the body (or `(no message)`); for an
 inline contract the content follows after a line `--- contract content (sha256 <hex>) ---`.
@@ -494,10 +507,12 @@ inline contract the content follows after a line `--- contract content (sha256 <
 
 A `heads_up` without paths has the header `[pairwire heads-up]`. A claim's `until` is the
 sender's own expiry for it (§6.3.4) in UTC to the minute; a contract's `@ <rev>` shows the
-first 7 characters of `rev` and is left out when `rev` is null. The outbox keeps the
-structured form, so a resend after the peer upgrades goes out structured and a resend after
-a downgrade goes out as chat. Id and seq are the same either way, so ordering and acks are
-unaffected.
+first 7 characters of `rev` and is left out when `rev` is null. Under a `collab1` session
+the client sends the structured envelope from `coord-sent.jsonl` in place of the outbox's
+fallback, so a resend after the peer upgrades goes out structured and a resend after a
+downgrade goes out as chat. Id and seq are the same either way, so ordering and acks are
+unaffected. A user who goes back to 0.1.1 in an open room keeps an outbox 0.1.1 can read,
+and it resends every unacked message as the fallback chat (ADR-028).
 
 | Sender → receiver | Old kinds | M5 kinds |
 |---|---|---|

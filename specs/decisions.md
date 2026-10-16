@@ -498,6 +498,7 @@ checksum is the starting point.
 
 Status: accepted (2026-10-16, approved by the human). Proposed on branch
 `wf/m5-kinds-proposal`; reconciled with 0.1.1 (ADR-025) on acceptance, see the last list.
+Amended by ADR-028 (contract versions and names, the view's cost, the outbox shape).
 
 The M5 task asks for structured kinds `heads_up`, `claim`/`release` and
 `contract_propose`/`contract_response` "with a checked-in contract file". The spec text is
@@ -623,6 +624,51 @@ was written:
 - The `send` result stays text: the proposal's fields are extra lines.
 - The transcript heading of our `contract_response` doesn't name `local_path` (the
   connection's `sent` event carries only the envelope); `status` shows it.
+
+## ADR-028 Structured kinds: review hardening of contracts, the view and the outbox (M5)
+
+Status: accepted (2026-10-17). Amends ADR-027 before M5 ships; no released client sends
+structured kinds, so nothing on the wire changes for 0.1.x.
+
+The M5 implementation review found four gaps in ADR-027 as specified:
+
+- **An answered contract could be replaced at the same version.** Equal versions were
+  ordered by envelope id, and the peer picks its own ULID. A peer that had accepted our v1
+  could send its own v1 with id `7ZZZ…`; it became the live proposal, ours turned
+  `superseded`, and "v1" named different bytes, which is the "you already accepted v3"
+  confusion the view exists to prevent. Decision: the id tie-break applies only while the
+  live proposal is `pending` (the simultaneous-proposal case it exists for). Once it is
+  answered, a proposal of the same or a lower version gets `stale_version` (`02` §6.3.4).
+- **Names and versions could be squatted.** The 50-name limit was shared, so a peer's 50
+  names made every later proposal of ours `over_limit` (and `send` didn't check, so our
+  agent was told "Sent" for a proposal its own view left out). A peer could also propose any
+  name at version 1,000,000, after which our client refused to propose under it. Decision:
+  a name counts against each side that has proposed under it, a new name is `over_limit`
+  when its sender already has 25 (so 50 in all, as ADR-027 approved), and `send` refuses a
+  new name past our own 25. A proposal more than one version above the highest seen gets
+  the new `match` value `version_gap`, and doesn't move the highest version. Counting a name
+  for every side that proposed under it, rather than for the side that first made it live,
+  keeps both views equal when both sides introduce a name at once. The cost: if a human drops
+  (hold mode) a proposal, the sender's next version shows as `version_gap` on that side; a
+  new name gets past it.
+- **The view was quadratic in the number of claims.** Each claim filtered every claim seen
+  so far, and the view is rebuilt on every hook, tool result and status. 10,000 claims took
+  about 300 ms, and the relay allows a peer far more over a room's 7 days. Decision:
+  `coordView()` keeps a working set of at most 16 counted, possibly active claims per side,
+  pruned before each check (messages come in time order), so it is linear; a core test
+  holds 50,000 claims to a fixed time budget.
+- **Going back to 0.1.1 could stall a room.** ADR-027 stored the structured envelope and a
+  new `fallback_body` key in `outbox.jsonl`. 0.1.1's strict schemas skip such lines and its
+  next rewrite of the file drops them, while `my_seq` already counts their seqs, so the peer
+  would drop every later message from that user as out of order (`02` §6.1). Decision: the
+  outbox keeps the 0.1.x shape and holds the fallback chat envelope; the structured envelope
+  stays only in `coord-sent.jsonl`, now written by the connection's `send` just before the
+  outbox append, and the pump sends it in place of the chat under a `collab1` session. A
+  downgraded client resends the chat with the same id and seq. Reading the file with a copy
+  of 0.1.1's schemas is a client test.
+
+Also clarified: REQ-COLLAB-6's "send anything" and the INV-6 analysis in `05` exclude the
+protocol's ack, which every accepted message gets (`02` §6.1).
 
 ## Spike findings
 
