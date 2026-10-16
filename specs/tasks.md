@@ -121,7 +121,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 - [ ] Spec first: structured kinds `heads_up`, `claim`/`release` (files or paths),
   `contract_propose`/`contract_response` (with a checked-in contract file). Update `02` §6.
-- [x] Inbound `hold` mode: messages wait for the human's `/pairwire:accept` (ADR-021).
+- [x] Inbound `hold` mode: messages wait for the human's `/pairwire:accept` (ADR-023).
 - [ ] Channels "live mode" if not already in M4.
 
 ## M6 — Cross-harness

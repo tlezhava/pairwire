@@ -328,7 +328,7 @@ With `hold` on (section 2), the human sees peer messages before their agent does
   no path ever shows it, and its output names only how many were dropped and from whom.
   Dropped messages stay in `transcript.md` and `inbox.jsonl` for the human.
 - **Acks are unchanged.** The client acks a held message when it receives it, so the
-  sender sees "delivered" as usual; it does not learn that the message is held (ADR-021).
+  sender sees "delivered" as usual; it does not learn that the message is held (ADR-023).
 - Turning hold mode off releases nothing explicitly: held messages simply become unread and
   flow by the normal paths. Turning it on holds every unread peer message.
 - After the room ends locally (the binding is removed), `/pairwire:accept` can no longer

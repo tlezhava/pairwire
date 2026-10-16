@@ -244,7 +244,7 @@ sanitized, wrapped in `<pairwire_transcript>` and preceded by a preamble labelin
 as external input. This tightens `04` §8; INV-3's text is unchanged. The ctl socket protocol
 is defined at the same time (one JSON request and reply per connection).
 
-## ADR-021 Inbound hold mode: messages wait for /pairwire:accept (M5)
+## ADR-023 Inbound hold mode: messages wait for /pairwire:accept (M5)
 
 Status: accepted (2026-10-16)
 
