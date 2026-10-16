@@ -10,16 +10,28 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Re-run the npm publish (and the GitHub release) for a tag that already exists, e.g. after
+  # a publish failed; the image is not rebuilt. Trusted publishing checks this same file.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag, e.g. v0.1.1"
+        required: true
+        type: string
 
 permissions:
   contents: read
 
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
   ci:
+    if: github.event_name == 'push'
     uses: ./.github/workflows/ci.yml
 
   version:
@@ -29,6 +41,8 @@ jobs:
       prerelease: ${{ steps.v.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -37,23 +51,29 @@ jobs:
       - name: Every version location matches the tag
         id: v
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${TAG#v}"
           npx tsx scripts/release.ts --check "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           case "$version" in *-*) echo "prerelease=true" ;; *) echo "prerelease=false" ;; esac >> "$GITHUB_OUTPUT"
 
   npm:
     needs: [ci, version]
+    # On a manual re-run the ci job is skipped: it already passed for the tagged commit.
+    if: ${{ !cancelled() && needs.version.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # npm provenance
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Trusted publishing needs Node >= 22.14 and npm >= 11.5.1.
+          node-version: 24
           cache: npm
+          registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run pack:npm
       # npm trusted publishing (OIDC): npm trusts this workflow for the pairwire package, so
@@ -62,10 +82,11 @@ jobs:
         working-directory: build/npm
         env:
           DIST_TAG: ${{ needs.version.outputs.prerelease == 'true' && 'next' || 'latest' }}
-        run: npx -y npm@11.21.0 publish --provenance --access public --tag "$DIST_TAG"
+        run: npx -y npm@11.21.0 publish --provenance --access public --tag "$DIST_TAG" --loglevel verbose
 
   image:
     needs: [ci, version]
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -98,6 +119,7 @@ jobs:
 
   github-release:
     needs: [version, npm, image]
+    if: ${{ !cancelled() && needs.npm.result == 'success' && (needs.image.result == 'success' || needs.image.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -108,6 +130,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
-          set -- --verify-tag --generate-notes --title "pairwire $GITHUB_REF_NAME"
+          gh release view "$TAG" >/dev/null 2>&1 && { echo "release $TAG exists"; exit 0; }
+          set -- --verify-tag --generate-notes --title "pairwire $TAG"
           [ "$PRERELEASE" = true ] && set -- "$@" --prerelease --latest=false
-          gh release create "$GITHUB_REF_NAME" "$@"
+          gh release create "$TAG" "$@"
