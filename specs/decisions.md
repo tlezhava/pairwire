@@ -244,10 +244,11 @@ sanitized, wrapped in `<pairwire_transcript>` and preceded by a preamble labelin
 as external input. This tightens `04` §8; INV-3's text is unchanged. The ctl socket protocol
 is defined at the same time (one JSON request and reply per connection).
 
-## ADR-021 Native Windows: named-pipe control channel, shell-form hooks through Git Bash (M7)
+## ADR-024 Native Windows: named-pipe control channel, hooks through Git's `sh` (M7)
 
 Status: proposed (2026-10-16); the Windows CI job and a first Windows session confirm it.
-Built and tested on macOS only; Windows code paths take the platform as a parameter so
+The hook wiring on Windows (decision 1) stays open until that session. Built and tested on
+macOS only; Windows code paths take the platform as a parameter so
 their pure parts are unit-tested everywhere, and a `windows-latest` CI job runs the rest.
 
 Research (docs only; no Windows machine was used):
@@ -270,25 +271,26 @@ Research (docs only; no Windows machine was used):
 
 Decisions:
 
-1. **Hooks stay on the one POSIX wrapper, `run.sh`, run in shell form**
-   (`sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <event>`). Exec form with `sh` fails on a default
-   Git for Windows install, where `sh` is not on `PATH`; shell form reaches Git Bash, which
-   has it. No PowerShell variant: `hooks.json` cannot select entries by platform, two
-   variants would both run where both shells exist, and a script that runs in both shells
-   would be fragile and untestable here. So pairwire's hooks require Git for Windows on
-   native Windows (README, `doctor`); without it hooks show a non-blocking error and the room
-   works through D1. The no-Node fast path is unchanged: with no `active` flag the wrapper
-   exits 0 using shell builtins only. `run.sh` uses `USERPROFILE`, forward slashes and
-   `pwd -W` when `OS=Windows_NT` (`04` §6). On macOS and Linux the hooks now pass through one
-   more `sh -c`; S1 had already verified the shell-string form.
+1. **Hooks stay on the one POSIX wrapper, `run.sh`, wired in exec form on every platform**
+   (`"command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "<event>"]`), as S1 and
+   S3 verified on macOS. Whether that works on native Windows is **unverified**: exec form
+   resolves `sh` on `PATH`, which a default Git for Windows install lacks, while shell form
+   (`sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <event>`) would run under Git Bash. Switching
+   every platform to shell form for an untested Windows benefit would change wiring verified
+   on macOS, so the choice between exec form and shell form under Git Bash is made when a
+   Windows Claude Code session can test it (M7 task). No PowerShell variant: `hooks.json`
+   cannot select entries by platform, two variants would both run where both shells exist,
+   and a script that runs in both shells would be fragile and untestable here. So
+   pairwire's hooks require Git for Windows on native Windows (README, `doctor`); without a
+   usable `sh` hooks show a non-blocking error and the room works through D1. The no-Node
+   fast path is unchanged: with no `active` flag the wrapper exits 0 using shell builtins
+   only. `run.sh` uses `USERPROFILE`, forward slashes and `pwd -W` only when `OS=Windows_NT`
+   (`04` §6), so its behavior on macOS and Linux is unchanged.
 2. **`ctl` is a named pipe on Windows**, `\\.\pipe\pairwire-<tag>-<nonce>`, with a fresh
    random nonce each time the owning server opens the room. The tag alone (as in the
    `/tmp` fallback) would be a fixed name that any local user can read from the pipe list
    once and then hold whenever the server isn't running; the nonce limits that to the time
-   between a server's exit and its restart (`04` §8). Closing that gap needs the server to
-   prove itself to the client (for example an HMAC of a client nonce under a key in the
-   private state directory). That changes the ctl protocol and needs the human's decision,
-   so it is not done here.
+   between a server's exit and its restart (`04` §8), which decision 6 covers.
 3. **INV-9's check stays off on Windows**, as before M7: there are no mode bits, and an ACL
    check would need native code or a child process. Privacy rests on the profile
    directory's inherited ACL; `doctor` warns when the state directory is outside the
@@ -297,6 +299,18 @@ Decisions:
    `run.sh`, the generated `SKILL.md` or the tests that compare text.
 5. Path checks use `path.basename`/`path.win32` instead of `endsWith("/dist")`. The INV-2
    import check compares repo-relative paths with `/` separators on every platform.
+6. **Owner check before connecting to `ctl_path` (all platforms).** `ctl say`,
+   `ctl continue`, the D3 waiter and `wait_cancel` connect only if the binding's `owner_pid`
+   is alive. Only the owning MCP server listens on `ctl_path`, so once it has exited whatever
+   answers there is someone else: a squatted stale pipe name on Windows or, on macOS and
+   Linux, a socket at a reused path. Without the check, `say` text would reach that listener
+   and a forged `wake` from it would reach the agent. With it, `say` reports that no session
+   is running, `continue` resets the budget in `state.json`, and the hooks exit 0 (`04` §8).
+   The check is one `kill(pid, 0)` and needs no protocol change. It does not cover the dead
+   owner's pid being reused by an unrelated live process before the next session takes the
+   room over; closing that needs the server to prove itself to the client (for example an
+   HMAC of a client nonce under a key in the private state directory), which changes the ctl
+   protocol and needs the human's decision, so it is not done here.
 
 Not covered: Codex on native Windows (its hook command is `sh "<path>" <event>` and needs
 Codex to run hooks through a POSIX shell; unverified), and project-directory case or 8.3

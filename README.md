@@ -26,9 +26,9 @@ Start a new Claude Code session so the plugin's tools and hooks load. No account
 configuration is needed.
 
 On native Windows (not yet verified on a real machine) also install
-[Git for Windows](https://git-scm.com/downloads/win): Claude Code runs plugin hooks with its
-Git Bash, and without it pairwire's hooks fail, so messages reach your agent only when it
-checks its inbox. `pairwire doctor` tells you whether Git Bash was found. On Windows,
+[Git for Windows](https://git-scm.com/downloads/win): pairwire's hooks run under its `sh`,
+and without it they fail, so messages reach your agent only when it checks its inbox.
+Whether the hooks start on Windows without further setup is not yet known. `pairwire doctor` tells you whether Git Bash was found. On Windows,
 pairwire does not check its state directory's permissions; keep it under your user profile
 (the default, `%USERPROFILE%\.pairwire`).
 

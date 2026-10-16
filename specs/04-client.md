@@ -8,7 +8,7 @@ and edit this file.
 
 MVP platforms: macOS, Linux, WSL 2. Native Windows (M7) differs only where this spec says
 so: the control pipe and state permissions (section 3), the hook wrapper (sections 6 and 9),
-the control pipe's access model (section 8) and `doctor` (below). See ADR-021.
+the control pipe's access model (section 8) and `doctor` (below). See ADR-024.
 
 ## 1. The `pairwire` executable
 
@@ -335,13 +335,16 @@ rule also holds when Node is missing:
    passed through. The wrapper derives the plugin root from its own path.
 
 **On native Windows** `run.sh` stays the single entry point; there is no PowerShell or
-`.cmd` variant. Claude Code runs a shell-form hook command (section 9) with Git Bash, or
-with PowerShell when Git Bash is missing ([hooks reference, "Exec form and shell
-form"](https://code.claude.com/docs/en/hooks)). Git for Windows is optional for Claude Code,
-which falls back to its PowerShell tool without it
-([setup](https://code.claude.com/docs/en/setup#install-on-native-windows)), but pairwire's
-hooks need it. Under Git Bash, `sh` is Git's bash in POSIX mode, and the wrapper behaves as
-above with three differences, all taken only when `OS` is `Windows_NT`:
+`.cmd` variant, so pairwire's hooks need Git for Windows, whose `sh` runs the wrapper. Git for
+Windows is optional for Claude Code, which falls back to its PowerShell tool without it
+([setup](https://code.claude.com/docs/en/setup#install-on-native-windows)). How Claude Code
+should start the wrapper there is **unverified** (section 9, ADR-024): `hooks.json` uses exec
+form, which resolves `sh` on `PATH`, and a default Git for Windows install has no `sh.exe` on
+`PATH`; shell form would run the command with Git Bash, or with PowerShell when Git Bash is
+missing ([hooks reference, "Exec form and shell form"](https://code.claude.com/docs/en/hooks)).
+That choice is made when a Windows Claude Code session can test it. Either way, under Git's
+`sh` (bash in POSIX mode) the wrapper behaves as above with three differences, all taken only
+when `OS` is `Windows_NT`, so they change nothing on macOS or Linux:
 
 - The default state directory is `$USERPROFILE/.pairwire`, because Node's `os.homedir()`
   reads `USERPROFILE` on Windows and ignores `HOME`, which a user or Git Bash may set to
@@ -352,13 +355,13 @@ above with three differences, all taken only when `OS` is `Windows_NT`:
 - The plugin root is taken with `pwd -W`, which prints a `C:/...` path, so `node` (a native
   program) gets a path it can open without relying on MSYS argument conversion.
 
-Without Git Bash, Claude Code runs the hook command in PowerShell, which has no `sh`: every
-hook then fails with Claude Code's non-blocking "Failed with non-blocking status code" notice,
-and messages arrive only through D1. No single command string runs the wrapper in both
-shells, and `hooks.json` has no per-platform entries, so this is a documented requirement
-(README, `doctor` check 7) rather than handled. A D3 waiter that Claude Code stops on Windows
-may outlive the wrapper process, because terminating a process there does not end its
-child; it still ends as soon as it is superseded or cancelled, or the MCP server exits.
+When the hook command cannot start (no `sh` found, or no Git Bash for a shell-form command),
+every hook fails with Claude Code's non-blocking "Failed with non-blocking status code"
+notice, and messages arrive only through D1. `hooks.json` has no per-platform entries, so
+this is a documented requirement (README, `doctor` check 7) rather than handled. A D3 waiter
+that Claude Code stops on Windows may outlive the wrapper process, because terminating a
+process there does not end its child; it still ends as soon as it is superseded or
+cancelled, or the MCP server exits.
 
 The MCP server creates the `active` flag when a room becomes `waiting` or `active`. It
 removes the flag when no such room remains.
@@ -399,8 +402,9 @@ Waiter protocol (over the room's `ctl.sock`, section 1):
 1. `run.sh` exits 0 at once if the `active` flag is missing (no room) or Node is missing
    or too old (no `systemMessage`: an async hook's stdout isn't shown).
 2. `pairwire hook stop-wait` exits 0 unless `delivery` is `auto`, `auto_continue` is
-   true, and the hook input's `session_id` equals the binding's `owner_session` (passive
-   sessions never wait). Otherwise it connects to `ctl.sock` and sends
+   true, the hook input's `session_id` equals the binding's `owner_session` (passive
+   sessions never wait), and the binding's `owner_pid` is alive (section 8, owner check).
+   Otherwise it connects to `ctl.sock` and sends
    `{"op":"wait","session":<session_id>}`. If it can't connect, it exits 0.
 3. The server closes any earlier `wait` connection for that session with
    `{"t":"superseded"}`; that waiter exits 0. If undelivered items (messages or local
@@ -557,9 +561,19 @@ server holds it could create a pipe of that name after the server exits, and a c
 reading the old `ctl_path` would then talk to that user. The fresh nonce on every open
 (section 3) makes the old name useless once the server restarts, and libuv opens the first
 instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a server never shares a name someone else
-holds. What remains is the time between an owning server's exit and its restart: `ctl say`
-text could reach that user, and a reply (or a D3 `wake`) from them would be shown to the
-human or the agent. ADR-021 records this as a known gap on Windows.
+holds. What remains is the time between an owning server's exit and its restart; the
+owner check below covers it as long as the owner's pid is not reused.
+
+**Owner check (all platforms).** Only the owning MCP server listens on `ctl_path`, and the
+binding records its pid (`owner_pid`, section 3). Before connecting to `ctl_path`, every ctl
+client checks that this pid is alive (`process.kill(pid, 0)`; `EPERM` counts as alive) and,
+if it is not, does not connect: `ctl say` prints its "no running agent session" message,
+`ctl continue` resets `hop_count` in `state.json`, and the D3 waiter (`hook stop-wait`) and
+`wait_cancel` exit 0. This is the mitigation for a squatted stale pipe or socket name: once
+the owner has exited, whatever answers at its old `ctl_path` is not pairwire, so neither
+`say` text nor a forged `wake` crosses it. It does not help if the dead owner's pid has been
+reused by another live process before the next session takes the room over; closing that
+needs the server to prove itself to the client (ADR-024), which is not done.
 
 Residual risk, stated in `05-security.md`: an agent with unrestricted Bash permission
 could invoke `pairwire ctl` itself. The protections assume the harness's normal permission
@@ -612,29 +626,28 @@ plugins/claude-code/
 ```
 
 `hooks/hooks.json`: one entry per event, each running the `hooks/run.sh` wrapper from
-section 6 in shell form, `sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <event>`. The wrapper finds
-`dist/pairwire.mjs` relative to its own path. S1 confirmed that both the shell-string and
-exec (`args`) forms work, that `${CLAUDE_PLUGIN_ROOT}` expands inside `args`, and that a
-matcher of `"*"`, `""` or none matches every tool, MCP tools included.
+section 6 in exec form (no shell quoting). The wrapper finds `dist/pairwire.mjs` relative
+to its own path. S1 confirmed that both the shell-string and exec (`args`) forms work, that
+`${CLAUDE_PLUGIN_ROOT}` expands inside `args`, and that a matcher of `"*"`, `""` or none
+matches every tool, MCP tools included.
 
-Shell form, not exec form, because of Windows (ADR-021). Exec form looks `sh` up on `PATH`
-and needs a real `.exe`; Git for Windows' default install puts only its `cmd` directory on
-`PATH`, which has no `sh.exe`. Shell form runs the string with `sh -c` on macOS and Linux and
-with Git Bash on Windows, where `sh` is always found. Claude Code exports
-`CLAUDE_PLUGIN_ROOT` to the hook process, so the shell expands it, inside double quotes, as
-one word whatever characters the path contains. On macOS and Linux this adds one `sh -c`
-process in front of `run.sh`, about a millisecond.
+On native Windows this wiring is **unverified** (ADR-024). Exec form looks `command` up on
+`PATH` and there needs a real executable, and Git for Windows' default install puts only its
+`cmd` directory on `PATH`, which has no `sh.exe`; shell form would instead run the string with
+Git Bash (section 6). Whether Windows keeps exec form or moves to shell form (and what either
+needs on `PATH`) is decided when a Windows Claude Code session can test it. Until then the form
+above, verified on macOS in S1 and S3, ships on every platform.
 
 ```json
 {
   "description": "pairwire: deliver messages from your paired collaborator",
   "hooks": {
-    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" session-start", "timeout": 10 }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" user-prompt-submit", "timeout": 10 }] }],
-    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" post-tool-use", "timeout": 10 }] }],
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "session-start"], "timeout": 10 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "user-prompt-submit"], "timeout": 10 }] }],
+    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "post-tool-use"], "timeout": 10 }] }],
     "Stop":             [{ "hooks": [
-                            { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop", "timeout": 10 },
-                            { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh\" stop-wait", "async": true, "asyncRewake": true, "timeout": 86400 }
+                            { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop"], "timeout": 10 },
+                            { "type": "command", "command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "stop-wait"], "async": true, "asyncRewake": true, "timeout": 86400 }
                           ] }]
   }
 }
