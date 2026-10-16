@@ -6,10 +6,21 @@ import { ManualClock } from "../src/clock.js";
 import type { LogSink } from "../src/log.js";
 import { createLogger } from "../src/log.js";
 import { createRelayServer } from "../src/server.js";
+import type { RoomStore } from "../src/store.js";
 
-export async function startNodeRelay(sink: LogSink = () => {}): Promise<RelayUnderTest & { clock: ManualClock; port: number }> {
-  const clock = new ManualClock(Date.UTC(2026, 9, 15, 12));
-  const server = createRelayServer({ port: 0, host: "127.0.0.1", clock, log: createLogger(sink), version: "0.0.0" });
+export async function startNodeRelay(
+  sink: LogSink = () => {},
+  opts: { clock?: ManualClock; store?: RoomStore } = {},
+): Promise<RelayUnderTest & { clock: ManualClock; port: number }> {
+  const clock = opts.clock ?? new ManualClock(Date.UTC(2026, 9, 15, 12));
+  const server = createRelayServer({
+    port: 0,
+    host: "127.0.0.1",
+    clock,
+    log: createLogger(sink),
+    version: "0.0.0",
+    ...(opts.store && { store: opts.store }),
+  });
   const { port } = await server.listen();
   const remote = relayAt(`127.0.0.1:${port}`, false);
   return {
