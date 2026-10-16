@@ -26,10 +26,20 @@ else
   root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 0
 fi
 
-version=$(node --version 2>/dev/null) || version=""
-major=${version#v}
-major=${major%%.*}
-case "$major" in '' | *[!0-9]*) major=0 ;; esac
+# `node --version` costs a process start (~13 ms), so a Node binary that passed the check is
+# remembered in $home/node-ok and checked again only when that binary changes (builtins only).
+nodepath=$(command -v node 2>/dev/null) || nodepath=""
+cached=
+[ -n "$nodepath" ] && [ -f "$home/node-ok" ] && [ ! "$nodepath" -nt "$home/node-ok" ] && read -r cached <"$home/node-ok"
+if [ -n "$nodepath" ] && [ "$cached" = "$nodepath" ]; then
+  major=20
+else
+  version=$(node --version 2>/dev/null) || version=""
+  major=${version#v}
+  major=${major%%.*}
+  case "$major" in '' | *[!0-9]*) major=0 ;; esac
+  [ "$major" -ge 20 ] && printf '%s\n' "$nodepath" >"$home/node-ok" 2>/dev/null
+fi
 
 if [ "$major" -lt 20 ]; then
   # SessionStart output isn't shown to the human (S1b) and the waiter's stdout is unused.

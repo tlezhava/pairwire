@@ -1,7 +1,12 @@
 #!/usr/bin/env node
 // The `pairwire` executable (04 §1). Each subcommand is imported lazily, so a hook, which must
 // finish in well under 100 ms, never loads the MCP SDK.
+import nodeModule from "node:module";
 import { pairwireHome } from "./paths.js";
+
+// Node >= 22.1 caches compiled code on disk, which takes about a third off a hook's start;
+// older Nodes don't have it and run uncached.
+(nodeModule as { enableCompileCache?: () => unknown }).enableCompileCache?.();
 
 async function readStdin(): Promise<string> {
   let text = "";

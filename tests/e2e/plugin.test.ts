@@ -1,7 +1,7 @@
 // The Claude Code plugin as shipped (04 §6, §8, §9): files, hooks/run.sh and the bundle.
 import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -80,11 +80,12 @@ describe.skipIf(onWindows)("hooks/run.sh", () => {
     const bin = tempDir();
     const log = join(bin, "calls");
     if (version !== null) {
-      writeFileSync(join(bin, "node"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo ${version}; exit 0; fi\necho "$@" >> "${log}"\n`);
+      writeFileSync(join(bin, "node"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo --version >> "${log}.version"; echo ${version}; exit 0; fi\necho "$@" >> "${log}"\n`);
       chmodSync(join(bin, "node"), 0o755);
     }
     const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: tempDir() };
-    return { env, calls: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+    const count = (p: string) => (existsSync(p) ? readFileSync(p, "utf8").split("\n").filter(Boolean).length : 0);
+    return { env, bin, calls: () => (existsSync(log) ? readFileSync(log, "utf8") : ""), versionChecks: () => count(`${log}.version`) };
   }
   const run = (event: string, env: Record<string, string>) => spawnSync("sh", [RUN_SH, event], { env, input: "{}", encoding: "utf8" });
 
@@ -118,6 +119,29 @@ describe.skipIf(onWindows)("hooks/run.sh", () => {
     writeFileSync(join(home, "active"), "");
     expect(run("stop", { ...n.env, PAIRWIRE_HOME: home }).status).toBe(0);
     expect(n.calls()).toBe(`${BUNDLE} hook stop\n`);
+  });
+
+  it("remembers a Node that passed the version check, and checks again when that binary changes", () => {
+    const n = fakeNode("v22.1.0");
+    const home = tempDir();
+    writeFileSync(join(home, "active"), "");
+    for (let i = 0; i < 3; i++) expect(run("post-tool-use", { ...n.env, PAIRWIRE_HOME: home }).status).toBe(0);
+    expect(n.versionChecks()).toBe(1);
+    expect(readFileSync(join(home, "node-ok"), "utf8")).toBe(`${join(n.bin, "node")}\n`);
+    // An upgraded or replaced node binary is newer than the cache: check it again.
+    const later = new Date(Date.now() + 5000);
+    utimesSync(join(n.bin, "node"), later, later);
+    expect(run("post-tool-use", { ...n.env, PAIRWIRE_HOME: home }).status).toBe(0);
+    expect(n.versionChecks()).toBe(2);
+    expect(n.calls().split("\n").filter(Boolean)).toHaveLength(4);
+  });
+
+  it("does not remember a Node that is too old", () => {
+    const n = fakeNode("v18.20.0");
+    const home = tempDir();
+    writeFileSync(join(home, "active"), "");
+    run("post-tool-use", { ...n.env, PAIRWIRE_HOME: home });
+    expect(existsSync(join(home, "node-ok"))).toBe(false);
   });
 
   it("with OS=Windows_NT (Git Bash) looks for the state directory under USERPROFILE, as Node does there", () => {
