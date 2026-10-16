@@ -69,6 +69,11 @@ export function removeFile(path: string): void {
   }
 }
 
+function isContention(e: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  const code = errorCode(e);
+  return code === "EEXIST" || (platform === "win32" && code === "EPERM");
+}
+
 function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -85,7 +90,8 @@ export function withLock<T>(file: string, fn: () => T): T {
       mkdirSync(lock, { mode: PRIVATE_DIR_MODE });
       break;
     } catch (e) {
-      if (errorCode(e) !== "EEXIST") throw e;
+      // Windows answers EPERM while another process is still removing the lock directory.
+      if (!isContention(e)) throw e;
     }
     try {
       if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {

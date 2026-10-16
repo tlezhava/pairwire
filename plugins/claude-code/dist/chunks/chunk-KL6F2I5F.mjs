@@ -9,7 +9,7 @@ import {
   removeFile,
   withLock,
   writeFileAtomic
-} from "./chunk-UOIJGI55.mjs";
+} from "./chunk-5AD7N46G.mjs";
 import {
   ROOM_ID_PATTERN,
   bindingsDir,

@@ -82,6 +82,10 @@ function removeFile(path) {
     if (errorCode(e) !== "ENOENT") throw e;
   }
 }
+function isContention(e, platform = process.platform) {
+  const code = errorCode(e);
+  return code === "EEXIST" || platform === "win32" && code === "EPERM";
+}
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -93,7 +97,7 @@ function withLock(file, fn) {
       mkdirSync(lock, { mode: PRIVATE_DIR_MODE });
       break;
     } catch (e) {
-      if (errorCode(e) !== "EEXIST") throw e;
+      if (!isContention(e)) throw e;
     }
     try {
       if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {

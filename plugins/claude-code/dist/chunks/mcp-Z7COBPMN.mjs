@@ -3,7 +3,7 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   listenCtl,
   transcriptEvents
-} from "./chunk-ITU5NLYV.mjs";
+} from "./chunk-WIPM7H4E.mjs";
 import {
   appendInbox,
   claimUndelivered,
@@ -12,7 +12,7 @@ import {
   toRenderItem,
   unacked,
   updateOutbox
-} from "./chunk-4ZQAS3ZR.mjs";
+} from "./chunk-5OG6GEYB.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -22,10 +22,10 @@ import {
   isProcessAlive,
   removeBindingFor,
   resolveProjectDir
-} from "./chunk-JWR3HKHJ.mjs";
+} from "./chunk-KL6F2I5F.mjs";
 import {
   assertStatePrivate
-} from "./chunk-WPFBHOH2.mjs";
+} from "./chunk-MCBELISQ.mjs";
 import {
   createRoom,
   expiresAt,
@@ -37,7 +37,7 @@ import {
   removeFile,
   resolveDisplayName,
   updateState
-} from "./chunk-UOIJGI55.mjs";
+} from "./chunk-5AD7N46G.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
