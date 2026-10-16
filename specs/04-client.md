@@ -622,10 +622,11 @@ Releases follow ADR-021. One version covers the npm package, the plugin and both
   `hooks/run.sh` and the skill next to `dist/`. An e2e test packs it with `npm pack`,
   installs the tarball into a temporary prefix and runs the installed `pairwire doctor`,
   `install --print-config` and `install --codex`.
-- **Release script.** `npm run release -- <version>` (`scripts/release.ts`) needs a clean
-  working tree, a version greater than the npm package's current one
-  (`packages/client/package.json`) and a tag that doesn't exist yet. It
-  writes the version to `packages/client/package.json`, `packages/client/src/version.ts`,
+- **Release script.** `npm run release -- <version>` (`scripts/release.ts`) first runs its
+  preflight checks (the exported, unit-tested `preflight`): no changes to tracked files,
+  staged or not (untracked files are ignored, so a local `.claude/` doesn't block a
+  release), a version greater than the npm package's current one
+  (`packages/client/package.json`) and a tag that doesn't exist yet. It writes the version to `packages/client/package.json`, `packages/client/src/version.ts`,
   `plugins/claude-code/.claude-plugin/plugin.json`, `packages/relay-node/package.json`,
   `packages/relay-worker/package.json`, `packages/relay-worker/src/version.ts` and their
   entries in `package-lock.json`; runs `npm run build:plugin`, `lint`, `test`, `test:e2e`

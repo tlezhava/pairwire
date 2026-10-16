@@ -136,16 +136,32 @@ export function bumpVersions(root: string, version: string): string[] {
   return changed;
 }
 
-function git(...args: string[]): string {
-  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
+/** Runs git with the given arguments and returns its trimmed stdout. */
+export type Git = (...args: string[]) => string;
+
+/** A Git that runs in `cwd`. */
+export function gitIn(cwd: string): Git {
+  return (...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+}
+
+const git = gitIn(ROOT);
+
+/**
+ * The checks a release makes before it changes anything (04 §9): no changes to tracked files
+ * (untracked files, such as a local `.claude/`, don't count), no existing tag `v<version>`, and
+ * a version greater than the npm package's current one. Throws ReleaseError on the first failure.
+ */
+export function preflight(version: string, root: string = ROOT, run: Git = gitIn(root)): void {
+  const tag = `v${version}`;
+  if (run("status", "--porcelain", "--untracked-files=no") !== "") throw new ReleaseError("The working tree has changes to tracked files; commit or discard them first.");
+  if (run("tag", "--list", tag) !== "") throw new ReleaseError(`Tag ${tag} already exists.`);
+  const current = readVersions(root)[0]!.version ?? "0.0.0";
+  if (compareVersions(version, current) <= 0) throw new ReleaseError(`${version} is not greater than the current version ${current}.`);
 }
 
 function release(version: string): void {
   const tag = `v${version}`;
-  if (git("status", "--porcelain") !== "") throw new ReleaseError("The working tree has changes; commit or remove them first.");
-  if (git("tag", "--list", tag) !== "") throw new ReleaseError(`Tag ${tag} already exists.`);
-  const current = readVersions(ROOT)[0]!.version ?? "0.0.0";
-  if (compareVersions(version, current) <= 0) throw new ReleaseError(`${version} is not greater than the current version ${current}.`);
+  preflight(version, ROOT, git);
 
   const changed = bumpVersions(ROOT, version);
   process.stdout.write(`set ${version} in ${changed.join(", ")}\n`);

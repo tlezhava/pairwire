@@ -7,3 +7,4 @@ coverage/
 *.tsbuildinfo
 .wrangler/
 build/
+.claude/worktrees/

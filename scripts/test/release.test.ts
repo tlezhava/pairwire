@@ -1,9 +1,9 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { bumpVersions, checkVersions, compareVersions, LOCATIONS, parseVersion, readVersions, ReleaseError } from "../release.js";
+import { bumpVersions, checkVersions, compareVersions, gitIn, LOCATIONS, parseVersion, preflight, readVersions, ReleaseError, type Git } from "../release.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const FILES = [...new Set(LOCATIONS.map((l) => l.file))];
@@ -100,5 +100,62 @@ describe("checkVersions", () => {
     expect(checkVersions(root, "1.0.0")).toEqual(["packages/relay-worker/src/version.ts: 0.9.0, expected 1.0.0"]);
     writeFileSync(join(root, "plugins/claude-code/.claude-plugin/plugin.json"), JSON.stringify({ name: "pairwire" }));
     expect(checkVersions(root, "1.0.0")).toContain("plugins/claude-code/.claude-plugin/plugin.json: no version found, expected 1.0.0");
+  });
+});
+
+describe("preflight", () => {
+  /** A copy of the version files committed to a fresh git repository at version 1.2.0. */
+  function repo(): { root: string; git: Git } {
+    const root = copyRoot();
+    bumpVersions(root, "1.2.0");
+    const run = gitIn(root);
+    const git: Git = (...args) => run("-c", "user.name=pairwire test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args);
+    git("init", "-q", "-b", "main");
+    git("add", "-A");
+    git("commit", "-q", "-m", "init");
+    return { root, git };
+  }
+
+  it("passes on a clean tree with a new, greater version", () => {
+    const { root, git } = repo();
+    expect(() => preflight("1.2.1", root, git)).not.toThrow();
+    expect(() => preflight("2.0.0-rc.1", root, git)).not.toThrow();
+  });
+
+  it("refuses a version equal to or lower than the current one", () => {
+    const { root, git } = repo();
+    expect(() => preflight("1.2.0", root, git)).toThrow(/1\.2\.0 is not greater than the current version 1\.2\.0/);
+    expect(() => preflight("1.1.9", root, git)).toThrow(/not greater than the current version 1\.2\.0/);
+    expect(() => preflight("1.2.0-rc.1", root, git)).toThrow(ReleaseError);
+  });
+
+  it("refuses a tag that already exists", () => {
+    const { root, git } = repo();
+    git("tag", "-a", "v1.3.0", "-m", "x");
+    expect(() => preflight("1.3.0", root, git)).toThrow(/Tag v1\.3\.0 already exists/);
+    expect(() => preflight("1.3.1", root, git)).not.toThrow();
+  });
+
+  it("refuses changes to tracked files, staged or not", () => {
+    const { root, git } = repo();
+    const file = join(root, "packages/client/src/version.ts");
+    const original = readFileSync(file, "utf8");
+    writeFileSync(file, original + "// edit\n");
+    expect(() => preflight("1.3.0", root, git)).toThrow(/changes to tracked files/);
+    git("add", "-A");
+    expect(() => preflight("1.3.0", root, git)).toThrow(/changes to tracked files/);
+    git("reset", "-q", "--hard");
+    writeFileSync(join(root, "staged-new-file.txt"), "x");
+    git("add", "staged-new-file.txt");
+    expect(() => preflight("1.3.0", root, git)).toThrow(/changes to tracked files/);
+  });
+
+  it("ignores untracked files, such as a local .claude/ directory", () => {
+    const { root, git } = repo();
+    mkdirSync(join(root, ".claude/worktrees/wf"), { recursive: true });
+    writeFileSync(join(root, ".claude/worktrees/wf/file.txt"), "x");
+    writeFileSync(join(root, "notes.txt"), "x");
+    expect(git("status", "--porcelain")).not.toBe("");
+    expect(() => preflight("1.3.0", root, git)).not.toThrow();
   });
 });
