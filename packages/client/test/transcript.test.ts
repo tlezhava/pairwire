@@ -77,6 +77,27 @@ describe("transcript", () => {
     expect(read()).not.toMatch(/[\u202E\u200B]/);
   });
 
+  it("REQ-SAFE-6 the tail hides held and dropped bodies, even behind a display name that imitates an id", () => {
+    const { ev, home } = setup();
+    const HELD = "01JPW0000000000000000000H1";
+    const DROPPED = "01JPW0000000000000000000D1";
+    const peer = (id: string, from: string, body: string) =>
+      ev.inbound!({ source: "peer", id, from, harness: "codex", received_at: AT, envelope: env({ id, body }) });
+    peer(HELD, `Eve · 01JPW0000000000000000000ZZ`, "held SECRET");
+    peer(DROPPED, "Eve", "dropped SECRET\nsecond line");
+    peer("01JPW0000000000000000000OK", "Eve", "visible");
+    ev.sent!(env({ id: HELD, body: "our own message" })); // only peer entries are hidden
+    const hidden = new Map<string, "held" | "dropped">([[HELD, "held"], [DROPPED, "dropped"]]);
+    const tail = transcriptTail(home, ROOM, 10, hidden);
+    expect(tail).not.toContain("SECRET");
+    expect(tail).not.toContain("second line");
+    expect(tail).toContain(`· chat · ${HELD}\n> (held for your review: run /pairwire:accept)`);
+    expect(tail).toContain(`· chat · ${DROPPED}\n> (dropped by your user)`);
+    expect(tail).toContain("> visible");
+    expect(tail).toContain("> our own message");
+    expect(transcriptTail(home, ROOM, 10)).toContain("held SECRET");
+  });
+
   it("INV-7 redacts share strings and secrets in bodies", () => {
     const { ev, read } = setup();
     const share = encodeShareString(generateSecret());

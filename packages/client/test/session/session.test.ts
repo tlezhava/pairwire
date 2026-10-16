@@ -207,7 +207,7 @@ describe("ownership", () => {
 });
 
 describe("MCP server", () => {
-  it("exposes exactly the six tools and no way to reset the hop budget or send as human", async () => {
+  it("REQ-SAFE-6 exposes exactly the six tools and no way to reset the hop budget, send as human or release held messages", async () => {
     const { port } = await startRelay();
     const a = side(port, "Tazo");
     const server = createMcpServer(a.session);

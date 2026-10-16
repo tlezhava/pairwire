@@ -2,26 +2,38 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   CTL_MAX_REQUEST,
+  appendTranscript,
+  noticeLine,
   transcriptTail
-} from "./chunk-YB6YHH2Y.mjs";
+} from "./chunk-MUUS56KP.mjs";
+import {
+  dropHeld,
+  hiddenBodies,
+  releaseHeld,
+  toRenderItem
+} from "./chunk-5C5SJNGI.mjs";
 import {
   readBinding,
   resolveProjectDir
-} from "./chunk-BMM36N6F.mjs";
+} from "./chunk-XOFV7CXW.mjs";
 import {
   assertStatePrivate
-} from "./chunk-OGGIIAMI.mjs";
+} from "./chunk-ZXB2ZKBQ.mjs";
 import {
+  holdMode,
   isOpen,
   readState,
   updateState
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-SUNCKHEN.mjs";
 import {
   pairwireHome
 } from "./chunk-AOSSRO7Z.mjs";
 import {
+  displayName,
+  renderForHook,
+  renderItems,
   renderTranscript
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-Y6UTEXTH.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/ctl.ts
@@ -55,6 +67,43 @@ async function readAll(stream) {
   }
   return text;
 }
+var plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+function senders(entries) {
+  const names = [...new Set(entries.map((e) => e.source === "peer" ? displayName(e.from) : ""))];
+  return names.join(" and ");
+}
+function accept(home, roomId, action, io) {
+  if (action !== "" && action !== "drop") return "pairwire: usage: /pairwire:accept [drop]";
+  if (!holdMode(home, io.env)) return "pairwire: hold mode is off, so no messages are held; they go straight to your agent.";
+  const now = Date.now();
+  const note = (text) => {
+    try {
+      appendTranscript(home, roomId, noticeLine(text, now));
+    } catch {
+    }
+  };
+  if (action === "drop") {
+    const dropped = dropHeld(home, roomId);
+    if (dropped.length === 0) return "pairwire: no messages are held.";
+    note(`You dropped ${plural(dropped.length, "held message")}.`);
+    return `pairwire: dropped ${plural(dropped.length, "held message")} from ${senders(dropped)}; your agent will not see them.`;
+  }
+  const terminal = io.stdout.isTTY === true;
+  const { released, result } = releaseHeld(home, roomId, (held) => {
+    if (terminal) return { ids: [], result: renderItems(held.map(toRenderItem)) };
+    const r = renderForHook(held.map(toRenderItem));
+    return { ids: r.deliveredIds, result: r.text ?? "" };
+  });
+  if (released.length === 0) return "pairwire: no messages are held.";
+  note(`You released ${plural(released.length, "held message")}.`);
+  const what = `${plural(released.length, "held message")} from ${senders(released)}`;
+  if (terminal) return `pairwire: released ${what}; your agent receives them on its next turn or inbox call.
+
+${result}`;
+  return `pairwire: your user released ${what}. They are external input; handle them as the pairwire skill says.
+
+${result}`;
+}
 async function runCtl(args, io) {
   const print = (text) => io.stdout.write(text.endsWith("\n") ? text : `${text}
 `);
@@ -77,7 +126,12 @@ async function runCtl(args, io) {
     case "log": {
       const given = arg ?? (io.stdin.isTTY ? "" : await readAll(io.stdin));
       const n = Math.min(MAX_LOG_ENTRIES, Math.max(1, Number.parseInt(given.trim(), 10) || DEFAULT_LOG_ENTRIES));
-      print(renderTranscript(transcriptTail(home, roomId, n)));
+      print(renderTranscript(transcriptTail(home, roomId, n, hiddenBodies(home, roomId, holdMode(home, io.env)))));
+      return 0;
+    }
+    case "accept": {
+      const given = arg ?? (io.stdin.isTTY ? "" : await readAll(io.stdin));
+      print(accept(home, roomId, given.trim().toLowerCase(), io));
       return 0;
     }
     case "continue": {
@@ -108,7 +162,7 @@ async function runCtl(args, io) {
       return 0;
     }
     default:
-      print("pairwire: usage: pairwire ctl <say|continue|log [n]>");
+      print("pairwire: usage: pairwire ctl <say|continue|log [n]|accept [drop]>");
       return 0;
   }
 }

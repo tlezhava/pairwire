@@ -8,14 +8,14 @@ import {
   removeFile,
   withLock,
   writeFileAtomic
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-SUNCKHEN.mjs";
 import {
   ROOM_ID_PATTERN,
   bindingsDir
 } from "./chunk-AOSSRO7Z.mjs";
 import {
   external_exports
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-Y6UTEXTH.mjs";
 import {
   bytesToHex,
   sha256,

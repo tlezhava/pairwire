@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   HARNESSES
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-Y6UTEXTH.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/install.ts
@@ -20,7 +20,7 @@ var EVENT_ARG = {
   PostToolUse: "post-tool-use",
   Stop: "stop"
 };
-var ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"];
+var ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"];
 var InstallError = class extends Error {
   name = "InstallError";
 };

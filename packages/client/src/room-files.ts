@@ -19,7 +19,7 @@ export const inboxEntrySchema = z.discriminatedUnion("source", [
   z.strictObject({
     source: z.literal("local"),
     id: z.string(),
-    event: z.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key"]),
+    event: z.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key", "held"]),
     text: z.string(),
     received_at: millis,
   }),
@@ -97,50 +97,149 @@ export function updateOutbox(home: string, roomId: string, change: (entries: Out
 
 export const unacked = (entries: readonly OutboxEntry[]) => entries.filter((e) => e.status !== "delivered");
 
-const deliveredSchema = z.strictObject({ ids: z.array(z.string()) });
+const deliveredSchema = z.strictObject({
+  ids: z.array(z.string()),
+  released: z.array(z.string()).optional(),
+  dropped: z.array(z.string()).optional(),
+});
+
+/**
+ * delivered.json (04 §3): `ids` shown to the agent (or dropped), and hold mode's `released`
+ * and `dropped` ids (04 §5, Hold mode).
+ */
+export interface DeliveryLedger {
+  ids: Set<string>;
+  released: Set<string>;
+  dropped: Set<string>;
+}
+
+export function readLedger(home: string, roomId: string): DeliveryLedger {
+  try {
+    const v = deliveredSchema.parse(JSON.parse(readFileSync(roomFile(home, roomId, "delivered.json"), "utf8")));
+    return { ids: new Set(v.ids), released: new Set(v.released), dropped: new Set(v.dropped) };
+  } catch {
+    // missing, or corrupt: worst case the agent sees an item twice; held items stay held
+    return { ids: new Set(), released: new Set(), dropped: new Set() };
+  }
+}
+
+function writeLedger(path: string, l: DeliveryLedger): void {
+  writeFileAtomic(path, JSON.stringify({ ids: [...l.ids], released: [...l.released], dropped: [...l.dropped] }) + "\n");
+}
+
+/** Read-modify-write of delivered.json under its lock. */
+function withLedger<T>(home: string, roomId: string, fn: (l: DeliveryLedger, save: () => void) => T): T {
+  const path = roomFile(home, roomId, "delivered.json");
+  return withLock(path, () => {
+    const l = readLedger(home, roomId);
+    return fn(l, () => writeLedger(path, l));
+  });
+}
 
 /** Ids of inbox entries already shown to the agent (04 §3). */
 export function readDelivered(home: string, roomId: string): Set<string> {
-  try {
-    return new Set(deliveredSchema.parse(JSON.parse(readFileSync(roomFile(home, roomId, "delivered.json"), "utf8"))).ids);
-  } catch (e) {
-    if (errorCode(e) === "ENOENT") return new Set();
-    return new Set(); // corrupt: worst case the agent sees an item twice
-  }
+  return readLedger(home, roomId).ids;
 }
 
 export function markDelivered(home: string, roomId: string, ids: readonly string[]): void {
   if (ids.length === 0) return;
-  const path = roomFile(home, roomId, "delivered.json");
-  withLock(path, () => {
-    const all = readDelivered(home, roomId);
-    for (const id of ids) all.add(id);
-    writeFileAtomic(path, JSON.stringify({ ids: [...all] }) + "\n");
+  withLedger(home, roomId, (l, save) => {
+    for (const id of ids) l.ids.add(id);
+    save();
   });
 }
 
-/** Inbox entries the agent hasn't seen yet, oldest first. */
-export function undelivered(home: string, roomId: string): InboxEntry[] {
-  const seen = readDelivered(home, roomId);
-  return readInbox(home, roomId).filter((e) => !seen.has(e.id));
+/** A peer message the human hasn't released yet, in hold mode (04 §5, Hold mode). */
+function isHeld(e: InboxEntry, l: DeliveryLedger, hold: boolean): boolean {
+  return hold && e.source === "peer" && !l.ids.has(e.id) && !l.released.has(e.id);
+}
+
+export interface InboxCounts {
+  /** Unread peer messages the agent may see. */
+  messages: number;
+  /** Unread local notices. */
+  notices: number;
+  /** Peer messages waiting for the human's /pairwire:accept. */
+  held: number;
+}
+
+export function inboxCounts(home: string, roomId: string, hold: boolean): InboxCounts {
+  const l = readLedger(home, roomId);
+  const counts: InboxCounts = { messages: 0, notices: 0, held: 0 };
+  for (const e of readInbox(home, roomId)) {
+    if (l.ids.has(e.id)) continue;
+    if (isHeld(e, l, hold)) counts.held++;
+    else if (e.source === "peer") counts.messages++;
+    else counts.notices++;
+  }
+  return counts;
 }
 
 /**
  * Atomically picks undelivered items to show and marks exactly those delivered, under the
  * delivered.json lock, so two delivery paths (a hook and the inbox tool) never show one item
- * twice. `pick` returns the ids it rendered.
+ * twice. Held messages are never offered to `pick` (04 §5, Hold mode). `pick` returns the ids
+ * it rendered.
  */
-export function claimUndelivered<T>(home: string, roomId: string, pick: (items: InboxEntry[]) => { ids: readonly string[]; result: T }): T {
-  const path = roomFile(home, roomId, "delivered.json");
-  return withLock(path, () => {
-    const seen = readDelivered(home, roomId);
-    const { ids, result } = pick(readInbox(home, roomId).filter((e) => !seen.has(e.id)));
+export function claimUndelivered<T>(
+  home: string,
+  roomId: string,
+  opts: { hold: boolean },
+  pick: (items: InboxEntry[]) => { ids: readonly string[]; result: T },
+): T {
+  return withLedger(home, roomId, (l, save) => {
+    const { ids, result } = pick(readInbox(home, roomId).filter((e) => !l.ids.has(e.id) && !isHeld(e, l, opts.hold)));
     if (ids.length > 0) {
-      for (const id of ids) seen.add(id);
-      writeFileAtomic(path, JSON.stringify({ ids: [...seen] }) + "\n");
+      for (const id of ids) l.ids.add(id);
+      save();
     }
     return result;
   });
+}
+
+/**
+ * /pairwire:accept (04 §5, §8): releases every held message under the delivered.json lock.
+ * `pick` sees the released messages, oldest first, and returns the ids it showed to the agent,
+ * which are marked delivered in the same step; the rest reach the agent by the normal paths.
+ * Called only in hold mode; returns the released messages and pick's result.
+ */
+export function releaseHeld<T>(
+  home: string,
+  roomId: string,
+  pick: (released: InboxEntry[]) => { ids: readonly string[]; result: T },
+): { released: InboxEntry[]; result: T } {
+  return withLedger(home, roomId, (l, save) => {
+    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    const { ids, result } = pick(held);
+    if (held.length === 0) return { released: held, result };
+    for (const e of held) l.released.add(e.id);
+    for (const id of ids) l.ids.add(id);
+    save();
+    return { released: held, result };
+  });
+}
+
+/** /pairwire:accept drop: no path ever shows these messages. Returns the dropped messages. */
+export function dropHeld(home: string, roomId: string): InboxEntry[] {
+  return withLedger(home, roomId, (l, save) => {
+    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    if (held.length === 0) return held;
+    for (const e of held) {
+      l.dropped.add(e.id);
+      l.ids.add(e.id);
+    }
+    save();
+    return held;
+  });
+}
+
+/** Peer message ids whose bodies /pairwire:log must not show (04 §8): held and dropped ones. */
+export function hiddenBodies(home: string, roomId: string, hold: boolean): Map<string, "held" | "dropped"> {
+  const l = readLedger(home, roomId);
+  const out = new Map<string, "held" | "dropped">();
+  for (const e of readInbox(home, roomId)) if (isHeld(e, l, hold)) out.set(e.id, "held");
+  for (const id of l.dropped) out.set(id, "dropped");
+  return out;
 }
 
 /** The renderer's view of an inbox entry (core render.ts). */

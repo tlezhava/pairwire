@@ -19,7 +19,7 @@ const EVENT_ARG: Record<(typeof CODEX_HOOK_EVENTS)[number], string> = {
   Stop: "stop",
 };
 /** Passed by name: Codex starts MCP servers with a cleared environment (04 §10). */
-const ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"];
+const ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"];
 
 export interface InstallOptions {
   /** The plugin layout to install from: contains dist/, hooks/run.sh, skills/. */

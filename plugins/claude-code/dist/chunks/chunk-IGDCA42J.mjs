@@ -3,13 +3,13 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   PRIVATE_FILE_MODE,
   ensurePrivateDir
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-SUNCKHEN.mjs";
 import {
   hookErrorsPath
 } from "./chunk-AOSSRO7Z.mjs";
 import {
   redact
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-Y6UTEXTH.mjs";
 
 // packages/client/src/log.ts
 import { appendFileSync, renameSync, statSync } from "node:fs";

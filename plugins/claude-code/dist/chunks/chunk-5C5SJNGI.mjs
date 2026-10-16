@@ -5,14 +5,14 @@ import {
   errorCode,
   withLock,
   writeFileAtomic
-} from "./chunk-WHFFQDID.mjs";
+} from "./chunk-SUNCKHEN.mjs";
 import {
   roomFile
 } from "./chunk-AOSSRO7Z.mjs";
 import {
   envelopeSchema,
   external_exports
-} from "./chunk-5TF4YXFP.mjs";
+} from "./chunk-Y6UTEXTH.mjs";
 
 // packages/client/src/room-files.ts
 import { appendFileSync, readFileSync } from "node:fs";
@@ -29,7 +29,7 @@ var inboxEntrySchema = external_exports.discriminatedUnion("source", [
   external_exports.strictObject({
     source: external_exports.literal("local"),
     id: external_exports.string(),
-    event: external_exports.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key"]),
+    event: external_exports.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key", "held"]),
     text: external_exports.string(),
     received_at: millis
   })
@@ -91,30 +91,82 @@ function updateOutbox(home, roomId, change) {
   });
 }
 var unacked = (entries) => entries.filter((e) => e.status !== "delivered");
-var deliveredSchema = external_exports.strictObject({ ids: external_exports.array(external_exports.string()) });
-function readDelivered(home, roomId) {
+var deliveredSchema = external_exports.strictObject({
+  ids: external_exports.array(external_exports.string()),
+  released: external_exports.array(external_exports.string()).optional(),
+  dropped: external_exports.array(external_exports.string()).optional()
+});
+function readLedger(home, roomId) {
   try {
-    return new Set(deliveredSchema.parse(JSON.parse(readFileSync(roomFile(home, roomId, "delivered.json"), "utf8"))).ids);
-  } catch (e) {
-    if (errorCode(e) === "ENOENT") return /* @__PURE__ */ new Set();
-    return /* @__PURE__ */ new Set();
+    const v = deliveredSchema.parse(JSON.parse(readFileSync(roomFile(home, roomId, "delivered.json"), "utf8")));
+    return { ids: new Set(v.ids), released: new Set(v.released), dropped: new Set(v.dropped) };
+  } catch {
+    return { ids: /* @__PURE__ */ new Set(), released: /* @__PURE__ */ new Set(), dropped: /* @__PURE__ */ new Set() };
   }
 }
-function undelivered(home, roomId) {
-  const seen = readDelivered(home, roomId);
-  return readInbox(home, roomId).filter((e) => !seen.has(e.id));
+function writeLedger(path, l) {
+  writeFileAtomic(path, JSON.stringify({ ids: [...l.ids], released: [...l.released], dropped: [...l.dropped] }) + "\n");
 }
-function claimUndelivered(home, roomId, pick) {
+function withLedger(home, roomId, fn) {
   const path = roomFile(home, roomId, "delivered.json");
   return withLock(path, () => {
-    const seen = readDelivered(home, roomId);
-    const { ids, result } = pick(readInbox(home, roomId).filter((e) => !seen.has(e.id)));
+    const l = readLedger(home, roomId);
+    return fn(l, () => writeLedger(path, l));
+  });
+}
+function isHeld(e, l, hold) {
+  return hold && e.source === "peer" && !l.ids.has(e.id) && !l.released.has(e.id);
+}
+function inboxCounts(home, roomId, hold) {
+  const l = readLedger(home, roomId);
+  const counts = { messages: 0, notices: 0, held: 0 };
+  for (const e of readInbox(home, roomId)) {
+    if (l.ids.has(e.id)) continue;
+    if (isHeld(e, l, hold)) counts.held++;
+    else if (e.source === "peer") counts.messages++;
+    else counts.notices++;
+  }
+  return counts;
+}
+function claimUndelivered(home, roomId, opts, pick) {
+  return withLedger(home, roomId, (l, save) => {
+    const { ids, result } = pick(readInbox(home, roomId).filter((e) => !l.ids.has(e.id) && !isHeld(e, l, opts.hold)));
     if (ids.length > 0) {
-      for (const id of ids) seen.add(id);
-      writeFileAtomic(path, JSON.stringify({ ids: [...seen] }) + "\n");
+      for (const id of ids) l.ids.add(id);
+      save();
     }
     return result;
   });
+}
+function releaseHeld(home, roomId, pick) {
+  return withLedger(home, roomId, (l, save) => {
+    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    const { ids, result } = pick(held);
+    if (held.length === 0) return { released: held, result };
+    for (const e of held) l.released.add(e.id);
+    for (const id of ids) l.ids.add(id);
+    save();
+    return { released: held, result };
+  });
+}
+function dropHeld(home, roomId) {
+  return withLedger(home, roomId, (l, save) => {
+    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    if (held.length === 0) return held;
+    for (const e of held) {
+      l.dropped.add(e.id);
+      l.ids.add(e.id);
+    }
+    save();
+    return held;
+  });
+}
+function hiddenBodies(home, roomId, hold) {
+  const l = readLedger(home, roomId);
+  const out = /* @__PURE__ */ new Map();
+  for (const e of readInbox(home, roomId)) if (isHeld(e, l, hold)) out.set(e.id, "held");
+  for (const id of l.dropped) out.set(id, "dropped");
+  return out;
 }
 function toRenderItem(e) {
   if (e.source === "local") return { source: "local", id: e.id, event: e.event, text: e.text };
@@ -126,7 +178,10 @@ export {
   readOutbox,
   updateOutbox,
   unacked,
-  undelivered,
+  inboxCounts,
   claimUndelivered,
+  releaseHeld,
+  dropHeld,
+  hiddenBodies,
   toRenderItem
 };

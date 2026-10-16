@@ -2,6 +2,7 @@
 // connection, and the six tools. Tool methods return text for the agent and never throw.
 import {
   DEFAULT_RELAY_HOST,
+  noticeHeld,
   deriveRoomKeys,
   displayName,
   EnvelopeTooLargeError,
@@ -21,13 +22,13 @@ import {
 } from "@pairwire/core";
 import { z } from "zod";
 import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, PassiveSessionError } from "./binding.js";
-import { loadConfig, resolveDisplayName, type Config } from "./config.js";
+import { holdMode, loadConfig, resolveDisplayName, type Config } from "./config.js";
 import { RoomConnection, type ConnectionEvents, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 import type { Logger } from "./log.js";
 import { roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
-import { claimUndelivered, readOutbox, toRenderItem, undelivered } from "./room-files.js";
+import { claimUndelivered, inboxCounts, readOutbox, toRenderItem, type InboxCounts, type InboxEntry } from "./room-files.js";
 import { createRoom, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
 import { transcriptEvents } from "./transcript.js";
 import { CLIENT_VERSION } from "./version.js";
@@ -194,7 +195,7 @@ export class ClientSession {
     const state = this.#roomState();
     if (this.#waiters.size === 0 || !state) return;
     for (const [session, socket] of this.#waiters) {
-      const rendered = claimUndelivered(this.#o.home, state.roomId, (items) => {
+      const rendered = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => {
         const r = renderForHook(items.map(toRenderItem));
         return { ids: r.deliveredIds, result: r.text };
       });
@@ -203,6 +204,22 @@ export class ClientSession {
       socket.end(JSON.stringify({ t: "wake", text: `${WAKE_LEAD}\n\n${rendered}` } satisfies WaitFrame) + "\n");
       return;
     }
+  }
+
+  /** Hold mode, read afresh for every delivery decision (04 §2). */
+  #hold(): boolean {
+    return holdMode(this.#o.home, this.#o.env);
+  }
+
+  /**
+   * Hold mode (04 §5): the first message held tells the human through a `held` notice, which
+   * flows (and wakes) like any notice. Later ones add none until the human accepts or drops.
+   */
+  #noteHeld(entry: InboxEntry): void {
+    const roomId = this.#roomId;
+    if (entry.source !== "peer" || !roomId || !this.#hold()) return;
+    if (inboxCounts(this.#o.home, roomId, true).held !== 1) return;
+    this.#conn?.notice(noticeHeld(entry.from));
   }
 
   #closeCtl(): void {
@@ -310,7 +327,7 @@ export class ClientSession {
       // An ended room's last messages (the bye, the notice) must stay readable.
       const state = this.#roomState();
       if (!state) throw new ToolError("No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
-      const text = claimUndelivered(this.#o.home, state.roomId, (items) => ({
+      const text = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => ({
         ids: items.map((i) => i.id),
         result: items.length > 0 ? renderItems(items.map(toRenderItem)) : "No new messages.",
       }));
@@ -324,12 +341,14 @@ export class ClientSession {
       const state = this.#roomState();
       if (!state) return "No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.";
       const conn = this.#conn?.status();
+      const hold = this.#hold();
       const lines = [
         `Room: ${state.status}${state.error ? ` (${state.error})` : ""}`,
         `Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${conn?.peerConnected ? ", online" : state.peer ? ", offline" : ""}`,
         `Connection: ${conn?.halted ? `stopped (${conn.halted})` : (conn?.socket ?? "offline")}`,
         `Relay: ${state.relay ?? "default relay"}`,
-        `Inbox: ${unreadText(undelivered(this.#o.home, state.roomId))}`,
+        `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold))}`,
+        ...(hold ? ["Hold mode: on (peer messages wait until your user runs /pairwire:accept)"] : []),
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         `Transcript: ${roomFile(this.#o.home, state.roomId, "transcript.md")}`,
       ];
@@ -371,7 +390,7 @@ export class ClientSession {
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
-    return `[pairwire] ${who} · ${unreadText(undelivered(this.#o.home, state.roomId))} · hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
+    return `[pairwire] ${who} · ${unreadText(inboxCounts(this.#o.home, state.roomId, this.#hold()))} · hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
   }
 
   #ready(): Config {
@@ -444,6 +463,8 @@ export class ClientSession {
         // Messages and notices (never acks) wake an idle session (D3).
         { inbound: () => this.#wake() },
         transcriptEvents(this.#o.home, roomId, this.#now, (e) => this.#o.log.error("transcript_failed", e), () => !!readState(this.#o.home, roomId)?.sessions.current),
+        // After the transcript has the message, so the notice's line follows it.
+        { inbound: (entry) => this.#noteHeld(entry) },
         this.#o.events,
       ),
       ...(this.#o.socketFactory ? { socketFactory: this.#o.socketFactory } : {}),
@@ -522,13 +543,15 @@ export class ClientSession {
   }
 }
 
-/** PAIRWIRE_HARNESS from the plugin config (e.g. "claude-code"); anything unknown is "other". */
-/** "2 unread messages, 1 notice": notices (joins, warnings) are not messages from the peer. */
-function unreadText(items: readonly { source: "peer" | "local" }[]): string {
-  const messages = items.filter((i) => i.source === "peer").length;
-  const notices = items.length - messages;
-  const m = `${messages} unread message${messages === 1 ? "" : "s"}`;
-  return notices > 0 ? `${m}, ${notices} notice${notices === 1 ? "" : "s"}` : m;
+/**
+ * "2 unread messages, 1 notice": notices (joins, warnings) are not messages from the peer, and
+ * held messages (04 §5, Hold mode) are not unread for the agent.
+ */
+function unreadText({ messages, notices, held }: InboxCounts): string {
+  let text = `${messages} unread message${messages === 1 ? "" : "s"}`;
+  if (notices > 0) text += `, ${notices} notice${notices === 1 ? "" : "s"}`;
+  if (held > 0) text += `, ${held} held for your user's review (/pairwire:accept)`;
+  return text;
 }
 
 /** Calls every handler of each event set, in order. */
@@ -542,6 +565,7 @@ function mergeEvents(...sets: (ConnectionEvents | undefined)[]): ConnectionEvent
   return out;
 }
 
+/** PAIRWIRE_HARNESS from the plugin config (e.g. "claude-code"); anything unknown is "other". */
 function harnessOf(env: NodeJS.ProcessEnv): Harness {
   const h = env.PAIRWIRE_HARNESS?.trim() ?? "";
   return (HARNESSES as readonly string[]).includes(h) ? (h as Harness) : "other";

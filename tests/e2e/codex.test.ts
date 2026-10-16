@@ -48,7 +48,7 @@ describe("pairwire install --codex", () => {
         'command = "node"',
         `args = [${JSON.stringify(join(bin, "dist", "pairwire.mjs"))}, "mcp"]`,
         'env = { PAIRWIRE_HARNESS = "codex" }',
-        'env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"]',
+        'env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"]',
         "startup_timeout_sec = 20",
         "# <<< pairwire <<<",
       ].join("\n"),

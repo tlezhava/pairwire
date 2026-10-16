@@ -97,6 +97,28 @@ describe("hooks: delivery (D2)", () => {
     expect(readDelivered(p.home, ROOM).size).toBe(0);
   });
 
+  it("REQ-SAFE-6 in hold mode no hook injects a peer message or blocks Stop for it; notices still flow", () => {
+    const h = setup({ config: { hold: true } });
+    h.message("HELD body");
+    expect(h.run("post-tool-use", "post-tool-use-bash")).toBeNull();
+    expect(h.run("user-prompt-submit", "user-prompt-submit")).toBeNull();
+    expect(h.run("stop", "stop")).toBeNull();
+    appendInbox(h.home, ROOM, { source: "local", id: "notice-1", event: "held", text: "A message from Nika is held for your review.", received_at: Date.now() });
+    const out = h.run("stop", "stop");
+    expect(out?.decision).toBe("block");
+    expect(String(out?.reason)).toContain('<pairwire_notice event="held">');
+    expect(String(out?.reason)).not.toContain("HELD body");
+    expect([...readDelivered(h.home, ROOM)]).toEqual(["notice-1"]);
+  });
+
+  it("REQ-SAFE-6 a config that can't be read holds peer messages", () => {
+    const h = setup();
+    writeFileSync(join(h.home, "config.json"), "{broken");
+    h.message("HELD body");
+    expect(h.run("post-tool-use", "post-tool-use-bash")).toBeNull();
+    expect(readDelivered(h.home, ROOM).size).toBe(0);
+  });
+
   it("injects whole messages within the context cap and leaves a long one for the inbox tool", () => {
     const h = setup();
     h.message("x".repeat(9000));
