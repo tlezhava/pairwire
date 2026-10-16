@@ -2,7 +2,7 @@
 #   docker build -f packages/relay-node/Dockerfile -t pairwire-relay .
 # Run behind a TLS-terminating proxy; clients require wss://.
 # Optional state across restarts: -v pairwire-relay:/data -e PAIRWIRE_RELAY_STATE=sqlite:/data/relay.db
-# (node:24 has the built-in node:sqlite it needs; ADR-021).
+# (node:24 has the built-in node:sqlite it needs; ADR-022).
 
 FROM node:24-alpine AS build
 WORKDIR /app

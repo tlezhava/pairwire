@@ -1,4 +1,4 @@
-// relay-node SQLite persistence (03, Persistence; ADR-021). The real-SQLite cases need
+// relay-node SQLite persistence (03, Persistence; ADR-022). The real-SQLite cases need
 // node:sqlite (Node 22.13+) and skip elsewhere; the "unavailable" case runs everywhere.
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";

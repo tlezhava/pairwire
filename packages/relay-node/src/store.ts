@@ -21,7 +21,7 @@ export function parseStateSetting(value: string | undefined): StateSetting {
   throw new Error('PAIRWIRE_RELAY_STATE must be "memory" or "sqlite:<path>", for example sqlite:/data/relay.db');
 }
 
-/** The few node:sqlite types the store uses; @types/node 20 has none (ADR-021). */
+/** The few node:sqlite types the store uses; @types/node 20 has none (ADR-022). */
 interface Statement {
   run(...params: (string | number)[]): unknown;
   all(...params: (string | number)[]): unknown[];

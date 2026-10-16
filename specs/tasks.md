@@ -136,6 +136,6 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 - [ ] Native Windows support (named pipe for `ctl`, hook wiring).
 - [ ] Short authentication string option (residual risk 1).
-- [x] relay-node SQLite persistence (ADR-021): `PAIRWIRE_RELAY_STATE=sqlite:<path>` on Node 22.13+.
+- [x] relay-node SQLite persistence (ADR-022): `PAIRWIRE_RELAY_STATE=sqlite:<path>` on Node 22.13+.
 - [ ] External security review (`05-security.md` gate).
 - [ ] Consider single-binary distribution to drop the Node requirement.
