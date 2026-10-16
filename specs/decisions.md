@@ -270,6 +270,18 @@ Status: accepted (2026-10-16)
   time, and each loaded room gets one `alarm()` call to apply what fell due during the
   downtime and to re-arm its timer. Rewriting every room at shutdown was rejected: a crash
   skips it anyway, so the startup rule has to exist and then covers both.
+- **Durability: `synchronous = FULL`.** Rows change only on joins, leaves, buffered
+  frames and expiry, so the extra fsync per write is cheap, and a returned write then
+  survives power loss, not just a process crash (`NORMAL` in WAL mode can lose the last
+  commits on power loss).
+- **A failed write does not stop the room.** The relay logs `state_write_failed` and
+  sends the output anyway, serving from memory; that state may not survive a restart.
+  Rejected: refusing the join or closing the room on a failed write, which turns a
+  disk problem into an outage for rooms that would otherwise work until the next
+  restart. The guarantee in `03` is therefore "written before the frames are sent, when
+  the write succeeds".
+- **CI runs the `check` job on Node 20, 22 and 24**, so the real-SQLite tests also run on
+  the Node major the Docker image uses (they skip on Node 20).
 
 ## Spike findings
 

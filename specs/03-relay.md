@@ -145,8 +145,15 @@ way Durable Object storage does, uses this pair (relay-node with SQLite).
   deleted and counted in the startup log (`state_dropped`); the relay starts anyway.
 - Writes follow the state machine's output: `persist` writes the row (or deletes it when
   the state is gone), `deleteAll` deletes it. The write happens before the output's
-  frames are sent, so a member never receives a `joined` token that isn't on disk yet.
-  Writes are synchronous, in WAL mode.
+  frames are sent, so when the write succeeds a member never receives a `joined` token
+  that isn't on disk yet. Writes are synchronous, in WAL mode with `synchronous = FULL`
+  (writes are rare, so the extra fsync costs little): a write that returned survives a
+  process crash and a power loss.
+- A failed write (full disk, read-only file, I/O error) is logged as `state_write_failed`
+  with the room tag, and the relay keeps serving that room from memory: the output's
+  frames are still sent. That state, including any token it just issued, may then not
+  survive a restart: after one, the room is as of its last successful write, or absent if
+  it never had one. The next successful write for the room stores its full state again.
 - The file holds room ids, member tokens, timestamps and opaque ciphertext, nothing else
   (INV-1). The relay creates it with mode 0600.
 - Not persisted: sockets, join deadlines (no socket outlives the process) and the
