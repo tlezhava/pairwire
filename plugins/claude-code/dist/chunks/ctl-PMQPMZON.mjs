@@ -5,29 +5,30 @@ import {
   appendTranscript,
   noticeLine,
   transcriptTail
-} from "./chunk-ZJZWXAP6.mjs";
+} from "./chunk-ITU5NLYV.mjs";
 import {
   dropHeld,
   hiddenBodies,
   releaseHeld,
   toRenderItem
-} from "./chunk-FVNYIXX2.mjs";
+} from "./chunk-4ZQAS3ZR.mjs";
 import {
+  isProcessAlive,
   readBinding,
   resolveProjectDir
-} from "./chunk-7XSBMLYR.mjs";
+} from "./chunk-JWR3HKHJ.mjs";
 import {
   assertStatePrivate
-} from "./chunk-LCAHQ6UP.mjs";
+} from "./chunk-WPFBHOH2.mjs";
 import {
   holdMode,
   isOpen,
   readState,
   updateState
-} from "./chunk-S3MLQOW3.mjs";
+} from "./chunk-UOIJGI55.mjs";
 import {
   pairwireHome
-} from "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-GVGSGJLD.mjs";
 import {
   CODEX_CTL,
   acceptHint,
@@ -125,6 +126,7 @@ async function runCtl(args, io) {
   }
   const roomId = binding.room_id;
   const harness = binding.owner_harness ?? "claude-code";
+  const ask = (request) => isProcessAlive(binding.owner_pid) ? ctlRequest(state.ctl_path, request) : Promise.reject(new Error("owner not running"));
   switch (op) {
     case "log": {
       const given = arg ?? (io.stdin.isTTY ? "" : await readAll(io.stdin));
@@ -142,7 +144,7 @@ async function runCtl(args, io) {
     }
     case "continue": {
       try {
-        print((await ctlRequest(state.ctl_path, { op: "continue" })).text);
+        print((await ask({ op: "continue" })).text);
       } catch {
         if (isOpen(state)) updateState(home, roomId, (s) => ({ ...s, hop_count: 0 }));
         print("pairwire: hop budget reset; your agent may send again.");
@@ -161,7 +163,7 @@ async function runCtl(args, io) {
         return 0;
       }
       try {
-        print((await ctlRequest(state.ctl_path, { op: "say", text })).text);
+        print((await ask({ op: "say", text })).text);
       } catch {
         print("pairwire: no running agent session owns this room, so nothing was sent. Start your agent session in this project first.");
       }

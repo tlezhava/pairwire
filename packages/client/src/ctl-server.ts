@@ -5,6 +5,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { ensurePrivateDir, removeFile } from "./fs-util.js";
 import type { Logger } from "./log.js";
+import { isNamedPipePath } from "./paths.js";
 
 export interface CtlReply {
   ok: boolean;
@@ -61,10 +62,17 @@ export interface CtlServer {
   close(): Promise<void>;
 }
 
-/** Listens on `path` (mode 0600). A stale socket file from a dead server is replaced. */
+/**
+ * Listens on `path` (mode 0600). A stale socket file from a dead server is replaced. A Windows
+ * named pipe has no directory, file or mode: it vanishes with its server, and its default ACL
+ * lets only this user write to it (04 §8).
+ */
 export async function listenCtl(path: string, handle: CtlHandler, log: Logger, wait?: WaitHandler): Promise<CtlServer> {
-  preparePrivateDir(dirname(path));
-  removeFile(path);
+  const pipe = isNamedPipePath(path);
+  if (!pipe) {
+    preparePrivateDir(dirname(path));
+    removeFile(path);
+  }
   const server: Server = createServer((socket) => {
     let buf = "";
     let done = false;
@@ -102,13 +110,13 @@ export async function listenCtl(path: string, handle: CtlHandler, log: Logger, w
       resolve();
     });
   });
-  chmodSync(path, 0o600);
+  if (!pipe) chmodSync(path, 0o600);
   server.on("error", (e) => log.error("ctl_server_error", e));
   return {
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
-        removeFile(path);
+        if (!pipe) removeFile(path);
       }),
   };
 }

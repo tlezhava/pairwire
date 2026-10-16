@@ -1,11 +1,24 @@
 // Two engineers, two `pairwire mcp` processes, one relay (07-testing.md, client and e2e).
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { manualClock, person, SHARE, startRelay, until, type Person } from "./harness.js";
+import { manualClock, onWindows, person, SHARE, startRelay, until, type Person } from "./harness.js";
 
 const ID = /\(id ([0-9A-Z]{26})\)/;
+
+/** Names of `pid`'s child processes (pgrep, or CIM on Windows, where conhost.exe is every console process's helper). */
+function childProcesses(pid: number): string {
+  try {
+    if (onWindows) {
+      const query = `Get-CimInstance Win32_Process -Filter 'ParentProcessId=${pid}' | Where-Object { $_.Name -ne 'conhost.exe' } | ForEach-Object { $_.Name }`;
+      return execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", query], { encoding: "utf8" }).trim();
+    }
+    return execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).trim();
+  } catch {
+    return ""; // pgrep exits 1 when there are none
+  }
+}
 
 async function pair(harnessB = "claude-code") {
   const relay = await startRelay();
@@ -80,7 +93,7 @@ describe("e2e: pairing", () => {
   it("REQ-ROOM-5 leaving ends the room for both and deletes the secrets", async () => {
     const { a, b } = await pair();
     await a.call("leave", { message: "Done for today." });
-    expect(filesUnder(a.home).some((f) => f.endsWith("/secret"))).toBe(false);
+    expect(filesUnder(a.home).some((f) => basename(f) === "secret")).toBe(false);
     await until(async () => (await b.call("status")).includes("Room: ended"), 10_000, "B ended");
     const inbox = await b.call("inbox");
     expect(inbox).toContain("Done for today.");
@@ -122,7 +135,7 @@ describe("e2e: security", () => {
     for (const p of [a, b]) {
       for (const f of filesUnder(p.home)) {
         const name = relative(p.home, f);
-        if (name.endsWith("/secret") || name.endsWith("/state.json")) continue;
+        if (basename(name) === "secret" || basename(name) === "state.json") continue;
         haystacks.push([`${p.name}:${name}`, readFileSync(f, "utf8")]);
       }
       haystacks.push([`${p.name}:stderr`, p.logs.join("")]);
@@ -154,14 +167,7 @@ describe("e2e: security", () => {
     expect(inbox).not.toContain("<function_calls>");
     // Nothing was started by the receiving client, and its project is untouched.
     expect(a.pid).toBeGreaterThan(0);
-    const children = (() => {
-      try {
-        return execFileSync("pgrep", ["-P", String(a.pid)], { encoding: "utf8" }).trim();
-      } catch {
-        return ""; // pgrep exits 1 when there are none
-      }
-    })();
-    expect(children).toBe("");
+    expect(childProcesses(a.pid!)).toBe("");
     expect(filesUnder(a.project).map((f) => [f, statSync(f).mtimeMs] as const)).toEqual(before);
     expect(filesUnder(join(a.home, "..")).some((f) => /PWNED/.test(f))).toBe(false);
     expect(await a.call("status")).toContain("Hop budget: 8/8 left");

@@ -10,6 +10,7 @@ import { tempDir } from "./state/helpers.js";
 
 const R1 = "abcdefghijklmnopqrstuvwxyz";
 const R2 = "zyxwvutsrqponmlkjihgfedcba";
+const onWindows = process.platform === "win32";
 
 function sink() {
   let text = "";
@@ -64,7 +65,7 @@ describe("pairwire doctor", () => {
     const code = await runDoctor({ home: h, env: { PAIRWIRE_RELAY: "127.0.0.1:9" }, out: s.out, nodeVersion: "22.0.0", fetch: deadFetch, bundleDir: null });
     expect(code).toBe(1);
     expect(s.text()).toMatch(/FAIL {2}config: .*is not valid JSON/);
-    expect(s.text()).toContain(`chmod -R go-rwx '${h}'`);
+    if (!onWindows) expect(s.text()).toContain(`chmod -R go-rwx '${h}'`); // no mode bits on Windows
     chmodSync(h, 0o700);
   });
 
@@ -88,6 +89,38 @@ describe("pairwire doctor", () => {
     expect(s.text()).toContain('warn  the "active" flag was set; repaired');
     expect(existsSync(activeFlagPath(h))).toBe(false);
     expect(s.text()).toContain("is missing hooks/run.sh; reinstall the plugin");
+  });
+});
+
+describe("pairwire doctor on Windows (ADR-024)", () => {
+  const win = (env: NodeJS.ProcessEnv, h = "C:\\Users\\tazo\\.pairwire") => {
+    const s = sink();
+    return runDoctor({ home: h, env: { PAIRWIRE_RELAY: "relay.example.com", ...env }, out: s.out, nodeVersion: "22.0.0", fetch: okFetch, bundleDir: null, platform: "win32" }).then((code) => ({ code, text: s.text() }));
+  };
+
+  it("INV-9 says the permission check is skipped, and warns about a state directory outside the profile", async () => {
+    const inside = await win({ USERPROFILE: "C:\\Users\\tazo" });
+    expect(inside.text).toContain("ok    state directory C:\\Users\\tazo\\.pairwire: permissions are not checked on Windows");
+    expect(inside.text).not.toContain("outside your profile");
+    expect(inside.text).not.toContain("chmod");
+    const outside = await win({ USERPROFILE: "C:\\Users\\tazo" }, "D:\\pairwire");
+    expect(outside.text).toContain("warn  state directory D:\\pairwire is outside your profile C:\\Users\\tazo");
+    expect(outside.code).toBe(0);
+  });
+
+  it("reports whether Git Bash, which the hooks need, can be found", async () => {
+    const bash = join(tempDir(), "bash.exe");
+    writeFileSync(bash, "");
+    expect((await win({ USERPROFILE: "C:\\Users\\tazo", CLAUDE_CODE_GIT_BASH_PATH: bash })).text).toContain(`ok    Git Bash ${bash} (runs pairwire's hooks)`);
+    const missing = await win({ USERPROFILE: "C:\\Users\\tazo", PATH: "" });
+    expect(missing.text).toContain("warn  Git for Windows was not found. Claude Code runs plugin hooks with Git Bash");
+    expect(missing.code).toBe(0);
+  });
+
+  it("prints no Windows lines elsewhere", async () => {
+    const s = sink();
+    await runDoctor({ home: home(), env: { PAIRWIRE_RELAY: "relay.example.com" }, out: s.out, nodeVersion: "22.0.0", fetch: okFetch, bundleDir: null, platform: "linux" });
+    expect(s.text()).not.toMatch(/Git Bash|Git for Windows|not checked on Windows/);
   });
 });
 

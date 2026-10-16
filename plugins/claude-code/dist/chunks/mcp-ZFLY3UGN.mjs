@@ -3,7 +3,7 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   listenCtl,
   transcriptEvents
-} from "./chunk-ZJZWXAP6.mjs";
+} from "./chunk-ITU5NLYV.mjs";
 import {
   appendInbox,
   claimUndelivered,
@@ -12,7 +12,7 @@ import {
   toRenderItem,
   unacked,
   updateOutbox
-} from "./chunk-FVNYIXX2.mjs";
+} from "./chunk-4ZQAS3ZR.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -22,10 +22,10 @@ import {
   isProcessAlive,
   removeBindingFor,
   resolveProjectDir
-} from "./chunk-7XSBMLYR.mjs";
+} from "./chunk-JWR3HKHJ.mjs";
 import {
   assertStatePrivate
-} from "./chunk-LCAHQ6UP.mjs";
+} from "./chunk-WPFBHOH2.mjs";
 import {
   createRoom,
   expiresAt,
@@ -37,11 +37,12 @@ import {
   removeFile,
   resolveDisplayName,
   updateState
-} from "./chunk-S3MLQOW3.mjs";
+} from "./chunk-UOIJGI55.mjs";
 import {
+  chooseCtlPath,
   pairwireHome,
   roomFile
-} from "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-GVGSGJLD.mjs";
 import {
   $ZodObject,
   $ZodType,
@@ -27366,7 +27367,12 @@ ${this.footer()}` };
     });
     this.#conn.start();
     this.#closeCtl();
-    this.#ctl = listenCtl(state.ctl_path, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e) => {
+    let ctlPath = state.ctl_path;
+    if (process.platform === "win32") {
+      ctlPath = chooseCtlPath(this.#o.home, roomId, this.#o.env);
+      updateState(this.#o.home, roomId, (s) => ({ ...s, ctl_path: ctlPath }));
+    }
+    this.#ctl = listenCtl(ctlPath, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });

@@ -131,9 +131,9 @@ export function wrongKeys(secret: Uint8Array): RoomKeys {
   return { ...other, roomId: real.roomId, roomIdBytes: real.roomIdBytes };
 }
 
-export async function until(cond: () => boolean, ms = 5000, what = "condition"): Promise<void> {
+export async function until(cond: () => boolean | Promise<boolean>, ms = 5000, what = "condition"): Promise<void> {
   const deadline = Date.now() + ms;
-  while (!cond()) {
+  while (!(await cond())) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((r) => setTimeout(r, 10));
   }

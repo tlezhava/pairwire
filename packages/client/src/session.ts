@@ -26,7 +26,7 @@ import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, PassiveSe
 import { holdMode, loadConfig, resolveDisplayName, type Config } from "./config.js";
 import { RoomConnection, type ConnectionEvents, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 import type { Logger } from "./log.js";
-import { roomFile } from "./paths.js";
+import { chooseCtlPath, roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
 import { claimUndelivered, inboxCounts, readOutbox, toRenderItem, type InboxCounts, type InboxEntry } from "./room-files.js";
@@ -474,7 +474,13 @@ export class ClientSession {
     });
     this.#conn.start();
     this.#closeCtl();
-    this.#ctl = listenCtl(state.ctl_path, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e: unknown) => {
+    let ctlPath = state.ctl_path;
+    if (process.platform === "win32") {
+      // A fresh pipe name on every open, so a name seen while an earlier server ran is useless (04 §8).
+      ctlPath = chooseCtlPath(this.#o.home, roomId, this.#o.env);
+      updateState(this.#o.home, roomId, (s) => ({ ...s, ctl_path: ctlPath }));
+    }
+    this.#ctl = listenCtl(ctlPath,(req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e: unknown) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });

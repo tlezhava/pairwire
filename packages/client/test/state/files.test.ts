@@ -3,11 +3,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { LOCK_STALE_MS, withLock, writeFileAtomic } from "../../src/fs-util.js";
-import { chooseCtlPath, roomDir } from "../../src/paths.js";
+import { chooseCtlPath, isNamedPipePath, roomDir } from "../../src/paths.js";
 import { gitRoot, projectHash, resolveProjectDir } from "../../src/project.js";
 import { runChild, tempDir } from "./helpers.js";
 
 const ROOM = "abcdefghijklmnopqrstuvwxyz";
+const onWindows = process.platform === "win32";
 
 describe("writeFileAtomic", () => {
   it("writes a 0600 file, replaces it whole, and leaves no temp files behind", () => {
@@ -16,7 +17,7 @@ describe("writeFileAtomic", () => {
     writeFileAtomic(file, "first");
     writeFileAtomic(file, "second");
     expect(readFileSync(file, "utf8")).toBe("second");
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (!onWindows) expect(statSync(file).mode & 0o777).toBe(0o600); // no mode bits on Windows
     expect(readdirSync(dir)).toEqual(["state.json"]);
   });
 });
@@ -46,20 +47,41 @@ describe("withLock", () => {
 });
 
 describe("paths", () => {
-  it("keeps the control socket in the room directory when the path is short", () => {
+  // The POSIX socket paths are built with node:path, whose separator is "\\" on Windows.
+  it.skipIf(onWindows)("keeps the control socket in the room directory when the path is short", () => {
     const home = "/home/u/.pairwire";
     expect(chooseCtlPath(home, ROOM, {}, 501)).toBe(`/home/u/.pairwire/rooms/${ROOM}/ctl.sock`);
   });
 
-  it("moves the control socket to XDG_RUNTIME_DIR, else /tmp/pairwire-<uid>, when the path is too long", () => {
+  it.skipIf(onWindows)("moves the control socket to XDG_RUNTIME_DIR, else /tmp/pairwire-<uid>, when the path is too long", () => {
     const home = "/" + "x".repeat(80);
     expect(chooseCtlPath(home, ROOM, { XDG_RUNTIME_DIR: "/run/user/501" }, 501)).toMatch(/^\/run\/user\/501\/pairwire-[0-9a-f]{16}\.sock$/);
     expect(chooseCtlPath(home, ROOM, {}, 501)).toMatch(/^\/tmp\/pairwire-501\/[0-9a-f]{16}\.sock$/);
   });
 
-  it("gives two state directories in the same room different fallback sockets", () => {
+  it.skipIf(onWindows)("gives two state directories in the same room different fallback sockets", () => {
     const long = "/" + "x".repeat(80);
     expect(chooseCtlPath(long + "/a", ROOM, {}, 501)).not.toBe(chooseCtlPath(long + "/b", ROOM, {}, 501));
+  });
+
+  it("on Windows uses a named pipe with a fresh random name each time (ADR-024)", () => {
+    const home = "C:\\Users\\tazo\\.pairwire";
+    const fixed = chooseCtlPath(home, ROOM, {}, 0, "win32", () => new Uint8Array(16).fill(0xab));
+    expect(fixed).toMatch(/^\\\\\.\\pipe\\pairwire-[0-9a-f]{16}-(ab){16}$/);
+    expect(isNamedPipePath(fixed)).toBe(true);
+    const a = chooseCtlPath(home, ROOM, {}, 0, "win32");
+    const b = chooseCtlPath(home, ROOM, {}, 0, "win32");
+    expect(a).not.toBe(b);
+    expect(a.slice(0, -33)).toBe(b.slice(0, -33)); // same tag, different nonce
+    expect(chooseCtlPath(home + "2", ROOM, {}, 0, "win32").slice(0, -33)).not.toBe(a.slice(0, -33));
+    expect(() => chooseCtlPath(home, "../../etc", {}, 0, "win32")).toThrow("Invalid room id");
+  });
+
+  it("tells a named pipe from a socket file", () => {
+    expect(isNamedPipePath("\\\\?\\pipe\\x")).toBe(true);
+    expect(isNamedPipePath("//./pipe/x")).toBe(true);
+    expect(isNamedPipePath(`/home/u/.pairwire/rooms/${ROOM}/ctl.sock`)).toBe(false);
+    expect(isNamedPipePath("C:\\Users\\pipe\\ctl.sock")).toBe(false);
   });
 
   it("refuses room ids that are not 26 base32 characters", () => {
@@ -87,7 +109,8 @@ describe("resolveProjectDir", () => {
     expect(resolveProjectDir({}, plain)).toBe(plain);
   });
 
-  it("hashes the real path: 16 hex characters, equal through a symlink", () => {
+  // Creating a symlink on Windows needs Developer Mode or an elevated process.
+  it.skipIf(onWindows)("hashes the real path: 16 hex characters, equal through a symlink", () => {
     const dir = tempDir();
     const link = join(tempDir(), "link");
     symlinkSync(dir, link);

@@ -5,10 +5,11 @@ import {
   ensurePrivateDir,
   errorCode,
   removeFile
-} from "./chunk-S3MLQOW3.mjs";
+} from "./chunk-UOIJGI55.mjs";
 import {
+  isNamedPipePath,
   roomFile
-} from "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-GVGSGJLD.mjs";
 import {
   displayName,
   redact,
@@ -128,8 +129,11 @@ function preparePrivateDir(dir) {
   }
 }
 async function listenCtl(path, handle, log, wait) {
-  preparePrivateDir(dirname(path));
-  removeFile(path);
+  const pipe = isNamedPipePath(path);
+  if (!pipe) {
+    preparePrivateDir(dirname(path));
+    removeFile(path);
+  }
   const server = createServer((socket) => {
     let buf = "";
     let done = false;
@@ -168,12 +172,12 @@ async function listenCtl(path, handle, log, wait) {
       resolve();
     });
   });
-  chmodSync(path, 384);
+  if (!pipe) chmodSync(path, 384);
   server.on("error", (e) => log.error("ctl_server_error", e));
   return {
     close: () => new Promise((resolve) => {
       server.close(() => resolve());
-      removeFile(path);
+      if (!pipe) removeFile(path);
     })
   };
 }

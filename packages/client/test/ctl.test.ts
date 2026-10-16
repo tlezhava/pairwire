@@ -1,12 +1,14 @@
 // `pairwire ctl` and ctl.sock (04 §8, REQ-MSG-7, REQ-SAFE-4, INV-3).
 import { statSync } from "node:fs";
+import { createConnection } from "node:net";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { runCtl } from "../src/ctl.js";
+import { isNamedPipePath } from "../src/paths.js";
 import { readInbox, readOutbox } from "../src/room-files.js";
 import { readState, updateState } from "../src/state.js";
 import { until } from "./connection/harness.js";
-import { paired, roomOf, type Side } from "./session/pairing.js";
+import { deadPid, ownerExited, paired, roomOf, setOwnerPid, squatter, type Side } from "./session/pairing.js";
 import { tempDir } from "./state/helpers.js";
 
 async function ctl(side: Pick<Side, "home" | "project">, args: string[], stdin = ""): Promise<string> {
@@ -20,6 +22,18 @@ async function ctl(side: Pick<Side, "home" | "project">, args: string[], stdin =
   const code = await runCtl(args, { stdin: Readable.from([stdin]), stdout, env: { PAIRWIRE_HOME: side.home }, cwd: side.project });
   expect(code).toBe(0);
   return out;
+}
+
+/** Whether a server accepts connections at `path` (a socket file or, on Windows, a named pipe). */
+function listening(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(path);
+    socket.on("connect", () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.on("error", () => resolve(false));
+  });
 }
 
 describe("pairwire ctl", () => {
@@ -52,14 +66,7 @@ describe("pairwire ctl", () => {
     await a.session.ctlReady();
     expect(await ctl(a, ["say"], "\n")).toContain("pairwire: nothing to send.");
     a.session.shutdown();
-    await until(() => {
-      try {
-        statSync(readState(a.home, roomOf(a))!.ctl_path);
-        return false;
-      } catch {
-        return true;
-      }
-    }, 3000, "socket removed");
+    await until(async () => !(await listening(readState(a.home, roomOf(a))!.ctl_path)), 3000, "server gone");
     expect(await ctl(a, ["say"], "hello\n")).toContain("pairwire: no running agent session owns this room, so nothing was sent.");
   });
 
@@ -74,6 +81,24 @@ describe("pairwire ctl", () => {
     updateState(a.home, roomOf(a), (s) => ({ ...s, hop_count: 5 }));
     expect(await ctl(a, ["continue"])).toBe("pairwire: hop budget reset; your agent may send again.\n");
     expect(readState(a.home, roomOf(a))!.hop_count).toBe(0);
+  });
+
+  it("say and continue never connect to a ctl_path whose owner pid is dead (a squatted stale pipe or socket)", async () => {
+    const { a, b } = await paired();
+    await a.session.ctlReady();
+    const sq = await squatter();
+    ownerExited(a, sq.path, process.pid);
+    // While the binding names a live owner, the CLI talks to whatever listens at ctl_path.
+    expect(await ctl(a, ["say"], "hello\n")).toBe("from the squatter\n");
+    expect(sq.connections()).toBe(1);
+
+    setOwnerPid(a, deadPid());
+    updateState(a.home, roomOf(a), (s) => ({ ...s, hop_count: 5 }));
+    expect(await ctl(a, ["say"], "hello\n")).toContain("pairwire: no running agent session owns this room, so nothing was sent.");
+    expect(await ctl(a, ["continue"])).toBe("pairwire: hop budget reset; your agent may send again.\n");
+    expect(readState(a.home, roomOf(a))!.hop_count).toBe(0);
+    expect(sq.connections()).toBe(1);
+    expect(readInbox(b.home, roomOf(b)).some((e) => e.source === "peer")).toBe(false);
   });
 
   it("INV-3 log prints the transcript wrapped and labeled, so a peer body cannot escape it", async () => {
@@ -91,7 +116,10 @@ describe("pairwire ctl", () => {
   it("ctl.sock is private and the CLI handles a project without a room", async () => {
     const { a } = await paired();
     await a.session.ctlReady();
-    expect(statSync(readState(a.home, roomOf(a))!.ctl_path).mode & 0o777).toBe(0o600);
+    const ctlPath = readState(a.home, roomOf(a))!.ctl_path;
+    // On Windows a named pipe: no file or mode; its default ACL lets only this user write (04 §8).
+    if (process.platform === "win32") expect(isNamedPipePath(ctlPath)).toBe(true);
+    else expect(statSync(ctlPath).mode & 0o777).toBe(0o600);
     expect(await ctl({ home: a.home, project: tempDir() }, ["log"])).toBe("pairwire: there is no pairwire room in this project.\n");
     expect(await ctl(a, ["bogus"])).toContain("usage: pairwire ctl <say|continue|log [n]|accept [drop]>");
   });

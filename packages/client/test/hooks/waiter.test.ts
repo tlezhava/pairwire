@@ -8,7 +8,7 @@ import { readInbox } from "../../src/room-files.js";
 import { WAKE_LEAD } from "../../src/session.js";
 import { cancelWaiter, runStopWait } from "../../src/waiter.js";
 import { until } from "../connection/harness.js";
-import { paired, roomOf, type Side } from "../session/pairing.js";
+import { deadPid, ownerExited, paired, roomOf, setOwnerPid, squatter, type Side } from "../session/pairing.js";
 
 const MAIN = fileURLToPath(new URL("../../src/main.ts", import.meta.url));
 const TSX = import.meta.resolve("tsx");
@@ -95,6 +95,24 @@ describe("D3 waiter (stop-wait)", () => {
     expect(await waiter(a).done).toBe(0);
   });
 
+  it("exits 0 without connecting when the binding's owner pid is dead (a squatted stale pipe or socket)", async () => {
+    const { a } = await idleA();
+    const sq = await squatter();
+    ownerExited(a, sq.path, process.pid);
+    // While the binding names a live owner, the waiter believes whatever listens at ctl_path.
+    const fooled = waiter(a);
+    expect(await fooled.done).toBe(2);
+    expect(fooled.stderr()).toBe("from the squatter\n");
+    expect(sq.connections()).toBe(1);
+
+    setOwnerPid(a, deadPid());
+    const w = waiter(a);
+    expect(await w.done).toBe(0);
+    expect(w.stderr()).toBe("");
+    await cancelWaiter(w.input, { home: a.home, env: {}, cwd: a.project });
+    expect(sq.connections()).toBe(1);
+  });
+
   it("exits 0 when the MCP server goes away while it waits", async () => {
     const { a } = await idleA();
     const w = waiter(a);
@@ -103,7 +121,8 @@ describe("D3 waiter (stop-wait)", () => {
     expect(await w.done).toBe(0);
   });
 
-  it("the stop-wait process exits 0 on SIGTERM (session end, S3)", async () => {
+  // Windows has no SIGTERM: child.kill() there terminates the process outright.
+  it.skipIf(process.platform === "win32")("the stop-wait process exits 0 on SIGTERM (session end, S3)", async () => {
     const { a } = await idleA();
     const child = spawn(process.execPath, ["--conditions=source", "--import", TSX, MAIN, "hook", "stop-wait"], {
       env: { PATH: process.env.PATH ?? "", PAIRWIRE_HOME: a.home },

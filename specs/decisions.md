@@ -385,6 +385,79 @@ its harness lets it (`05-security.md`, residual risk 7), and an agent that can r
 `pairwire ctl accept` can release them (residual risk 2). Proposed SKILL.md wording for the
 new command is not yet in `06-agent-guide.md` §2, which needs the human's approval.
 
+## ADR-024 Native Windows: named-pipe control channel, hooks through Git's `sh` (M7)
+
+Status: proposed (2026-10-16); the Windows CI job and a first Windows session confirm it.
+The hook wiring on Windows (decision 1) stays open until that session. Built and tested on
+macOS only; Windows code paths take the platform as a parameter so
+their pure parts are unit-tested everywhere, and a `windows-latest` CI job runs the rest.
+
+Research (docs only; no Windows machine was used):
+
+- Claude Code on native Windows needs no Git for Windows; without it the agent gets a
+  PowerShell tool instead of Bash ([setup](https://code.claude.com/docs/en/setup#install-on-native-windows)).
+- Hooks ([hooks reference](https://code.claude.com/docs/en/hooks), "Exec form and shell
+  form"): shell form (no `args`) runs `command` with `sh -c` on macOS and Linux, with Git
+  Bash on Windows, or with PowerShell when Git Bash isn't installed. Exec form resolves
+  `command` on `PATH` and on Windows needs a real executable. Both forms export
+  `CLAUDE_PLUGIN_ROOT`. A hook that can't start, or exits with a code other than 0 or 2, is
+  a non-blocking error shown in the transcript.
+- Git for Windows' default `PATH` option, "Git from the command line and also from 3rd-party
+  software", "adds only some minimal Git wrappers to your PATH" (its `cmd` directory), not
+  `sh.exe` ([installer source](https://github.com/git-for-windows/build-extra/blob/main/installer/install.iss)).
+- Named pipes created with no security descriptor (which is what libuv does) grant full
+  control to the creator, SYSTEM and Administrators and read access to Everyone
+  ([Microsoft](https://learn.microsoft.com/en-us/windows/win32/ipc/named-pipe-security-and-access-rights));
+  libuv sets `FILE_FLAG_FIRST_PIPE_INSTANCE` on the first instance.
+
+Decisions:
+
+1. **Hooks stay on the one POSIX wrapper, `run.sh`, wired in exec form on every platform**
+   (`"command": "sh", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", "<event>"]`), as S1 and
+   S3 verified on macOS. Whether that works on native Windows is **unverified**: exec form
+   resolves `sh` on `PATH`, which a default Git for Windows install lacks, while shell form
+   (`sh "${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" <event>`) would run under Git Bash. Switching
+   every platform to shell form for an untested Windows benefit would change wiring verified
+   on macOS, so the choice between exec form and shell form under Git Bash is made when a
+   Windows Claude Code session can test it (M7 task). No PowerShell variant: `hooks.json`
+   cannot select entries by platform, two variants would both run where both shells exist,
+   and a script that runs in both shells would be fragile and untestable here. So
+   pairwire's hooks require Git for Windows on native Windows (README, `doctor`); without a
+   usable `sh` hooks show a non-blocking error and the room works through D1. The no-Node
+   fast path is unchanged: with no `active` flag the wrapper exits 0 using shell builtins
+   only. `run.sh` uses `USERPROFILE`, forward slashes and `pwd -W` only when `OS=Windows_NT`
+   (`04` §6), so its behavior on macOS and Linux is unchanged.
+2. **`ctl` is a named pipe on Windows**, `\\.\pipe\pairwire-<tag>-<nonce>`, with a fresh
+   random nonce each time the owning server opens the room. The tag alone (as in the
+   `/tmp` fallback) would be a fixed name that any local user can read from the pipe list
+   once and then hold whenever the server isn't running; the nonce limits that to the time
+   between a server's exit and its restart (`04` §8), which decision 6 covers.
+3. **INV-9's check stays off on Windows**, as before M7: there are no mode bits, and an ACL
+   check would need native code or a child process. Privacy rests on the profile
+   directory's inherited ACL; `doctor` warns when the state directory is outside the
+   profile. `05-security.md` is unchanged until the human accepts this as a residual risk.
+4. `.gitattributes` forces LF checkouts, so Git's CRLF conversion on Windows cannot break
+   `run.sh`, the generated `SKILL.md` or the tests that compare text.
+5. Path checks use `path.basename`/`path.win32` instead of `endsWith("/dist")`. The INV-2
+   import check compares repo-relative paths with `/` separators on every platform.
+6. **Owner check before connecting to `ctl_path` (all platforms).** `ctl say`,
+   `ctl continue`, the D3 waiter and `wait_cancel` connect only if the binding's `owner_pid`
+   is alive. Only the owning MCP server listens on `ctl_path`, so once it has exited whatever
+   answers there is someone else: a squatted stale pipe name on Windows or, on macOS and
+   Linux, a socket at a reused path. Without the check, `say` text would reach that listener
+   and a forged `wake` from it would reach the agent. With it, `say` reports that no session
+   is running, `continue` resets the budget in `state.json`, and the hooks exit 0 (`04` §8).
+   The check is one `kill(pid, 0)` and needs no protocol change. It does not cover the dead
+   owner's pid being reused by an unrelated live process before the next session takes the
+   room over; closing that needs the server to prove itself to the client (for example an
+   HMAC of a client nonce under a key in the private state directory), which changes the ctl
+   protocol and needs the human's decision, so it is not done here.
+
+Not covered: Codex on native Windows (its hook command is `sh "<path>" <event>` and needs
+Codex to run hooks through a POSIX shell; unverified), and project-directory case or 8.3
+short-name differences between `CLAUDE_PROJECT_DIR` and a hook's `cwd` (both come from
+Claude Code, which passes the same value to the MCP server and the hooks).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

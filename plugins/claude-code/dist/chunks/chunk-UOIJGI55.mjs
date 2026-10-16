@@ -8,7 +8,7 @@ import {
   roomDir,
   roomFile,
   roomsDir
-} from "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-GVGSGJLD.mjs";
 import {
   ANONYMOUS,
   RELAY_LIMITS,

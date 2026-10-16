@@ -1,15 +1,61 @@
 // End-to-end harness (07-testing.md, client integration): a real relay-node on a random port and
 // `pairwire mcp` processes driven by MCP clients over stdio, each with its own PAIRWIRE_HOME.
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach } from "vitest";
+import { findGitBash } from "../../packages/client/src/platform.js";
 import { ManualClock, type Clock } from "../../packages/relay-node/src/clock.js";
 import { createLogger } from "../../packages/relay-node/src/log.js";
 import { createRelayServer } from "../../packages/relay-node/src/server.js";
+
+export const onWindows = process.platform === "win32";
+
+/**
+ * Variables a child process needs besides the ones a test sets. Empty off Windows, where tests
+ * give children a minimal environment. On Windows: the MCP SDK's defaults (a process there also
+ * needs SYSTEMROOT, TEMP and the like, or Node's networking and temp paths fail), `OS`, which
+ * makes run.sh take its Windows branch (04 §6), and `USERPROFILE`, Node's home directory there,
+ * set to `profile` when given (the test's stand-in for HOME).
+ */
+export function platformEnv(profile?: string): Record<string, string> {
+  if (!onWindows) return {};
+  return { ...getDefaultEnvironment(), OS: "Windows_NT", ...(profile ? { USERPROFILE: profile } : {}) };
+}
+
+/** `env` plus, on Windows, whatever of platformEnv() it lacks. */
+const withPlatform = (env: Record<string, string>) => (onWindows ? { ...platformEnv(), ...env } : env);
+
+/**
+ * Runs a shell-form hook command string (Codex's, 04 §10) through a POSIX shell: `sh -c` on
+ * macOS and Linux, Git Bash on Windows.
+ */
+export function runShellCommand(command: string, o: { env: Record<string, string>; input: string }): string {
+  const shell = onWindows ? findGitBash(process.env) : "sh";
+  if (!shell) throw new Error("Git Bash not found; pairwire's hooks need it on Windows");
+  return execFileSync(shell, ["-c", command], { env: withPlatform(o.env), input: o.input, encoding: "utf8" });
+}
+
+/**
+ * Runs an exec-form hook entry from hooks.json (04 §9) as Claude Code does: `${CLAUDE_PLUGIN_ROOT}`
+ * substituted in `args`, and `command` run without a shell. On Windows `sh` is taken from the Git
+ * install that findGitBash() finds; how Claude Code itself resolves it there is unverified (ADR-024).
+ */
+export function runExecHook(hook: { command: string; args: string[] }, o: { env: Record<string, string>; input: string; pluginRoot: string }): string {
+  const args = hook.args.map((a) => a.replaceAll("${CLAUDE_PLUGIN_ROOT}", o.pluginRoot));
+  let command = hook.command;
+  if (onWindows && command === "sh") {
+    const bash = findGitBash(process.env);
+    if (!bash) throw new Error("Git Bash not found; pairwire's hooks need it on Windows");
+    const sh = join(dirname(bash), "sh.exe");
+    command = existsSync(sh) ? sh : bash;
+  }
+  return execFileSync(command, args, { env: withPlatform(o.env), input: o.input, encoding: "utf8" });
+}
 
 const MAIN = fileURLToPath(new URL("../../packages/client/src/main.ts", import.meta.url));
 const TSX = import.meta.resolve("tsx");
@@ -53,13 +99,17 @@ export interface Person {
   close(): Promise<void>;
 }
 
-/** `bundle`: run the built plugin bundle instead of the TypeScript sources. */
-export function person(name: string, relayHost: string, harness = "claude-code", bundle?: string): Person {
+/**
+ * `bundle`: run the built plugin bundle instead of the TypeScript sources. `home`: the state
+ * directory (PAIRWIRE_HOME), by default `home` under a fresh temporary directory.
+ */
+export function person(name: string, relayHost: string, harness = "claude-code", bundle?: string, home?: string): Person {
   const root = tempDir();
-  const home = join(root, "home");
+  home ??= join(root, "home");
   const project = join(root, "project");
   mkdirSync(project);
   const env: Record<string, string> = {
+    ...platformEnv(root),
     PATH: process.env.PATH ?? "",
     HOME: root,
     PAIRWIRE_HOME: home,

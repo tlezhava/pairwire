@@ -43,7 +43,9 @@ function stat(path: string, follow: boolean): Stats | null {
 
 /**
  * Checks the state directory, `bindings/`, `rooms/`, each room directory, every file in it,
- * and each room's control socket if it lives elsewhere. Empty on Windows (M7).
+ * and each room's control socket if it lives elsewhere. Empty on Windows, which has no mode bits:
+ * there the state relies on the ACL it inherits from the user profile, and `doctor` warns when
+ * it lives outside the profile (04 §3, ADR-024).
  */
 export function checkStatePermissions(home: string, platform: NodeJS.Platform = process.platform, uid = process.getuid?.()): PermissionProblem[] {
   if (platform === "win32") return [];

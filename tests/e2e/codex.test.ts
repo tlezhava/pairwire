@@ -1,7 +1,7 @@
 // Codex wiring (04 §10): `pairwire install --codex` from the bundle, and a Claude Code ↔ Codex
 // pairing in which the Codex side is launched exactly as the installed config.toml says,
 // with Codex's cleared MCP environment and session ids only in tool-call _meta.
-import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,14 +9,14 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, describe, expect, it } from "vitest";
-import { person, SHARE, startRelay, tempDir, until } from "./harness.js";
+import { onWindows, person, platformEnv, runShellCommand, SHARE, startRelay, tempDir, until } from "./harness.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const BUNDLE = join(ROOT, "plugins/claude-code/dist/pairwire.mjs");
 
 function machine() {
   const home = tempDir();
-  const env = { PATH: process.env.PATH ?? "", HOME: home, CODEX_HOME: join(home, ".codex"), PAIRWIRE_HOME: join(home, ".pairwire") };
+  const env = { ...platformEnv(home), PATH: process.env.PATH ?? "", HOME: home, CODEX_HOME: join(home, ".codex"), PAIRWIRE_HOME: join(home, ".pairwire") };
   const install = (...args: string[]) => spawnSync(process.execPath, [BUNDLE, "install", ...args], { env, encoding: "utf8" });
   return { home, env, install, codex: (f: string) => join(home, ".codex", f) };
 }
@@ -39,7 +39,7 @@ describe("pairwire install --codex", () => {
     const bin = join(m.home, ".pairwire", "bin");
     expect(r.stdout).toContain(`In hold mode, release held messages with: node ${JSON.stringify(join(bin, "dist", "pairwire.mjs"))} ctl accept [drop]`);
     expect(existsSync(join(bin, "dist", "pairwire.mjs"))).toBe(true);
-    expect(statSync(join(bin, "hooks", "run.sh")).mode & 0o111).not.toBe(0);
+    if (!onWindows) expect(statSync(join(bin, "hooks", "run.sh")).mode & 0o111).not.toBe(0); // no mode bits on Windows
     const toml = readFileSync(m.codex("config.toml"), "utf8");
     expect(toml).toContain('model = "gpt-5"\n\n[mcp_servers.other]\ncommand = "other"\n');
     expect(toml).toContain(
@@ -124,9 +124,12 @@ describe("Claude Code ↔ Codex", () => {
     // A message from Claude Code reaches Codex through the installed PostToolUse hook (D2).
     await a.call("send", { kind: "question", body: "hello Codex, which port does the API use?" });
     const hookInput = JSON.stringify({ session_id: "codex-thread-1", cwd: project, hook_event_name: "PostToolUse", model: "gpt-5", turn_id: "t1", permission_mode: "default", tool_name: "mcp__pairwire__status" });
+    const installed = JSON.parse(readFileSync(m.codex("hooks.json"), "utf8")) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
+    const postToolUse = installed.hooks.PostToolUse!.at(-1)!.hooks[0]!.command;
     let out = "";
     await until(() => {
-      out = execFileSync("sh", [join(m.home, ".pairwire/bin/hooks/run.sh"), "post-tool-use"], { env: userEnv, input: hookInput, encoding: "utf8" });
+      // The installed command line, run through a shell as Codex runs it.
+      out = runShellCommand(postToolUse, { env: userEnv, input: hookInput });
       return out.includes("which port");
     }, 10_000, "Codex hook delivery");
     expect(JSON.parse(out).hookSpecificOutput.additionalContext).toContain('<pairwire_message from="Tazo" harness="claude-code"');

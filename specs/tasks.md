@@ -145,7 +145,11 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 ## M7 — Hardening toward 1.0
 
-- [ ] Native Windows support (named pipe for `ctl`, hook wiring).
+- [ ] Native Windows support (named pipe for `ctl`, hook wiring). Implemented per ADR-024;
+  open until the `windows-latest` CI job passes and a human has run one Windows session.
+  Hook wiring on Windows is unverified: `hooks.json` keeps the exec form verified on macOS
+  (S1, S3), and exec form vs shell form under Git Bash is decided when a Windows Claude Code
+  session can test it.
 - [ ] Short authentication string option (residual risk 1).
 - [x] relay-node SQLite persistence (ADR-022): `PAIRWIRE_RELAY_STATE=sqlite:<path>` on Node 22.13+.
 - [ ] External security review (`05-security.md` gate).

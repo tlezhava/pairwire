@@ -55,7 +55,7 @@ describe("transcript", () => {
         "",
       ].join("\n"),
     );
-    expect(statSync(roomFile(home, ROOM, "transcript.md")).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(roomFile(home, ROOM, "transcript.md")).mode & 0o777).toBe(0o600); // no mode bits on Windows
   });
 
   it("marks queued sends, human messages and an empty bye", () => {

@@ -2,16 +2,17 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   hookErrorLogger,
+  isProcessAlive,
   readBinding,
   resolveProjectDir,
   sessionOwnsBinding
-} from "./chunk-7XSBMLYR.mjs";
+} from "./chunk-JWR3HKHJ.mjs";
 import {
   isOpen,
   loadConfig,
   readState
-} from "./chunk-S3MLQOW3.mjs";
-import "./chunk-AOSSRO7Z.mjs";
+} from "./chunk-UOIJGI55.mjs";
+import "./chunk-GVGSGJLD.mjs";
 import "./chunk-JC2XR7LP.mjs";
 import "./chunk-KARZWXGF.mjs";
 
@@ -26,6 +27,7 @@ function locate(stdin, o, forWaiting) {
   }
   const binding = readBinding(o.home, resolveProjectDir(o.env, input.cwd ?? o.cwd));
   if (!sessionOwnsBinding(binding, input.session_id)) return null;
+  if (!isProcessAlive(binding.owner_pid)) return null;
   const state = readState(o.home, binding.room_id);
   if (!state || !isOpen(state)) return null;
   if (forWaiting) {

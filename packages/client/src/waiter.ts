@@ -3,7 +3,7 @@
 // exits 2, which makes Claude Code start a turn in the idle session. Every other outcome exits 0
 // quietly. It has no timer of its own: a waiter that exits 0 is not replaced until a turn ends.
 import { createConnection } from "node:net";
-import { readBinding, sessionOwnsBinding } from "./binding.js";
+import { isProcessAlive, readBinding, sessionOwnsBinding } from "./binding.js";
 import { loadConfig } from "./config.js";
 import type { WaitFrame } from "./ctl-server.js";
 import { hookErrorLogger } from "./log.js";
@@ -22,7 +22,11 @@ interface Located {
   session: string;
 }
 
-/** The owning session's control socket, or null when this session must not wait. */
+/**
+ * The owning session's control socket, or null when this session must not wait. Null too when
+ * the binding's owner pid is dead: whatever listens on `ctl_path` then is not our server (a
+ * squatted stale pipe or socket name, 04 §8), so nothing connects to it.
+ */
 function locate(stdin: string, o: Pick<WaiterOptions, "home" | "env" | "cwd">, forWaiting: boolean): Located | null {
   let input: { session_id?: string; cwd?: string } = {};
   try {
@@ -32,6 +36,7 @@ function locate(stdin: string, o: Pick<WaiterOptions, "home" | "env" | "cwd">, f
   }
   const binding = readBinding(o.home, resolveProjectDir(o.env, input.cwd ?? o.cwd));
   if (!sessionOwnsBinding(binding, input.session_id)) return null;
+  if (!isProcessAlive(binding!.owner_pid)) return null;
   const state = readState(o.home, binding!.room_id);
   if (!state || !isOpen(state)) return null;
   if (forWaiting) {

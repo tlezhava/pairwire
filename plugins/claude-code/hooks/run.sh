@@ -4,11 +4,27 @@
 #   1. no room on this machine (no "active" flag): exit 0 without starting Node;
 #   2. Node missing or older than 20: tell the human once what to install, exit 0;
 #   3. otherwise run the bundled client.
+# On native Windows it runs under Git Bash; OS=Windows_NT marks that case (ADR-024).
 event="$1"
-home="${PAIRWIRE_HOME:-$HOME/.pairwire}"
+windows=
+[ "${OS-}" = Windows_NT ] && windows=1
+if [ -n "$windows" ] && [ -n "${USERPROFILE-}" ]; then
+  # Node's os.homedir() reads USERPROFILE on Windows and ignores HOME.
+  home="${PAIRWIRE_HOME:-$USERPROFILE/.pairwire}"
+else
+  home="${PAIRWIRE_HOME:-$HOME/.pairwire}"
+fi
+# The fast path uses builtins only.
 [ -e "$home/active" ] || exit 0
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 0
+if [ -n "$windows" ]; then
+  # Our path may hold backslashes (it comes from CLAUDE_PLUGIN_ROOT); `pwd -W` prints C:/...,
+  # a path node.exe can open without MSYS argument conversion.
+  script=$(printf '%s\n' "$0" | tr '\\' '/')
+  root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && { pwd -W 2>/dev/null || pwd; }) || exit 0
+else
+  root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd) || exit 0
+fi
 
 version=$(node --version 2>/dev/null) || version=""
 major=${version#v}
