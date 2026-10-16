@@ -93,7 +93,7 @@ describe("D3 waiter (stop-wait)", () => {
     a.session.shutdown();
     await new Promise((r) => setTimeout(r, 100));
     expect(await waiter(a).done).toBe(0);
-  });
+  }, 20_000); // a full pairing plus four waiter runs: slow on the Windows runner
 
   it("exits 0 without connecting when the binding's owner pid is dead (a squatted stale pipe or socket)", async () => {
     const { a } = await idleA();
