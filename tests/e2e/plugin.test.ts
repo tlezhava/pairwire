@@ -1,18 +1,25 @@
 // The Claude Code plugin as shipped (04 §6, §8, §9): files, hooks/run.sh and the bundle.
-import { execFile, execFileSync, spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
-import { chmodSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { extractSkill } from "../../scripts/build-plugin.js";
-import { person, SHARE, startRelay, tempDir, until } from "./harness.js";
+import { onWindows, person, runShellCommand, SHARE, startRelay, tempDir, until } from "./harness.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const PLUGIN = join(ROOT, "plugins/claude-code");
 const BUNDLE = join(PLUGIN, "dist/pairwire.mjs");
 const RUN_SH = join(PLUGIN, "hooks/run.sh");
 const read = (p: string) => readFileSync(join(PLUGIN, p), "utf8");
+
+type HookEntry = Record<string, unknown> & { event: string; command: string };
+function hookEntries(): HookEntry[] {
+  const hooks = JSON.parse(read("hooks/hooks.json")) as { hooks: Record<string, { hooks: Record<string, unknown>[] }[]> };
+  return Object.entries(hooks.hooks).flatMap(([event, groups]) => groups.flatMap((g) => g.hooks.map((h) => ({ event, ...h }) as HookEntry)));
+}
+const hookCommand = (event: string) => hookEntries().find((e) => e.command.endsWith(` ${event}`))!.command;
 
 function frontmatter(md: string): Record<string, string> {
   const m = md.match(/^---\n([\s\S]*?)\n---\n/);
@@ -22,7 +29,7 @@ function frontmatter(md: string): Record<string, string> {
 describe("plugin files", () => {
   it("REQ-SAFE-2 INV-4 ship no permission rule that pre-approves send", () => {
     const all = readdirSync(PLUGIN, { recursive: true, withFileTypes: true })
-      .filter((e) => e.isFile() && !e.parentPath.includes("/dist"))
+      .filter((e) => e.isFile() && !/[\\/]dist([\\/]|$)/.test(e.parentPath))
       .map((e) => readFileSync(join(e.parentPath, e.name), "utf8"))
       .join("\n");
     expect(all).not.toMatch(/mcp__plugin_pairwire_pairwire__send|"permissions"|"allow"\s*:/);
@@ -42,11 +49,16 @@ describe("plugin files", () => {
     }
   });
 
-  it("wires every hook through run.sh in exec form, with the D3 waiter async", () => {
-    const hooks = JSON.parse(read("hooks/hooks.json")) as { hooks: Record<string, { hooks: Record<string, unknown>[] }[]> };
-    const entries = Object.entries(hooks.hooks).flatMap(([event, groups]) => groups.flatMap((g) => g.hooks.map((h): Record<string, unknown> => ({ event, ...h }))));
-    expect(entries.map((e) => (e.args as string[])[1])).toEqual(["session-start", "user-prompt-submit", "post-tool-use", "stop", "stop-wait"]);
-    for (const e of entries) expect(e).toMatchObject({ type: "command", command: "sh", args: ["${CLAUDE_PLUGIN_ROOT}/hooks/run.sh", expect.any(String)] });
+  it("wires every hook through run.sh in shell form, so Windows runs it with Git Bash, with the D3 waiter async", () => {
+    const entries = hookEntries();
+    const events = ["session-start", "user-prompt-submit", "post-tool-use", "stop", "stop-wait"];
+    expect(entries.map((e) => e.command)).toEqual(events.map((ev) => `sh "\${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" ${ev}`));
+    for (const e of entries) {
+      expect(e.type).toBe("command");
+      // Exec form would look `sh` up on PATH, where Windows usually lacks it (ADR-021).
+      expect(e).not.toHaveProperty("args");
+      expect(e).not.toHaveProperty("shell");
+    }
     expect(entries.at(-1)).toMatchObject({ async: true, asyncRewake: true, timeout: 86400 });
     expect(JSON.parse(read(".mcp.json")).mcpServers.pairwire.env).toEqual({ PAIRWIRE_HARNESS: "claude-code", PAIRWIRE_PROJECT_DIR: "${CLAUDE_PROJECT_DIR}" });
   });
@@ -64,7 +76,9 @@ describe("plugin files", () => {
   });
 });
 
-describe("hooks/run.sh", () => {
+// These run run.sh against a fake `node` shell script on a ':'-separated PATH, which Windows
+// cannot execute; "the bundle" below runs the real wrapper through Git Bash there.
+describe.skipIf(onWindows)("hooks/run.sh", () => {
   /** A PATH whose `node` prints `version` and records its arguments. */
   function fakeNode(version: string | null) {
     const bin = tempDir();
@@ -109,6 +123,17 @@ describe("hooks/run.sh", () => {
     expect(run("stop", { ...n.env, PAIRWIRE_HOME: home }).status).toBe(0);
     expect(n.calls()).toBe(`${BUNDLE} hook stop\n`);
   });
+
+  it("with OS=Windows_NT (Git Bash) looks for the state directory under USERPROFILE, as Node does there", () => {
+    const n = fakeNode("v22.0.0"); // its HOME has no .pairwire
+    const profile = tempDir();
+    mkdirSync(join(profile, ".pairwire"));
+    writeFileSync(join(profile, ".pairwire", "active"), "");
+    expect(run("stop", { ...n.env, USERPROFILE: profile }).status).toBe(0);
+    expect(n.calls()).toBe(""); // not Windows: HOME decides
+    expect(run("stop", { ...n.env, OS: "Windows_NT", USERPROFILE: profile }).status).toBe(0);
+    expect(n.calls()).toBe(`${BUNDLE} hook stop\n`);
+  });
 });
 
 describe("the bundle", () => {
@@ -124,7 +149,8 @@ describe("the bundle", () => {
     const input = JSON.stringify({ session_id: "sess-a", cwd: a.project, permission_mode: "default", hook_event_name: "PostToolUse" });
     let out = "";
     await until(() => {
-      out = execFileSync("sh", [RUN_SH, "post-tool-use"], { env: { ...a.env, CLAUDE_PROJECT_DIR: a.project }, input, encoding: "utf8" });
+      // The command from hooks.json, run as Claude Code runs a shell-form hook.
+      out = runShellCommand(hookCommand("post-tool-use"), { env: { ...a.env, CLAUDE_PROJECT_DIR: a.project, CLAUDE_PLUGIN_ROOT: PLUGIN }, input });
       return out.includes("hello through the bundle");
     }, 10_000, "hook delivery");
     expect(JSON.parse(out).hookSpecificOutput.hookEventName).toBe("PostToolUse");

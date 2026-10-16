@@ -1,15 +1,38 @@
 // End-to-end harness (07-testing.md, client integration): a real relay-node on a random port and
 // `pairwire mcp` processes driven by MCP clients over stdio, each with its own PAIRWIRE_HOME.
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { getDefaultEnvironment, StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach } from "vitest";
+import { findGitBash } from "../../packages/client/src/platform.js";
 import { ManualClock, type Clock } from "../../packages/relay-node/src/clock.js";
 import { createLogger } from "../../packages/relay-node/src/log.js";
 import { createRelayServer } from "../../packages/relay-node/src/server.js";
+
+export const onWindows = process.platform === "win32";
+
+/**
+ * Variables a child process needs besides the ones a test sets. Empty off Windows, where tests
+ * give children a minimal environment; on Windows a process also needs SYSTEMROOT, TEMP and
+ * the like (the MCP SDK's defaults), or Node's networking and temp paths fail.
+ */
+export function platformEnv(): Record<string, string> {
+  return onWindows ? getDefaultEnvironment() : {};
+}
+
+/**
+ * Runs a hook command string as Claude Code runs a shell-form hook (04 §9): with `sh -c` on
+ * macOS and Linux, with Git Bash on Windows (ADR-021).
+ */
+export function runShellCommand(command: string, o: { env: Record<string, string>; input: string }): string {
+  const shell = onWindows ? findGitBash(process.env) : "sh";
+  if (!shell) throw new Error("Git Bash not found; pairwire's hooks need it on Windows");
+  return execFileSync(shell, ["-c", command], { env: o.env, input: o.input, encoding: "utf8" });
+}
 
 const MAIN = fileURLToPath(new URL("../../packages/client/src/main.ts", import.meta.url));
 const TSX = import.meta.resolve("tsx");
@@ -60,6 +83,7 @@ export function person(name: string, relayHost: string, harness = "claude-code",
   const project = join(root, "project");
   mkdirSync(project);
   const env: Record<string, string> = {
+    ...platformEnv(),
     PATH: process.env.PATH ?? "",
     HOME: root,
     PAIRWIRE_HOME: home,
