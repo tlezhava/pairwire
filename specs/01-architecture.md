@@ -86,7 +86,7 @@ pairwire/
 | Concern | Choice | Notes |
 |---|---|---|
 | Language | TypeScript 5.x, strict, ESM | |
-| Runtime | Node >= 20 (client, relay-node); Workers runtime (relay-worker) | |
+| Runtime | Node >= 20 (client, relay-node); Workers runtime (relay-worker) | relay-node's optional SQLite state uses the built-in `node:sqlite` and needs Node >= 22.13 (ADR-021) |
 | Monorepo | npm workspaces | No extra tooling |
 | Build | `tsc` for libraries; `esbuild` to bundle the client into one `.mjs` for the plugin | |
 | Tests | `vitest`; `@cloudflare/vitest-plugin` (formerly `vitest-pool-workers`) for the Durable Object | |

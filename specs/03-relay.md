@@ -78,6 +78,11 @@ Events: `connect`, `controlFrame(slot?, json)`, `binaryFrame(slot, bytes)`, `dis
 Behavior is exactly the membership rules in `02-protocol.md` section 5 plus the limits
 above.
 
+`encodeRoomState(state)` and `decodeRoomState(text)` turn a `RoomState` into a JSON string
+and back (frame bytes as base64url; decoding validates with zod and throws on anything
+else). A host that stores state as bytes or text, rather than as structured values the
+way Durable Object storage does, uses this pair (relay-node with SQLite).
+
 ## Cloudflare implementation (`relay-worker`)
 
 - The Worker validates the path and forwards the upgrade to the Durable Object whose name
@@ -111,15 +116,50 @@ above.
 ## Node implementation (`relay-node`)
 
 - `ws` server on `PORT` (default 8787), `HOST` (default `0.0.0.0`).
-- State in memory by default. Optional `PAIRWIRE_RELAY_STATE=sqlite:/data/relay.db` for
-  restarts without dropping rooms (M7; in-memory is fine for MVP).
+- State in memory by default. `PAIRWIRE_RELAY_STATE=sqlite:<path>` (for example
+  `sqlite:/data/relay.db`) keeps room state in a SQLite file so a restart drops no rooms
+  (see Persistence below). Unset, empty or `memory` means in memory; any other value is a
+  startup error.
 - Timers replace Durable Object alarms. The server factory takes an injectable clock so
   tests can exercise expiry and max age (REQ-ROOM-7) without waiting.
 - Expects to sit behind a TLS-terminating proxy in production; logs a warning at startup
   if `PAIRWIRE_RELAY_INSECURE_OK` is not set and the server is not bound to localhost,
   reminding the operator that clients require `wss://`.
-- Dockerfile: multi-stage, `node:20-alpine` runtime, non-root user, `EXPOSE 8787`,
-  `HEALTHCHECK` on `/health`. Image published as `ghcr.io/tlezhava/pairwire-relay`.
+- Dockerfile: multi-stage, `node:24-alpine` runtime (it has `node:sqlite` without a
+  warning), non-root user, `EXPOSE 8787`, `HEALTHCHECK` on `/health`, and an empty `/data`
+  directory owned by that user for a volume. Image published as
+  `ghcr.io/tlezhava/pairwire-relay`.
+
+### Persistence (`PAIRWIRE_RELAY_STATE=sqlite:<path>`)
+
+- Uses Node's built-in `node:sqlite` (`DatabaseSync`), so no new dependency. It exists
+  unflagged from Node 22.13 (and 23.4). Node 22 prints one `ExperimentalWarning` line on
+  stderr when the relay opens the file; Node 24 does not. On Node 20, or a Node 22 before
+  22.13, the relay exits with status 1 and a message naming the Node version it needs. It
+  never falls back to memory silently. In-memory state keeps working on Node >= 20.
+- The stored unit is the state machine's `RoomState`, the same value the Durable Object
+  keeps under its `state` key: one row per room in
+  `rooms(room_id TEXT PRIMARY KEY, state TEXT NOT NULL)`, where `state` is
+  `encodeRoomState()` from `relay-room.ts` (JSON, buffered frame bytes as base64url).
+  `decodeRoomState()` validates a row with zod before use. A row that fails to decode is
+  deleted and counted in the startup log (`state_dropped`); the relay starts anyway.
+- Writes follow the state machine's output: `persist` writes the row (or deletes it when
+  the state is gone), `deleteAll` deletes it. The write happens before the output's
+  frames are sent, so a member never receives a `joined` token that isn't on disk yet.
+  Writes are synchronous, in WAL mode.
+- The file holds room ids, member tokens, timestamps and opaque ciphertext, nothing else
+  (INV-1). The relay creates it with mode 0600.
+- Not persisted: sockets, join deadlines (no socket outlives the process) and the
+  rate-limit buckets (in memory, like on Cloudflare).
+- On startup the relay loads every row before it listens. A slot saved as `connected`
+  lost its socket to the restart, so the relay treats that as a disconnect at startup
+  time (`lastActivityAt` becomes the startup time); idle expiry then counts from the
+  restart, which errs toward keeping the room. Then each room gets one `alarm()` call,
+  which applies whatever fell due while the relay was down (buffered frame lifetime,
+  idle expiry, max age), and the returned alarm time is armed as usual.
+- Members come back by rejoining with their tokens (`02-protocol.md` §5 rule 2), exactly
+  as after a network drop: buffered frames are delivered and the peer gets `peer_joined`.
+- Shutdown (SIGINT, SIGTERM) writes nothing extra; open sockets are dropped.
 
 ## Logging
 
@@ -137,7 +177,9 @@ above.
 - README section "Run your own relay" with:
   - a **Deploy to Cloudflare** button pointing at `packages/relay-worker`, and
   - `docker run -p 8787:8787 ghcr.io/tlezhava/pairwire-relay` plus a reverse-proxy example
-    (Caddy, two lines) for TLS.
+    (Caddy, two lines) for TLS, and
+  - the same with a volume and `PAIRWIRE_RELAY_STATE=sqlite:/data/relay.db` for a relay
+    that keeps its rooms across restarts and upgrades.
 - Clients pick up the relay with `PAIRWIRE_RELAY=relay.example.com` or
   `"relay": "relay.example.com"` in `~/.pairwire/config.json`. Share strings created
   against a custom relay carry `@relay.example.com`, so the joining engineer needs no

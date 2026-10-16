@@ -244,6 +244,33 @@ sanitized, wrapped in `<pairwire_transcript>` and preceded by a preamble labelin
 as external input. This tightens `04` §8; INV-3's text is unchanged. The ctl socket protocol
 is defined at the same time (one JSON request and reply per connection).
 
+## ADR-021 relay-node SQLite persistence uses node:sqlite and core's RoomState codec (M7)
+
+Status: accepted (2026-10-16)
+
+`PAIRWIRE_RELAY_STATE=sqlite:<path>` was reserved in `03` but undefined. Decisions:
+
+- **Driver: Node's built-in `node:sqlite`**, so no runtime dependency is added. Checked on
+  the official images: Node 20.20 has no such module (`ERR_UNKNOWN_BUILTIN_MODULE`), Node
+  22.12 still needs `--experimental-sqlite`, Node 22.13+ has it unflagged but prints an
+  `ExperimentalWarning` on first use (seen on 22.20), Node 24.22 has it with no warning.
+  The relay keeps Node >= 20 for in-memory state and fails at startup, never silently
+  falling back to memory, when SQLite is asked for and missing. The Docker image moves to
+  `node:24-alpine` so the documented `sqlite:/data/relay.db` works there.
+  `@types/node` stays at 20, so the relay declares the few `node:sqlite` types it uses
+  instead of letting Node 22 APIs type-check everywhere.
+- **Format: the `RoomState` the state machine already persists.** The Durable Object
+  stores that value under one key with structured clone; the Node relay stores the same
+  value, one row per room, through a new `encodeRoomState`/`decodeRoomState` pair in
+  `relay-room.ts` (JSON with base64url frame bytes, validated with zod on the way in).
+  Rejected: a relational schema (a second data model to keep in step with `RelayRoom`),
+  and `v8.serialize` (Node encodes typed arrays as its own host objects, so it is neither
+  the Workers encoding nor readable, and it can't be validated before it is rebuilt).
+- **Restart semantics:** a slot saved as connected is treated as disconnected at startup
+  time, and each loaded room gets one `alarm()` call to apply what fell due during the
+  downtime and to re-arm its timer. Rewriting every room at shutdown was rejected: a crash
+  skips it anyway, so the startup rule has to exist and then covers both.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
