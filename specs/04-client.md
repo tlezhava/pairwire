@@ -59,7 +59,9 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
 - An error is logged with its name, code, message and stack, each redacted.
 - The MCP server logs to stderr (stdout carries MCP), which Claude Code keeps with the
   server's logs. Hooks log only errors, appended to `~/.pairwire/hook-errors.log` (0600);
-  above 1 MiB that file is moved to `hook-errors.log.1`, replacing the previous one.
+  above 1 MiB that file is moved to `hook-errors.log.1`, replacing the previous one. The one
+  exception is the `delivered_unreadable` warning (section 3), which whichever process finds
+  the corrupt file (hook, `ctl` or MCP server) appends there too.
 
 ## 2. Configuration
 
@@ -165,7 +167,12 @@ it cannot tell whether the human asked for it, so it fails closed.
   human discarded with `/pairwire:accept drop` (also listed in `ids`, so no path shows
   them). `released` and `dropped` are absent in files written before M5. Unread items are
   inbox entries not listed in `ids`. A peer message is **held** when hold mode is on and it
-  is unread and not in `released` (section 5, Hold mode).
+  is unread and not in `released` (section 5, Hold mode). A missing `delivered.json` is an
+  empty ledger. One that exists but can't be read or parsed **fails closed**: every peer
+  message then in `inbox.jsonl` counts as delivered and dropped (so nothing the human dropped
+  resurfaces, and `/pairwire:log` shows those bodies as dropped), local notices may be shown
+  again, and the first process to find it rewrites the file that way under its lock and
+  logs a `delivered_unreadable` warning (room tag only, no ids) to `hook-errors.log`.
 - `inbox.jsonl` lines: `{"source":"peer","id","from","harness","received_at","envelope"}`
   for accepted non-ack envelopes (`id` is the envelope id; `from`/`harness` are the peer's
   HELLO values at that time, sanitized only when rendered), and

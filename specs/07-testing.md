@@ -134,7 +134,9 @@ From then on it fails CI.
   install; `ctl accept` releases and drops held messages even when its own process sees
   hold mode off, and retires the unread `held` notice (no hook or `inbox` shows it after); the `held` notice, the footer, `status`, the `ctl log` placeholder and
   `ctl accept`'s usage name `/pairwire:accept` in Claude Code and the terminal command in
-  Codex (the binding records the owner's harness).
+  Codex (the binding records the owner's harness); a corrupt `delivered.json` fails closed
+  (no peer message already in the inbox is shown again, the file is repaired once, and the
+  warning carries no ids) while a missing one is an empty ledger.
 
 ### hooks
 

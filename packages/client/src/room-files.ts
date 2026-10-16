@@ -3,7 +3,8 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { envelopeSchema, type RenderItem } from "@pairwire/core";
 import { z } from "zod";
 import { errorCode, PRIVATE_FILE_MODE, withLock, writeFileAtomic } from "./fs-util.js";
-import { roomFile } from "./paths.js";
+import { createLogger, fileSink, roomTag } from "./log.js";
+import { hookErrorsPath, roomFile } from "./paths.js";
 
 const millis = z.number().int().min(0);
 
@@ -113,13 +114,52 @@ export interface DeliveryLedger {
   dropped: Set<string>;
 }
 
-export function readLedger(home: string, roomId: string): DeliveryLedger {
+const emptyLedger = (): DeliveryLedger => ({ ids: new Set(), released: new Set(), dropped: new Set() });
+
+/**
+ * A delivered.json that exists but can't be read fails closed (04 §3): every peer message in
+ * the inbox counts as delivered and dropped, so nothing the human dropped (or the agent saw)
+ * resurfaces. Local notices may be shown again.
+ */
+function failClosedLedger(home: string, roomId: string): DeliveryLedger {
+  const peers = readInbox(home, roomId)
+    .filter((e) => e.source === "peer")
+    .map((e) => e.id);
+  return { ids: new Set(peers), released: new Set(), dropped: new Set(peers) };
+}
+
+function loadLedger(home: string, roomId: string): { ledger: DeliveryLedger; corrupt: boolean } {
+  let text: string;
   try {
-    const v = deliveredSchema.parse(JSON.parse(readFileSync(roomFile(home, roomId, "delivered.json"), "utf8")));
-    return { ids: new Set(v.ids), released: new Set(v.released), dropped: new Set(v.dropped) };
+    text = readFileSync(roomFile(home, roomId, "delivered.json"), "utf8");
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return { ledger: emptyLedger(), corrupt: false };
+    return { ledger: failClosedLedger(home, roomId), corrupt: true };
+  }
+  try {
+    const v = deliveredSchema.parse(JSON.parse(text));
+    return { ledger: { ids: new Set(v.ids), released: new Set(v.released), dropped: new Set(v.dropped) }, corrupt: false };
   } catch {
-    // missing, or corrupt: worst case the agent sees an item twice; held items stay held
-    return { ids: new Set(), released: new Set(), dropped: new Set() };
+    return { ledger: failClosedLedger(home, roomId), corrupt: true };
+  }
+}
+
+/** Any process may find the file corrupt, so the warning goes to the shared hook-errors.log (04 §1). */
+function warnCorrupt(home: string, roomId: string): void {
+  createLogger({ sink: fileSink(hookErrorsPath(home)), level: "warn" }).warn("delivered_unreadable", {
+    room: roomTag(roomId),
+    action: "treated every peer message in the inbox as delivered and dropped",
+  });
+}
+
+/** delivered.json; a corrupt one is replaced by its fail-closed reading (04 §3). */
+export function readLedger(home: string, roomId: string): DeliveryLedger {
+  const { ledger, corrupt } = loadLedger(home, roomId);
+  if (!corrupt) return ledger;
+  try {
+    return withLedger(home, roomId, (l) => l);
+  } catch {
+    return ledger;
   }
 }
 
@@ -127,12 +167,17 @@ function writeLedger(path: string, l: DeliveryLedger): void {
   writeFileAtomic(path, JSON.stringify({ ids: [...l.ids], released: [...l.released], dropped: [...l.dropped] }) + "\n");
 }
 
-/** Read-modify-write of delivered.json under its lock. */
+/** Read-modify-write of delivered.json under its lock. A corrupt file is repaired first, once. */
 function withLedger<T>(home: string, roomId: string, fn: (l: DeliveryLedger, save: () => void) => T): T {
   const path = roomFile(home, roomId, "delivered.json");
   return withLock(path, () => {
-    const l = readLedger(home, roomId);
-    return fn(l, () => writeLedger(path, l));
+    const { ledger, corrupt } = loadLedger(home, roomId);
+    const save = () => writeLedger(path, ledger);
+    if (corrupt) {
+      warnCorrupt(home, roomId);
+      save();
+    }
+    return fn(ledger, save);
   });
 }
 

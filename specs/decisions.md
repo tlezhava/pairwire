@@ -287,6 +287,12 @@ Decisions:
   (`PAIRWIRE_HOLD` set only in the server's environment), and refusing because "hold mode is
   off" would strand messages the server holds. It acts on whatever would be held with hold
   on.
+- **A corrupt `delivered.json` fails closed.** Before M5 an unreadable ledger meant "the
+  agent may see an item twice". With `dropped` in the same file, that reading would hand the
+  agent messages the human dropped, so an unreadable (not missing) file now counts every
+  peer message in the inbox as delivered and dropped, and is rewritten that way with a
+  warning. The cost is that unread messages at that moment are lost to the agent (they stay
+  in the transcript).
 - **The sender does not learn "held" in v1.** Acks are sent on receipt as before, so the
   sender sees "delivered" (the peer's client has it). Reporting "held" or "released" would
   need a new envelope kind or ack field (`02` §6), and tells the peer about the receiver's

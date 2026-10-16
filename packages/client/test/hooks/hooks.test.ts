@@ -1,12 +1,12 @@
 // Hook contract tests (07-testing.md, hooks): recorded Claude Code inputs (spike S1) in,
 // hook JSON out, against real local state.
-import { readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bindProject } from "../../src/binding.js";
 import { runHook, STOP_REASON_LEAD, type HookEvent } from "../../src/hooks.js";
 import { hookErrorsPath, roomFile } from "../../src/paths.js";
-import { appendInbox, readDelivered } from "../../src/room-files.js";
+import { appendInbox, hiddenBodies, inboxCounts, readDelivered } from "../../src/room-files.js";
 import { createRoom, readState, updateState } from "../../src/state.js";
 import { tempDir } from "../state/helpers.js";
 
@@ -109,6 +109,40 @@ describe("hooks: delivery (D2)", () => {
     expect(String(out?.reason)).toContain('<pairwire_notice event="held">');
     expect(String(out?.reason)).not.toContain("HELD body");
     expect([...readDelivered(h.home, ROOM)]).toEqual(["notice-1"]);
+  });
+
+  it("REQ-SAFE-6 a corrupt delivered.json fails closed: no peer message already in the inbox resurfaces", () => {
+    const h = setup();
+    h.message("SEEN before");
+    h.message("DROPPED before");
+    appendInbox(h.home, ROOM, { source: "local", id: "notice-1", event: "peer_joined", text: "Nika (codex) joined the room.", received_at: Date.now() });
+    const ledger = roomFile(h.home, ROOM, "delivered.json");
+    writeFileSync(ledger, "{torn");
+    // A read-only path repairs the file to its fail-closed reading, once.
+    expect(inboxCounts(h.home, ROOM, false)).toEqual({ messages: 0, notices: 1, held: 0 });
+    const repaired = JSON.parse(readFileSync(ledger, "utf8")) as { ids: string[]; dropped: string[] };
+    expect(repaired.ids).toHaveLength(2);
+    expect(repaired.dropped).toEqual(repaired.ids);
+    expect([...hiddenBodies(h.home, ROOM, false).values()]).toEqual(["dropped", "dropped"]);
+    const out = context(h.run("post-tool-use", "post-tool-use-bash"));
+    expect(out).toContain("Nika (codex) joined the room."); // notices may be shown again
+    expect(out).not.toContain("before");
+    h.message("AFTER the repair");
+    expect(context(h.run("post-tool-use", "post-tool-use-bash"))).toContain("AFTER the repair");
+    const log = readFileSync(hookErrorsPath(h.home), "utf8").trim().split("\n");
+    expect(log).toHaveLength(1);
+    expect(JSON.parse(log[0]!)).toMatchObject({ level: "warn", event: "delivered_unreadable" });
+    expect(log[0]).not.toMatch(/01JPW|notice-1/);
+  });
+
+  it("a missing delivered.json is an empty ledger and logs nothing", () => {
+    const h = setup();
+    h.message("first");
+    expect(context(h.run("post-tool-use", "post-tool-use-bash"))).toContain("first");
+    rmSync(roomFile(h.home, ROOM, "delivered.json"));
+    expect(readDelivered(h.home, ROOM).size).toBe(0);
+    expect(context(h.run("post-tool-use", "post-tool-use-bash"))).toContain("first");
+    expect(existsSync(hookErrorsPath(h.home))).toBe(false);
   });
 
   it("REQ-SAFE-6 a config that can't be read holds peer messages", () => {
