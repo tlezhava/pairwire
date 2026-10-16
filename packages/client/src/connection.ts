@@ -592,7 +592,8 @@ export class RoomConnection {
       }
       if (!frame) continue;
       this.#socket.sendBinary(frame);
-      this.#sentTimes.push(now);
+      // The moment of the write, not of the pump: a batch can straddle a millisecond.
+      this.#sentTimes.push(this.#t.now());
     }
 
     if (sentIds.length > 0) {

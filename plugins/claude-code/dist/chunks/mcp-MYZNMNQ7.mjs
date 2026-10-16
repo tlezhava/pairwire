@@ -26918,7 +26918,7 @@ var RoomConnection = class {
       }
       if (!frame) continue;
       this.#socket.sendBinary(frame);
-      this.#sentTimes.push(now);
+      this.#sentTimes.push(this.#t.now());
     }
     if (sentIds.length > 0) {
       const ids = new Set(sentIds);
