@@ -34,9 +34,9 @@ describe("npm package", () => {
       files: { path: string }[];
     }[];
     const paths = packed!.files.map((f) => f.path);
-    expect(paths).toEqual(expect.arrayContaining(["package.json", "README.md", "LICENSE", "dist/pairwire.mjs", "hooks/run.sh", "skills/pairwire/SKILL.md"]));
+    expect(paths).toEqual(expect.arrayContaining(["package.json", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "dist/pairwire.mjs", "hooks/run.sh", "skills/pairwire/SKILL.md"]));
     expect(paths.some((p) => p.startsWith("dist/chunks/"))).toBe(true);
-    expect(paths.filter((p) => !/^(package\.json|README\.md|LICENSE|dist\/.*\.mjs|hooks\/run\.sh|skills\/pairwire\/SKILL\.md)$/.test(p))).toEqual([]);
+    expect(paths.filter((p) => !/^(package\.json|README\.md|LICENSE|THIRD_PARTY_NOTICES\.md|dist\/.*\.mjs|hooks\/run\.sh|skills\/pairwire\/SKILL\.md)$/.test(p))).toEqual([]);
 
     const prefix = tempDir();
     execFileSync(NPM, ["install", "--global", "--prefix", prefix, "--offline", "--no-audit", "--no-fund", join(packDir, packed!.filename)], { env: npmEnv, encoding: "utf8", shell: WIN });

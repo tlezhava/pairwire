@@ -35,7 +35,7 @@ export function npmManifest(version: string, plugin: PluginManifest): Record<str
     author: plugin.author.name,
     type: "module",
     bin: { pairwire: "dist/pairwire.mjs" },
-    files: ["dist", "hooks/run.sh", "skills"],
+    files: ["dist", "hooks/run.sh", "skills", "THIRD_PARTY_NOTICES.md"],
     engines: { node: ">=20" },
   };
 }
@@ -57,6 +57,7 @@ export function packNpm(root: string, out: string): Record<string, unknown> {
   chmodSync(join(out, "dist/pairwire.mjs"), 0o755);
   chmodSync(join(out, "hooks/run.sh"), 0o755);
   for (const f of ["README.md", "LICENSE"]) cpSync(join(root, f), join(out, f));
+  cpSync(join(root, "plugins/claude-code/THIRD_PARTY_NOTICES.md"), join(out, "THIRD_PARTY_NOTICES.md"));
   writeFileSync(join(out, "package.json"), JSON.stringify(manifest, null, 2) + "\n");
   return manifest;
 }
