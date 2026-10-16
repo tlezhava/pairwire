@@ -4,13 +4,5 @@
     "REQ-MSG-4": 4,
     "REQ-INST-3": 8
   },
-  "deferred": {
-    "REQ-COLLAB-1": "M5",
-    "REQ-COLLAB-2": "M5",
-    "REQ-COLLAB-3": "M5",
-    "REQ-COLLAB-4": "M5",
-    "REQ-COLLAB-5": "M5",
-    "REQ-COLLAB-6": "M5",
-    "REQ-COLLAB-7": "M5"
-  }
+  "deferred": {}
 }

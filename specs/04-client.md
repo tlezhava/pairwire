@@ -113,11 +113,13 @@ it cannot tell whether the human asked for it, so it fails closed.
     │                                     hop_count, status ("waiting"|"active"|"left"|"ended"),
     │                                     created_at, expires_at, ctl_path, error,
     │                                     bypass_warned_sessions
+    ├── caps.json                         peer HELLO caps per stored session (M5; Coordination state)
     ├── inbox.jsonl                       accepted inbound envelopes and local notices
     │                                     ({source: "peer"|"local", ..., received_at})
     ├── delivered.json                    ids already shown to the agent; hold mode's
     │                                     released and dropped ids
     ├── outbox.jsonl                      sent-but-unacked and not-yet-sent envelopes (02 §6.2)
+    ├── coord-sent.jsonl                  our structured sends (M5; Coordination state)
     └── transcript.md                     human-readable log of both directions
 ```
 
@@ -259,7 +261,8 @@ file in either repository.
   stores a new session in `state.json`. A session without an entry has no `collab1`
   (`02` §6.3.2), so a missing or unreadable file, or a crash between the two writes, only
   makes structured kinds go out as chat. It is a separate file, not a `state.json` field,
-  because 0.1.x refuses a `state.json` with unknown fields (ADR-027).
+  because 0.1.x refuses a `state.json` with unknown fields (ADR-027). It is deleted with the
+  session keys when the room is closed locally.
 - **The view is computed, not stored.** Nothing else is written on the receive path.
   `coordView({messages, roomOpen, roomExpiresAt, now})` is a pure function in
   `packages/core` (isomorphic, unit-tested). `messages` are the peer's entries in

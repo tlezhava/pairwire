@@ -204,9 +204,11 @@ ADR-027.
   refused by `send` and rendered `match="superseded"` when it arrives anyway; a held
   proposal id gets the same `send` error as a nonexistent one.
 - REQ-COLLAB-4: an e2e pair with one side a raw test peer that validates with 0.1.0's
-  envelope schema and advertises no `collab1`: every M5 kind arrives as `chat` with its
-  header, is acked, and later `seq`s keep flowing. Client tests (fake socket, injected
-  caps): a peer downgrade between sessions resends unacked structured envelopes as chat
+  envelope schema and advertises no `collab1`: `heads_up`, `claim`, `release` and
+  `contract_propose` arrive as `chat` with their headers (an older peer can't propose, so
+  there is nothing to answer), are acked, nothing is dropped as 0.1.0 would drop it, and a
+  later `chat` keeps flowing. Client tests (relay-node, injected HELLO caps, dropped
+  frames): a peer downgrade between sessions resends unacked structured envelopes as chat
   under the same id and seq; an upgrade resends structured.
 - REQ-COLLAB-5: invalid `data`, `data` on an old kind, `author: "human"` on an M5 kind and
   an extra top-level field are skipped like an unknown kind (ADR-025): acked, `peer_max_seq`
