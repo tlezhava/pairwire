@@ -246,7 +246,7 @@ is defined at the same time (one JSON request and reply per connection).
 
 ## ADR-021 Inbound hold mode: messages wait for /pairwire:accept (M5)
 
-Status: proposed (2026-10-16)
+Status: accepted (2026-10-16)
 
 Some users want to read what the peer sent before their agent does. M5 adds hold mode
 (`hold` in `config.json`, `PAIRWIRE_HOLD`, default off; REQ-SAFE-6; `04` §5, Hold mode).
