@@ -115,6 +115,10 @@ client unless stated otherwise. Each requirement has at least one test (see
 - **REQ-SAFE-5** WHEN a session is paired and its permission mode runs `send` without an
   approval prompt (`bypassPermissions` or `auto`) THE SYSTEM SHALL warn the human once
   per session that outbound messages are not being approved.
+- **REQ-SAFE-6** (M5) WHEN hold mode is on and a peer message arrives THE SYSTEM SHALL keep
+  it from the agent on every delivery path until the human releases it with
+  `/pairwire:accept` (or discards it with `/pairwire:accept drop`), and no agent tool SHALL
+  release it.
 
 ### Installation and hosting
 

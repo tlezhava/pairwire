@@ -615,6 +615,11 @@ export class RoomConnection {
     else this.#pump(); // sends leave once the queue is empty
   }
 
+  /** Queues a local notice from the session (hold mode's `held`, 04 §5). */
+  notice(notice: Notice): void {
+    this.#notice(notice);
+  }
+
   #notice(notice: Notice): void {
     const entry: InboxEntry = { source: "local", id: this.#ulid(), event: notice.event, text: notice.text, received_at: this.#t.now() };
     appendInbox(this.#o.home, this.#roomId, entry);

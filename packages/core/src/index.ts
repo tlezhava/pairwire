@@ -55,9 +55,12 @@ export {
   type SocketId,
 } from "./relay-room.js";
 export {
+  acceptHint,
+  CODEX_CTL,
   HOOK_CONTEXT_CAP,
   HOOK_MAX_BODY,
   PREAMBLE,
+  noticeHeld,
   noticePeerChanged,
   noticePeerJoined,
   noticePeerLeft,

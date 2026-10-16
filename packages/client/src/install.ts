@@ -19,7 +19,7 @@ const EVENT_ARG: Record<(typeof CODEX_HOOK_EVENTS)[number], string> = {
   Stop: "stop",
 };
 /** Passed by name: Codex starts MCP servers with a cleared environment (04 §10). */
-const ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"];
+const ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"];
 
 export interface InstallOptions {
   /** The plugin layout to install from: contains dist/, hooks/run.sh, skills/. */
@@ -197,6 +197,7 @@ export class Installer {
         "  2. Run /hooks in Codex and trust the four pairwire hooks (Codex runs no hook until you do).",
         "  3. Ask Codex to start or join a pairwire room. To send your own words or let the agent continue",
         `     after the hop budget, run in a terminal: node ${JSON.stringify(this.bundle)} ctl say|continue|log`,
+        `     In hold mode, release held messages with: node ${JSON.stringify(this.bundle)} ctl accept [drop]`,
         "Keep Codex's approval prompt for the pairwire send tool on: don't choose \"always allow\" for it.",
       ].join("\n"),
     );

@@ -93,6 +93,6 @@ describe("pairwire ctl", () => {
     await a.session.ctlReady();
     expect(statSync(readState(a.home, roomOf(a))!.ctl_path).mode & 0o777).toBe(0o600);
     expect(await ctl({ home: a.home, project: tempDir() }, ["log"])).toBe("pairwire: there is no pairwire room in this project.\n");
-    expect(await ctl(a, ["bogus"])).toContain("usage: pairwire ctl <say|continue|log [n]>");
+    expect(await ctl(a, ["bogus"])).toContain("usage: pairwire ctl <say|continue|log [n]|accept [drop]>");
   });
 });

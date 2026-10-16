@@ -3,29 +3,25 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   claimUndelivered,
   toRenderItem
-} from "./chunk-RV4T4N32.mjs";
+} from "./chunk-FVNYIXX2.mjs";
 import {
-  hookErrorLogger
-} from "./chunk-KZJDG25M.mjs";
-import {
+  hookErrorLogger,
   readBinding,
   resolveProjectDir,
   sessionOwnsBinding
-} from "./chunk-UDAK3MA4.mjs";
+} from "./chunk-7XSBMLYR.mjs";
 import {
   DEFAULT_CONFIG,
-  loadConfig
-} from "./chunk-WRMKSPUR.mjs";
-import {
   isOpen,
+  loadConfig,
   readState,
   updateState
-} from "./chunk-5S434TG7.mjs";
+} from "./chunk-S3MLQOW3.mjs";
 import "./chunk-AOSSRO7Z.mjs";
 import {
   displayName,
   renderForHook
-} from "./chunk-RXHLPIRV.mjs";
+} from "./chunk-JC2XR7LP.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/hooks.ts
@@ -63,7 +59,7 @@ function hook(event, input, o) {
   const roomId = binding.room_id;
   const state = readState(o.home, roomId);
   if (!state || !isOpen(state)) return null;
-  let config = DEFAULT_CONFIG;
+  let config = { ...DEFAULT_CONFIG, hold: true };
   try {
     config = loadConfig(o.home, o.env).config;
   } catch {
@@ -80,7 +76,7 @@ function hook(event, input, o) {
   }
   if (config.delivery === "pull") return finish(out);
   if (event === "stop" && !config.autoContinue) return finish(out);
-  const rendered = claimUndelivered(o.home, roomId, (items) => {
+  const rendered = claimUndelivered(o.home, roomId, { hold: config.hold }, (items) => {
     const r = renderForHook(items.map(toRenderItem));
     return { ids: r.deliveredIds, result: r };
   });

@@ -37,6 +37,7 @@ describe("pairwire install --codex", () => {
     expect(r.stdout).toContain("Run /hooks in Codex and trust the four pairwire hooks");
 
     const bin = join(m.home, ".pairwire", "bin");
+    expect(r.stdout).toContain(`In hold mode, release held messages with: node ${JSON.stringify(join(bin, "dist", "pairwire.mjs"))} ctl accept [drop]`);
     expect(existsSync(join(bin, "dist", "pairwire.mjs"))).toBe(true);
     expect(statSync(join(bin, "hooks", "run.sh")).mode & 0o111).not.toBe(0);
     const toml = readFileSync(m.codex("config.toml"), "utf8");
@@ -48,7 +49,7 @@ describe("pairwire install --codex", () => {
         'command = "node"',
         `args = [${JSON.stringify(join(bin, "dist", "pairwire.mjs"))}, "mcp"]`,
         'env = { PAIRWIRE_HARNESS = "codex" }',
-        'env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"]',
+        'env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"]',
         "startup_timeout_sec = 20",
         "# <<< pairwire <<<",
       ].join("\n"),

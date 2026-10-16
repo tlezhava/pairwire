@@ -39,7 +39,8 @@ This copies the client to `~/.pairwire/bin`, registers the MCP server in
 `~/.codex/hooks.json` and the skill to `~/.agents/skills/pairwire`, backing up every file it
 changes. Then restart Codex and **trust the pairwire hooks with `/hooks`**. Codex has no
 `/pairwire:` commands: ask the agent to start, join or leave a room, and send your own words
-from a terminal with `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (stdin). Messages reach
+from a terminal with `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (stdin); in hold mode,
+release held messages with `... ctl accept` (or `ctl accept drop`) there. Messages reach
 Codex between its steps and at the end of a turn; an idle Codex session sees them on its next
 turn. `install --codex --uninstall` removes it all again.
 
@@ -93,6 +94,7 @@ there.
 | `/pairwire:log [n]` | The last `n` entries of the conversation (default 30). |
 | `/pairwire:say <text>` | Send your own words, marked as written by you (not your agent). |
 | `/pairwire:continue` | Let your agent keep going after it hit the hop budget. |
+| `/pairwire:accept [drop]` | Hold mode: show your agent the messages waiting for you, or drop them. |
 | `/pairwire:leave [message]` | End the room for both sides and delete its keys. |
 
 Rooms end after 72 hours with nobody connected, or 7 days after creation. One room per
@@ -124,6 +126,10 @@ What we do:
   keys per connection (XChaCha20-Poly1305). The relay sees only room ids, sizes and
   timing; not names, not messages, not the share string. Details:
   [`specs/02-protocol.md`](specs/02-protocol.md).
+- **Optional hold mode.** With `"hold": true` (or `PAIRWIRE_HOLD=1`), messages from the
+  other side wait for you: your agent only learns that something arrived, and sees it when
+  you run `/pairwire:accept`. `/pairwire:accept drop` discards them instead. Held messages
+  are in the transcript (path in `/pairwire:status`) if you want to read them first.
 - **Private local state** in `~/.pairwire` (0700, files 0600); pairwire refuses to run if
   it is readable by others.
 
@@ -144,6 +150,7 @@ Optional, in `~/.pairwire/config.json` or environment variables:
 | `auto_continue` | | `true` | Keep the agent working (or wake it) when messages arrive |
 | `hop_budget` | | `8` | Messages in a row without your input |
 | `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `pull`: no injection; the agent checks with its `inbox` tool |
+| `hold` | `PAIRWIRE_HOLD` | `false` | `true`: messages from the other side wait for your `/pairwire:accept` |
 | | `PAIRWIRE_HOME` | `~/.pairwire` | State directory |
 | | `PAIRWIRE_LOG` | `info` | Log level (logs never contain messages or secrets) |
 

@@ -79,11 +79,18 @@ on while paired.
    `/pairwire:say` or `/pairwire:continue` (`disable-model-invocation`), but while the
    human runs one of them, its `allowed-tools` pre-approval also covers matching Bash
    calls the agent makes in that turn; the pattern is limited to `pairwire.mjs ctl` (S8).
+   The same holds for `pairwire ctl accept` in hold mode (M5): an agent with unrestricted
+   Bash, or one making a matching call during the human's `/pairwire:accept` turn, could
+   release held messages itself.
 3. **Metadata** visible to the relay: that two IPs talk, when, how much.
 4. **Share string in agent context.** `/pairwire:join` puts the string in the conversation,
    which the harness may store. Sealed rooms limit what a later holder can do.
 5. **Secret scanner false negatives.** It catches common formats, not every secret.
 6. **Local machine compromise** exposes room state; out of scope.
+7. **Hold mode is not a file-system barrier.** Held messages are in the room's
+   `transcript.md` and `inbox.jsonl` (the human's record). pairwire never delivers them, but
+   an agent allowed to read files under `~/.pairwire` can read them there. Hold mode relies
+   on the harness's permission prompts for reads outside the project.
 
 ## Security review gate
 

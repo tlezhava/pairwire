@@ -16,6 +16,8 @@ export interface Config {
   autoContinue: boolean;
   hopBudget: number;
   delivery: Delivery;
+  /** Hold mode (04 §5): peer messages wait for the human's /pairwire:accept. */
+  hold: boolean;
   channels: boolean;
 }
 
@@ -25,6 +27,7 @@ export const DEFAULT_CONFIG: Config = {
   autoContinue: true,
   hopBudget: 8,
   delivery: "auto",
+  hold: false,
   channels: false,
 };
 
@@ -34,6 +37,7 @@ const fileSchema = z.object({
   auto_continue: z.boolean().optional(),
   hop_budget: z.number().int().min(1).max(1000).optional(),
   delivery: z.enum(["auto", "pull"]).optional(),
+  hold: z.boolean().optional(),
   channels: z.boolean().optional(),
 });
 const KNOWN_KEYS = new Set(Object.keys(fileSchema.shape));
@@ -76,9 +80,22 @@ export function loadConfig(home: string, env: NodeJS.ProcessEnv = process.env): 
     autoContinue: file.auto_continue ?? DEFAULT_CONFIG.autoContinue,
     hopBudget: file.hop_budget ?? DEFAULT_CONFIG.hopBudget,
     delivery: env.PAIRWIRE_DELIVERY ? parseDelivery(env.PAIRWIRE_DELIVERY) : (file.delivery ?? DEFAULT_CONFIG.delivery),
+    hold: env.PAIRWIRE_HOLD ? parseFlag(env.PAIRWIRE_HOLD, "PAIRWIRE_HOLD") : (file.hold ?? DEFAULT_CONFIG.hold),
     channels: env.PAIRWIRE_CHANNELS ? parseFlag(env.PAIRWIRE_CHANNELS, "PAIRWIRE_CHANNELS") : (file.channels ?? DEFAULT_CONFIG.channels),
   };
   return { config, warnings };
+}
+
+/**
+ * Whether hold mode is on, read afresh (04 §2). A configuration that can't be read counts as
+ * on: we can't tell whether the human asked to hold, so nothing is delivered that might be.
+ */
+export function holdMode(home: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    return loadConfig(home, env).config.hold;
+  } catch {
+    return true;
+  }
 }
 
 function normalizeRelay(value: string | undefined, where: string): string | null {

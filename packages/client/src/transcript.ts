@@ -72,8 +72,21 @@ export function transcriptEvents(home: string, roomId: string, now: () => number
   };
 }
 
-/** The last `n` entries (an entry is a heading line plus its quoted body, or a single line). */
-export function transcriptTail(home: string, roomId: string, n: number): string {
+/**
+ * The last `n` entries (an entry is a heading line plus its quoted body, or a single line).
+ * Peer entries whose id is in `hidden` get a placeholder body (hold mode, 04 §8) that names
+ * `accept`, the human's release command in their harness. An entry is matched when any ` · `
+ * field of its heading equals the id, so a display name imitating an id can hide more, but
+ * can never hide the real id field.
+ */
+export function transcriptTail(
+  home: string,
+  roomId: string,
+  n: number,
+  hidden: ReadonlyMap<string, "held" | "dropped"> = new Map(),
+  accept = "/pairwire:accept",
+): string {
+  const placeholder = { held: `> (held for your review: run ${accept})`, dropped: "> (dropped by your user)" } as const;
   let text: string;
   try {
     text = readFileSync(roomFile(home, roomId, "transcript.md"), "utf8");
@@ -87,5 +100,16 @@ export function transcriptTail(home: string, roomId: string, n: number): string 
     if (line.startsWith("> ") && entries.length > 0) entries[entries.length - 1] += `\n${line}`;
     else entries.push(line);
   }
-  return entries.slice(-n).join("\n\n");
+  return entries
+    .slice(-n)
+    .map((entry) => {
+      const heading = entry.split("\n", 1)[0]!;
+      if (hidden.size === 0 || !heading.startsWith("### ←")) return entry;
+      const why = heading
+        .split(" · ")
+        .map((f) => hidden.get(f))
+        .find((w) => w !== undefined);
+      return why ? `${heading}\n${placeholder[why]}` : entry;
+    })
+    .join("\n\n");
 }

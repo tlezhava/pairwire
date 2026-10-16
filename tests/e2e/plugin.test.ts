@@ -28,14 +28,15 @@ describe("plugin files", () => {
     expect(all).not.toMatch(/mcp__plugin_pairwire_pairwire__send|"permissions"|"allow"\s*:/);
     for (const f of readdirSync(join(PLUGIN, "commands"))) {
       const tools = frontmatter(read(`commands/${f}`))["allowed-tools"];
-      if (tools) expect(tools).toMatch(/^Bash\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/pairwire\.mjs" ctl (say|continue|log):\*\)$/);
+      if (tools) expect(tools).toMatch(/^Bash\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/dist\/pairwire\.mjs" ctl (say|continue|log|accept):\*\)$/);
+      if (tools) expect(tools).toContain(`ctl ${f.replace(/\.md$/, "")}:*`); // each command allows only its own subcommand
     }
   });
 
-  it("has the seven commands; human-only ones hide from the model and pass text through a heredoc (S8)", () => {
-    expect(readdirSync(join(PLUGIN, "commands")).sort()).toEqual(["continue.md", "join.md", "leave.md", "log.md", "say.md", "start.md", "status.md"]);
-    for (const f of ["say.md", "continue.md"]) expect(frontmatter(read(`commands/${f}`))["disable-model-invocation"]).toBe("true");
-    for (const f of ["say.md", "log.md"]) {
+  it("REQ-SAFE-6 has the eight commands; human-only ones hide from the model and pass text through a heredoc (S8)", () => {
+    expect(readdirSync(join(PLUGIN, "commands")).sort()).toEqual(["accept.md", "continue.md", "join.md", "leave.md", "log.md", "say.md", "start.md", "status.md"]);
+    for (const f of ["say.md", "continue.md", "accept.md"]) expect(frontmatter(read(`commands/${f}`))["disable-model-invocation"]).toBe("true");
+    for (const f of ["say.md", "log.md", "accept.md"]) {
       const md = read(`commands/${f}`);
       expect(md).toContain("<<'PAIRWIRE_SAY_END_b7e1c94d'\n$ARGUMENTS\nPAIRWIRE_SAY_END_b7e1c94d\n");
       expect(md).not.toMatch(/"\$ARGUMENTS"/);

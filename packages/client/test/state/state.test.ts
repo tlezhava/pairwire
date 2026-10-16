@@ -132,6 +132,18 @@ describe("bindings: one room per project directory", () => {
     expect(claimProject(home, project, me, alive([]))).toEqual({ kind: "owner", roomId: ROOM, tookOver: false });
   });
 
+  it("records the owner's harness, replacing it on takeover (04 §3)", () => {
+    const home = newHome();
+    const project = tempDir();
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
+    bindProject(home, project, ROOM, { pid: 2000, session: null, harness: "codex", now: NOW }, alive([]));
+    expect(readBinding(home, project)?.owner_harness).toBe("codex");
+    claimProject(home, project, { ...me, harness: "claude-code" }, alive([]));
+    expect(readBinding(home, project)).toMatchObject({ owner_pid: 1000, owner_harness: "claude-code" });
+    claimProject(home, project, { ...me, pid: 1001 }, alive([]));
+    expect(readBinding(home, project)).not.toHaveProperty("owner_harness");
+  });
+
   it("drops a binding whose room has ended", () => {
     const { home, project } = boundHome(2000);
     updateState(home, ROOM, (s) => ({ ...s, status: "ended" }));

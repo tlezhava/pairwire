@@ -1,46 +1,43 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
+  listenCtl,
+  transcriptEvents
+} from "./chunk-JGL4B7D4.mjs";
+import {
   appendInbox,
   claimUndelivered,
+  inboxCounts,
   readOutbox,
   toRenderItem,
   unacked,
-  undelivered,
   updateOutbox
-} from "./chunk-RV4T4N32.mjs";
-import {
-  createLogger
-} from "./chunk-KZJDG25M.mjs";
-import {
-  listenCtl,
-  transcriptEvents
-} from "./chunk-DI3HDOZZ.mjs";
+} from "./chunk-FVNYIXX2.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
   bindProject,
   claimProject,
+  createLogger,
   isProcessAlive,
   removeBindingFor,
   resolveProjectDir
-} from "./chunk-UDAK3MA4.mjs";
-import {
-  loadConfig,
-  resolveDisplayName
-} from "./chunk-WRMKSPUR.mjs";
+} from "./chunk-7XSBMLYR.mjs";
 import {
   assertStatePrivate
-} from "./chunk-SASBFSNY.mjs";
+} from "./chunk-LCAHQ6UP.mjs";
 import {
   createRoom,
   expiresAt,
+  holdMode,
   isOpen,
+  loadConfig,
   readSecret,
   readState,
   removeFile,
+  resolveDisplayName,
   updateState
-} from "./chunk-5S434TG7.mjs";
+} from "./chunk-S3MLQOW3.mjs";
 import {
   pairwireHome,
   roomFile
@@ -59,6 +56,7 @@ import {
   ZodOptional,
   _enum,
   _null,
+  acceptHint,
   array,
   boolean,
   clone,
@@ -77,6 +75,7 @@ import {
   looseObject,
   makeAck,
   normalizeParams,
+  noticeHeld,
   noticePeerChanged,
   noticePeerJoined,
   noticePeerLeft,
@@ -105,7 +104,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-RXHLPIRV.mjs";
+} from "./chunk-JC2XR7LP.mjs";
 import {
   __commonJS,
   __require,
@@ -26939,6 +26938,10 @@ var RoomConnection = class {
     if (this.#queue.length === 0) this.#socket?.sendText('{"t":"leave"}');
     else this.#pump();
   }
+  /** Queues a local notice from the session (hold mode's `held`, 04 §5). */
+  notice(notice) {
+    this.#notice(notice);
+  }
   #notice(notice) {
     const entry = { source: "local", id: this.#ulid(), event: notice.event, text: notice.text, received_at: this.#t.now() };
     appendInbox(this.#o.home, this.#roomId, entry);
@@ -27105,7 +27108,7 @@ var ClientSession = class {
     const state = this.#roomState();
     if (this.#waiters.size === 0 || !state) return;
     for (const [session, socket] of this.#waiters) {
-      const rendered = claimUndelivered(this.#o.home, state.roomId, (items) => {
+      const rendered = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => {
         const r = renderForHook(items.map(toRenderItem));
         return { ids: r.deliveredIds, result: r.text };
       });
@@ -27116,6 +27119,20 @@ var ClientSession = class {
 ${rendered}` }) + "\n");
       return;
     }
+  }
+  /** Hold mode, read afresh for every delivery decision (04 §2). */
+  #hold() {
+    return holdMode(this.#o.home, this.#o.env);
+  }
+  /**
+   * Hold mode (04 §5): the first message held tells the human through a `held` notice, which
+   * flows (and wakes) like any notice. Later ones add none until the human accepts or drops.
+   */
+  #noteHeld(entry) {
+    const roomId = this.#roomId;
+    if (entry.source !== "peer" || !roomId || !this.#hold()) return;
+    if (inboxCounts(this.#o.home, roomId, true).held !== 1) return;
+    this.#conn?.notice(noticeHeld(entry.from, harnessOf(this.#o.env)));
   }
   #closeCtl() {
     const ctl = this.#ctl;
@@ -27208,7 +27225,7 @@ ${rendered}` }) + "\n");
       this.#ready();
       const state = this.#roomState();
       if (!state) throw new ToolError("No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
-      const text = claimUndelivered(this.#o.home, state.roomId, (items) => ({
+      const text = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => ({
         ids: items.map((i) => i.id),
         result: items.length > 0 ? renderItems(items.map(toRenderItem)) : "No new messages."
       }));
@@ -27223,12 +27240,14 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
       const state = this.#roomState();
       if (!state) return "No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.";
       const conn = this.#conn?.status();
+      const hold = this.#hold();
       const lines = [
         `Room: ${state.status}${state.error ? ` (${state.error})` : ""}`,
         `Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${conn?.peerConnected ? ", online" : state.peer ? ", offline" : ""}`,
         `Connection: ${conn?.halted ? `stopped (${conn.halted})` : conn?.socket ?? "offline"}`,
         `Relay: ${state.relay ?? "default relay"}`,
-        `Inbox: ${unreadText(undelivered(this.#o.home, state.roomId))}`,
+        `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
+        ...hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : [],
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         `Transcript: ${roomFile(this.#o.home, state.roomId, "transcript.md")}`
       ];
@@ -27270,7 +27289,7 @@ ${this.footer()}` };
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
-    return `[pairwire] ${who} \xB7 ${unreadText(undelivered(this.#o.home, state.roomId))} \xB7 hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
+    return `[pairwire] ${who} \xB7 ${unreadText(inboxCounts(this.#o.home, state.roomId, this.#hold()), harnessOf(this.#o.env))} \xB7 hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
   }
   #ready() {
     if (this.#fatal) throw new ToolError(this.#fatal);
@@ -27300,7 +27319,7 @@ ${this.footer()}` };
     return this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession;
   }
   #claimant() {
-    return { pid: this.#pid, session: this.#session(), now: this.#now() };
+    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), now: this.#now() };
   }
   /**
    * Codex passes the session only as `_meta.sessionId` on tool calls (04 §10). The first one
@@ -27337,6 +27356,8 @@ ${this.footer()}` };
         // Messages and notices (never acks) wake an idle session (D3).
         { inbound: () => this.#wake() },
         transcriptEvents(this.#o.home, roomId, this.#now, (e) => this.#o.log.error("transcript_failed", e), () => !!readState(this.#o.home, roomId)?.sessions.current),
+        // After the transcript has the message, so the notice's line follows it.
+        { inbound: (entry) => this.#noteHeld(entry) },
         this.#o.events
       ),
       ...this.#o.socketFactory ? { socketFactory: this.#o.socketFactory } : {},
@@ -27403,11 +27424,11 @@ ${this.footer()}` };
     return true;
   }
 };
-function unreadText(items) {
-  const messages = items.filter((i) => i.source === "peer").length;
-  const notices = items.length - messages;
-  const m = `${messages} unread message${messages === 1 ? "" : "s"}`;
-  return notices > 0 ? `${m}, ${notices} notice${notices === 1 ? "" : "s"}` : m;
+function unreadText({ messages, notices, held }, harness) {
+  let text = `${messages} unread message${messages === 1 ? "" : "s"}`;
+  if (notices > 0) text += `, ${notices} notice${notices === 1 ? "" : "s"}`;
+  if (held > 0) text += `, ${held} held for your user's review (${acceptHint(harness)})`;
+  return text;
 }
 function mergeEvents(...sets) {
   const out = {};

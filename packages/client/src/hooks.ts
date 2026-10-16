@@ -67,11 +67,12 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
   const roomId = binding!.room_id;
   const state = readState(o.home, roomId);
   if (!state || !isOpen(state)) return null;
-  let config: Config = DEFAULT_CONFIG;
+  let config: Config = { ...DEFAULT_CONFIG, hold: true };
   try {
     config = loadConfig(o.home, o.env).config;
   } catch {
-    // a broken config is reported by the MCP server and doctor; hooks keep the defaults
+    // a broken config is reported by the MCP server and doctor; hooks keep the defaults,
+    // except that they hold peer messages (04 §2: an unreadable config fails closed)
   }
 
   const out: Record<string, unknown> = {};
@@ -88,7 +89,7 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
   if (config.delivery === "pull") return finish(out);
   if (event === "stop" && !config.autoContinue) return finish(out);
 
-  const rendered = claimUndelivered(o.home, roomId, (items) => {
+  const rendered = claimUndelivered(o.home, roomId, { hold: config.hold }, (items) => {
     const r = renderForHook(items.map(toRenderItem));
     return { ids: r.deliveredIds, result: r };
   });

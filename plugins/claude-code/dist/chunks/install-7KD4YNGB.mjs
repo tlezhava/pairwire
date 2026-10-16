@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   HARNESSES
-} from "./chunk-RXHLPIRV.mjs";
+} from "./chunk-JC2XR7LP.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/install.ts
@@ -20,7 +20,7 @@ var EVENT_ARG = {
   PostToolUse: "post-tool-use",
   Stop: "stop"
 };
-var ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"];
+var ENV_VARS = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"];
 var InstallError = class extends Error {
   name = "InstallError";
 };
@@ -155,6 +155,7 @@ ${MARK_END}
         "  2. Run /hooks in Codex and trust the four pairwire hooks (Codex runs no hook until you do).",
         "  3. Ask Codex to start or join a pairwire room. To send your own words or let the agent continue",
         `     after the hop budget, run in a terminal: node ${JSON.stringify(this.bundle)} ctl say|continue|log`,
+        `     In hold mode, release held messages with: node ${JSON.stringify(this.bundle)} ctl accept [drop]`,
         `Keep Codex's approval prompt for the pairwire send tool on: don't choose "always allow" for it.`
       ].join("\n")
     );
