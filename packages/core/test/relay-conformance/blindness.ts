@@ -3,7 +3,7 @@
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { base32Encode } from "../../src/base32.js";
-import { makeAck, openMsg, sealMsg, type Envelope } from "../../src/envelope.js";
+import { makeAck, openMsg, sealMsg, type BasicEnvelope } from "../../src/envelope.js";
 import { Handshake, type HelloPayload, type Session } from "../../src/handshake.js";
 import { deriveRoomKeys } from "../../src/keys.js";
 import { encodeShareString, generateSecret } from "../../src/share.js";
@@ -121,7 +121,7 @@ export function relayBlindness(name: string, factory: () => Promise<RelayUnderTe
       const sB: Session = atB.session;
 
       // A asks, B acks and answers, A acks.
-      const env = (seq: number, kind: Envelope["kind"], body: string, reply_to: string | null = null): Envelope => ({
+      const env = (seq: number, kind: BasicEnvelope["kind"], body: string, reply_to: string | null = null): BasicEnvelope => ({
         v: 1, id: ulid(), seq, ts: new Date().toISOString(), author: "agent", kind, reply_to, body, acks: null,
       });
       const q = env(1, "question", question);

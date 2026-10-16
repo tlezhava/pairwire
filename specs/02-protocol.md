@@ -354,12 +354,12 @@ encrypted under, never a value that could change in the middle of a resend.
 
 Shared value types, in `packages/core` next to `envelopeSchema`:
 
-- `RelPath`: 1..200 characters. Project-relative, `/`-separated, no empty segment. It may
-  use the glob tokens `*` (within one segment), `**` (any number of segments) and `?` (one
-  character); every other character is literal. Rejected: a leading `/` or `~`; a drive
-  prefix (`^[A-Za-z]:`); a `.` or `..` segment; a trailing `/`; `\`; `,`; C0 and C1
-  controls; DEL; any Cf character; the tag block U+E0000–U+E007F; leading or trailing
-  whitespace. The **first segment must be literal** (no `*` or `?`), so a single path can't
+- `RelPath`: 1..200 characters (code points). Project-relative, `/`-separated, no empty
+  segment. It may use the glob tokens `*` (within one segment), `**` (any number of
+  segments; only as a whole segment) and `?` (one character); every other character is
+  literal. Rejected: a leading `/` or `~`; a drive prefix (`^[A-Za-z]:`); a `.` or `..`
+  segment; a trailing `/`; `\`; `,`; C0 and C1 controls; DEL; any Cf character; the tag
+  block U+E0000–U+E007F; lone surrogates; leading or trailing whitespace. The **first segment must be literal** (no `*` or `?`), so a single path can't
   cover the whole tree (`**`, `*/src`).
 - `ContractPath`: a `RelPath` with no glob tokens and no segment that starts with `.`
   (which keeps out `.git`, `.github`, `.claude`, `.env*` and similar).
