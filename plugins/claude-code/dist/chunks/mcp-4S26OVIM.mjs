@@ -27228,8 +27228,8 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
         `Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${conn?.peerConnected ? ", online" : state.peer ? ", offline" : ""}`,
         `Connection: ${conn?.halted ? `stopped (${conn.halted})` : conn?.socket ?? "offline"}`,
         `Relay: ${state.relay ?? "default relay"}`,
-        `Unread: ${undelivered(this.#o.home, state.roomId).length}`,
-        `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left`,
+        `Inbox: ${unreadText(undelivered(this.#o.home, state.roomId))}`,
+        `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         `Transcript: ${roomFile(this.#o.home, state.roomId, "transcript.md")}`
       ];
       return `${lines.join("\n")}
@@ -27269,9 +27269,8 @@ ${this.footer()}` };
     if (!state) return "[pairwire] not in a room";
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
-    const unread = undelivered(this.#o.home, state.roomId).length;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
-    return `[pairwire] ${who} \xB7 ${unread} unread \xB7 hop budget ${Math.max(0, budget - state.hop_count)}/${budget}`;
+    return `[pairwire] ${who} \xB7 ${unreadText(undelivered(this.#o.home, state.roomId))} \xB7 hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
   }
   #ready() {
     if (this.#fatal) throw new ToolError(this.#fatal);
@@ -27404,6 +27403,12 @@ ${this.footer()}` };
     return true;
   }
 };
+function unreadText(items) {
+  const messages = items.filter((i) => i.source === "peer").length;
+  const notices = items.length - messages;
+  const m = `${messages} unread message${messages === 1 ? "" : "s"}`;
+  return notices > 0 ? `${m}, ${notices} notice${notices === 1 ? "" : "s"}` : m;
+}
 function mergeEvents(...sets) {
   const out = {};
   const keys = ["inbound", "sent", "delivered", "peerChanged", "status", "ended"];

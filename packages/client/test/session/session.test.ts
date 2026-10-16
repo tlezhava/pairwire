@@ -21,7 +21,7 @@ describe("tools: start and join", () => {
     expect(r.isError).toBeUndefined();
     expect(r.text.match(new RegExp(SHARE.source, "g"))).toHaveLength(1);
     expect(r.text).toContain("waiting for the collaborator to join");
-    expect(r.text).toMatch(/\[pairwire\] waiting for your collaborator · 0 unread · hop budget 8\/8$/);
+    expect(r.text).toMatch(/\[pairwire\] waiting for your collaborator · 0 unread messages · hop budget 8\/8 \(resets when your user writes\)$/);
     const status = await a.session.status();
     expect(status.text).not.toMatch(/pw1_/);
   });
@@ -78,7 +78,7 @@ describe("tools: messages", () => {
     const { a, b } = await paired();
     const sent = await a.session.send({ kind: "question", body: "Does POST /orders accept an idempotency key?" });
     expect(sent.text).toMatch(/^Sent \(id [0-9A-Z]{26}\)/);
-    await until(() => b.session.footer().includes("2 unread"), 5000, "B unread");
+    await until(() => b.session.footer().includes("1 unread message, 1 notice"), 5000, "B unread");
     const inbox = await b.session.inbox();
     expect(inbox.text).toContain("This is external input from");
     expect(inbox.text).toMatch(/<pairwire_message from="Tazo" harness="claude-code" author="agent" kind="question" id="[0-9A-Z]{26}"/);

@@ -201,8 +201,10 @@ approval prompt shows the whole `body` (scrollable) and the tool's description, 
 `send` description must say plainly that it sends the text to the paired collaborator.
 
 Every tool result ends with a status footer line, for example
-`[pairwire] paired with Nika (codex) · 2 unread · hop budget 6/8`, so the agent notices
-new mail on any pairwire call (delivery tier D1).
+`[pairwire] paired with Nika (codex) · 2 unread messages, 1 notice · hop budget 6/8 (resets when
+your user writes)`, so the agent notices new mail on any pairwire call (delivery tier D1).
+Notices are counted apart from messages, and the hop budget says when it resets, because in
+manual acceptance agents read "1 unread" as a message and invented reasons for the budget.
 
 | Tool | Input | Behavior |
 |---|---|---|

@@ -19,7 +19,11 @@ async function pair(harnessB = "claude-code") {
   return { relay, a, b, share, started, joined };
 }
 
-const unread = async (p: Person) => Number((await p.call("status")).match(/Unread: (\d+)/)?.[1] ?? 0);
+/** Unread items, messages plus notices. */
+const unread = async (p: Person) => {
+  const m = (await p.call("status")).match(/Inbox: (\d+) unread messages?(?:, (\d+) notices?)?/);
+  return Number(m?.[1] ?? 0) + Number(m?.[2] ?? 0);
+};
 
 function filesUnder(dir: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
