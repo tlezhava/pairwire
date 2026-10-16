@@ -198,10 +198,23 @@ export function claimUndelivered<T>(
 }
 
 /**
- * /pairwire:accept (04 §5, §8): releases every held message under the delivered.json lock.
- * `pick` sees the released messages, oldest first, and returns the ids it showed to the agent,
- * which are marked delivered in the same step; the rest reach the agent by the normal paths.
- * Called only in hold mode; returns the released messages and pick's result.
+ * Held messages (as if hold mode were on), and the unread `held` notices about them: once the
+ * human has acted on the messages, those notices are stale and are retired with them.
+ */
+function heldAndNotices(home: string, roomId: string, l: DeliveryLedger): { held: InboxEntry[]; notices: string[] } {
+  const inbox = readInbox(home, roomId);
+  return {
+    held: inbox.filter((e) => isHeld(e, l, true)),
+    notices: inbox.filter((e) => e.source === "local" && e.event === "held" && !l.ids.has(e.id)).map((e) => e.id),
+  };
+}
+
+/**
+ * /pairwire:accept (04 §5, §8): releases every message that would be held with hold mode on,
+ * under the delivered.json lock. `pick` sees the released messages, oldest first, and returns
+ * the ids it showed to the agent, which are marked delivered in the same step, as are unread
+ * `held` notices; the rest reach the agent by the normal paths. Returns the released messages
+ * and pick's result.
  */
 export function releaseHeld<T>(
   home: string,
@@ -209,25 +222,29 @@ export function releaseHeld<T>(
   pick: (released: InboxEntry[]) => { ids: readonly string[]; result: T },
 ): { released: InboxEntry[]; result: T } {
   return withLedger(home, roomId, (l, save) => {
-    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    const { held, notices } = heldAndNotices(home, roomId, l);
     const { ids, result } = pick(held);
     if (held.length === 0) return { released: held, result };
     for (const e of held) l.released.add(e.id);
-    for (const id of ids) l.ids.add(id);
+    for (const id of [...ids, ...notices]) l.ids.add(id);
     save();
     return { released: held, result };
   });
 }
 
-/** /pairwire:accept drop: no path ever shows these messages. Returns the dropped messages. */
+/**
+ * /pairwire:accept drop: no path ever shows these messages, and unread `held` notices are
+ * retired in the same step. Returns the dropped messages.
+ */
 export function dropHeld(home: string, roomId: string): InboxEntry[] {
   return withLedger(home, roomId, (l, save) => {
-    const held = readInbox(home, roomId).filter((e) => isHeld(e, l, true));
+    const { held, notices } = heldAndNotices(home, roomId, l);
     if (held.length === 0) return held;
     for (const e of held) {
       l.dropped.add(e.id);
       l.ids.add(e.id);
     }
+    for (const id of notices) l.ids.add(id);
     save();
     return held;
   });

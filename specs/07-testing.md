@@ -132,7 +132,7 @@ From then on it fails CI.
   display name imitates an id; the sender still sees "delivered"; a config that can't be
   read holds; `PAIRWIRE_HOLD` overrides `config.json` and is passed through by the Codex
   install; `ctl accept` releases and drops held messages even when its own process sees
-  hold mode off; the `held` notice, the footer, `status`, the `ctl log` placeholder and
+  hold mode off, and retires the unread `held` notice (no hook or `inbox` shows it after); the `held` notice, the footer, `status`, the `ctl log` placeholder and
   `ctl accept`'s usage name `/pairwire:accept` in Claude Code and the terminal command in
   Codex (the binding records the owner's harness).
 

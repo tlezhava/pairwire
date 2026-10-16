@@ -332,6 +332,9 @@ With `hold` on (section 2), the human sees peer messages before their agent does
 - **Drop.** `/pairwire:accept drop` puts every held message's id into `dropped` and `ids`:
   no path ever shows it, and its output names only how many were dropped and from whom.
   Dropped messages stay in `transcript.md` and `inbox.jsonl` for the human.
+- **Stale notices are retired.** Release and drop also put every unread `held` notice's id
+  into `ids`, in the same `delivered.json` update, so the agent never gets "a message is
+  held" after the human has already acted on it.
 - **Acks are unchanged.** The client acks a held message when it receives it, so the
   sender sees "delivered" as usual; it does not learn that the message is held (ADR-023).
 - Turning hold mode off releases nothing explicitly: held messages simply become unread and

@@ -131,6 +131,20 @@ describe("hold mode", () => {
     expect((await a.session.inbox()).text).not.toContain("HOLDME");
   });
 
+  it("REQ-SAFE-6 accept and drop retire the unread held notice, so the agent never gets a stale one", async () => {
+    for (const how of ["accept", "drop", "terminal"] as const) {
+      const { a, fromB } = await holdA();
+      await fromB(`${how} HOLDME`);
+      expect(heldNotices(a)).toBe(1); // queued, not yet read by the agent
+      await ctl(a, ["accept"], how === "drop" ? "drop\n" : "\n", how === "terminal");
+      const stop = hook(a, "stop");
+      expect(stop).not.toContain("held for your review");
+      if (how === "terminal") expect(stop).toContain("terminal HOLDME"); // released, delivered by the normal path
+      else expect(stop).toBe("");
+      expect((await a.session.inbox()).text).toMatch(/^No new messages\./);
+    }
+  });
+
   it("REQ-SAFE-6 a released message too long for the prompt is left for the inbox tool", async () => {
     const { a, fromB } = await holdA();
     await fromB(`${"x".repeat(9000)} LONGEND`);
