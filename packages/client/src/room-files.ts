@@ -20,7 +20,7 @@ export const inboxEntrySchema = z.discriminatedUnion("source", [
   z.strictObject({
     source: z.literal("local"),
     id: z.string(),
-    event: z.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key", "held"]),
+    event: z.enum(["peer_joined", "peer_left", "peer_changed", "wrong_key", "held", "peer_unreadable"]),
     text: z.string(),
     received_at: millis,
   }),

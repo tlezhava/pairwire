@@ -460,6 +460,24 @@ Codex to run hooks through a POSIX shell; unverified), and project-directory cas
 short-name differences between `CLAUDE_PROJECT_DIR` and a hook's `cwd` (both come from
 Claude Code, which passes the same value to the MCP server and the hooks).
 
+## ADR-025 Skip and ack envelopes the receiver can't use (0.1.1)
+
+Status: accepted (2026-10-16)
+
+The M5 design review found that 0.1.0 wedges on any envelope it can't parse. `02` §6.1 said
+to drop unknown kinds and schema failures; the client dropped them without acking and without
+advancing `peer_max_seq`, so the sender resent the frame every 15 s and every later message
+from that sender was dropped as out of order, for good. Any future kind, or an extra field on
+an old one, would therefore break rooms with 0.1.0 clients.
+
+Decision: such an envelope is skipped but still counts for ordering when it carries a usable
+`seq` (advance when next in order, ack, ack duplicates), and the agent gets one
+`peer_unreadable` notice per connection so the humans know something didn't arrive. The peer
+is authenticated (the frame decrypted under the session key), so letting its `seq` advance
+the counter gives it nothing it couldn't already do by sending a valid message. This must
+ship (0.1.1) before any client sends new kinds; M5 still gates new kinds on a capability so
+newer clients don't send them to 0.1.0 peers.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

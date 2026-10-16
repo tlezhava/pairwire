@@ -1,7 +1,9 @@
 // Connection manager against a real relay-node (02 §4–6, 04 §3; 07-testing.md client).
 import { describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
-import { HELLO_TYPE, MSG_TYPE } from "@pairwire/core";
+import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
+import { hexToBytes, randomBytes, utf8ToBytes } from "@noble/hashes/utils.js";
+import { HELLO_TYPE, msgAad, MSG_TYPE } from "@pairwire/core";
 import { readSecret, updateState } from "../../src/state.js";
 import { makeClient, MAX_AGE, newSecret, shiftedClock, sleep, startRelay, until, wrongKeys, type Client } from "./harness.js";
 
@@ -146,6 +148,33 @@ describe("connection: reliable delivery (02 §6)", () => {
     expect(bMsgs).toBeLessThanOrEqual(2); // one batched ack, maybe two
     expect(a.frames.sent.filter((f) => f.type === MSG_TYPE)).toHaveLength(3); // A never acked B's acks
     expect(a.inbox().filter((e) => e.source === "peer")).toHaveLength(0);
+  });
+
+  it("skips and acks an envelope it can't read, so later messages still arrive (02 §6.1, ADR-025)", async () => {
+    let raw: ((d: Uint8Array) => void) | null = null;
+    const capture = (inner: Parameters<NonNullable<Parameters<typeof makeClient>[3]>["wrap"] & object>[0]) =>
+      ((url, handlers) => {
+        const s = inner(url, handlers);
+        raw = (d) => s.sendBinary(d);
+        return s;
+      }) as typeof inner;
+    const { a, b } = await pair({ b: { wrap: capture } });
+    // What a newer client would send: a kind 0.1.x doesn't know, with the next seq.
+    const st = b.state();
+    const session = st.sessions.current!;
+    const nextSeq = st.my_seq + 1;
+    const future = { v: 1, id: "01JPW00000000000000000FUT1", seq: nextSeq, ts: new Date().toISOString(), author: "agent", kind: "claim", reply_to: null, body: "src/api", acks: null, data: { paths: ["src/api"] } };
+    const nonce = randomBytes(24);
+    const sid = hexToBytes(session.sid);
+    const ct = xchacha20poly1305(hexToBytes(session.send_key), nonce, msgAad(b.keys.roomIdBytes, sid)).encrypt(utf8ToBytes(JSON.stringify(future)));
+    raw!(Uint8Array.from([MSG_TYPE, ...sid, ...nonce, ...ct]));
+    updateState(b.home, b.keys.roomId, (s) => ({ ...s, my_seq: nextSeq }));
+    b.conn.send({ kind: "chat", body: "after the unknown one", author: "agent" });
+    await until(() => bodies(a).includes("after the unknown one"), 5000, "later message delivered");
+    expect(a.state().peer_max_seq).toBe(nextSeq + 1);
+    expect(bodies(a)).not.toContain("src/api");
+    expect(a.inbox().filter((e) => e.source === "local" && e.event === "peer_unreadable")).toHaveLength(1);
+    expect(a.inbox().find((e) => e.source === "local" && e.event === "peer_unreadable")).toMatchObject({ text: expect.stringContaining("needs a newer pairwire") });
   });
 
   it("paces binary frames: never more than the window allows, resends included", async () => {

@@ -258,8 +258,13 @@ Reserved for M5 (do not implement before then): `heads_up`, `claim`, `release`,
 
 The receiver keeps `peer_max_seq`, the highest seq accepted **in order**.
 
-- Drop and count envelopes that fail schema validation or have `v` != 1. Unknown `kind`
-  values are dropped and counted, not shown to the agent.
+- An envelope that decrypts but can't be used (an unknown `kind`, a schema failure, `v` != 1,
+  or a size limit broken) is **skipped**, never shown to the agent. If its JSON has an integer
+  `seq` >= 1 and its `kind` is not `"ack"`, it still counts for ordering like an accepted
+  envelope (below: advance `peer_max_seq` when it is next in order, ack it, and ack a
+  duplicate), so a newer peer's message can't stall the ones after it. The receiver then
+  queues the local notice `peer_unreadable` once per connection. An envelope without such a
+  `seq` is dropped and counted (ADR-025).
 For non-ack envelopes:
 
 - `seq == peer_max_seq + 1` → accept: append to the inbox and update `peer_max_seq` in one

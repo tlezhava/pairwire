@@ -22274,6 +22274,12 @@ function noticePeerChanged(was, now) {
     text: `The peer reconnected as a different client (was ${who(was)}, now ${who(now)}). If you didn't expect this, run /pairwire:leave.`
   };
 }
+function noticePeerUnreadable(name) {
+  return {
+    event: "peer_unreadable",
+    text: `A message from ${displayName(name)} needs a newer pairwire to read. Ask them to update, or to resend it as a plain message.`
+  };
+}
 function noticeWrongKey() {
   return {
     event: "wrong_key",
@@ -22617,6 +22623,11 @@ function sealMsg(args) {
   const ct = xchacha20poly1305(session.sendKey, nonce, msgAad(roomIdBytes, session.sid)).encrypt(serializeEnvelope(args.envelope));
   return concatBytes(Uint8Array.of(MSG_TYPE), session.sid, nonce, ct);
 }
+function skipSeqOf(json2) {
+  if (typeof json2 !== "object" || json2 === null || Array.isArray(json2)) return void 0;
+  const { kind, seq } = json2;
+  return kind !== "ack" && typeof seq === "number" && Number.isSafeInteger(seq) && seq >= 1 ? seq : void 0;
+}
 function openMsg(frame, ctx) {
   if (frame.length < HEADER_BYTES2 + TAG_BYTES2 || frame[0] !== MSG_TYPE) return { ok: false, reason: "malformed" };
   const sid = frame.slice(1, 1 + SID_BYTES);
@@ -22630,15 +22641,17 @@ function openMsg(frame, ctx) {
   } catch {
     return { ok: false, reason: "decrypt_failed" };
   }
-  if (plain.length > MAX_ENVELOPE_BYTES) return { ok: false, reason: "too_large" };
   let json2;
   try {
     json2 = JSON.parse(bytesToUtf8(plain));
   } catch {
     return { ok: false, reason: "bad_envelope" };
   }
+  const skipSeq = skipSeqOf(json2);
+  const skip = skipSeq === void 0 ? {} : { skipSeq };
+  if (plain.length > MAX_ENVELOPE_BYTES) return { ok: false, reason: "too_large", ...skip };
   const parsed = parseEnvelope(json2);
-  return parsed.ok ? { ok: true, envelope: parsed.envelope, sid } : parsed;
+  return parsed.ok ? { ok: true, envelope: parsed.envelope, sid } : { ...parsed, ...skip };
 }
 function receiveDecision(envelope, peerMaxSeq) {
   if (envelope.kind === "ack") return "ack";
@@ -22864,6 +22877,7 @@ export {
   noticePeerJoined,
   noticePeerLeft,
   noticePeerChanged,
+  noticePeerUnreadable,
   noticeWrongKey,
   CODEX_CTL,
   acceptHint,

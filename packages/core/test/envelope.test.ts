@@ -230,15 +230,39 @@ describe("MSG frames (02 §3, §6)", () => {
     expect(openMsg(sealRaw(JSON.stringify({ ...chat(), hop_budget: 99 })), { roomIdBytes, sessions: [b] })).toEqual({
       ok: false,
       reason: "bad_envelope",
+      skipSeq: chat().seq,
     });
     expect(openMsg(sealRaw(JSON.stringify({ ...chat(), kind: "heads_up" })), { roomIdBytes, sessions: [b] })).toEqual({
       ok: false,
       reason: "unknown_kind",
+      skipSeq: chat().seq,
     });
     expect(openMsg(sealRaw(JSON.stringify(chat({ body: "x".repeat(MAX_ENVELOPE_BYTES) }))), { roomIdBytes, sessions: [b] })).toEqual({
       ok: false,
       reason: "too_large",
+      skipSeq: chat().seq,
     });
+  });
+
+  it("names the seq to skip only for a usable non-ack seq (02 §6.1, ADR-025)", () => {
+    const { roomIdBytes, a, b } = pairSessions();
+    const sealRaw = (value: unknown) => {
+      const nonce = new Uint8Array(24);
+      const ct = xchacha20poly1305(a.sendKey, nonce, msgAad(roomIdBytes, a.sid)).encrypt(utf8ToBytes(JSON.stringify(value)));
+      return Uint8Array.from([2, ...a.sid, ...nonce, ...ct]);
+    };
+    const skip = (value: unknown) => {
+      const r = openMsg(sealRaw(value), { roomIdBytes, sessions: [b] });
+      return r.ok ? "ok" : r.skipSeq;
+    };
+    expect(skip({ ...chat({ seq: 7 }), kind: "claim", data: { paths: ["a"] } })).toBe(7);
+    expect(skip({ ...chat({ seq: 7 }), v: 2 })).toBe(7);
+    expect(skip({ ...chat({ seq: 7 }), data: null })).toBe(7);
+    expect(skip({ ...chat(), kind: "ack", seq: 0, acks: "x" })).toBeUndefined();
+    expect(skip({ ...chat(), kind: "mystery", seq: 0 })).toBeUndefined();
+    expect(skip({ ...chat(), kind: "mystery", seq: 1.5 })).toBeUndefined();
+    expect(skip({ ...chat(), kind: "mystery", seq: "3" })).toBeUndefined();
+    expect(skip([1, 2, 3])).toBeUndefined();
   });
 });
 
