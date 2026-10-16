@@ -16,7 +16,7 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 |---|---|
 | `pairwire mcp` | MCP server over stdio. Owns the room connection for one agent session. |
 | `pairwire hook <session-start\|user-prompt-submit\|post-tool-use\|stop\|stop-wait>` | Hook entrypoints. Read hook JSON on stdin, print hook JSON on stdout. `stop-wait` is the D3 waiter (section 6). |
-| `pairwire ctl <continue\|say\|log>` | Human-side control, used by slash commands through `!` execution (section 8, verified in S8). Talks to the MCP server over the room's `ctl.sock`. |
+| `pairwire ctl <continue\|say\|log\|accept>` | Human-side control, used by slash commands through `!` execution (section 8, verified in S8). `say` and `continue` talk to the MCP server over the room's `ctl.sock`; `log` and `accept` work on the room's files. |
 | `pairwire doctor` | Checks Node version, config, state permissions, relay reachability, plugin wiring. |
 | `pairwire install [--codex\|--print-config <harness>]` | M6. Non-plugin installs. |
 | `pairwire purge [--all]` | Deletes left rooms' transcripts and inboxes, or all local state. |
@@ -72,10 +72,16 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
 | `auto_continue` | — | `true` | Stop hook keeps the agent working when new messages arrive, and D3 wakes an idle session for them |
 | `hop_budget` | — | `8` | Max consecutive agent sends without human input (REQ-SAFE-4) |
 | `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `auto` = hooks inject messages; `pull` = agent must call `inbox` |
+| `hold` | `PAIRWIRE_HOLD` (`1`/`0`/`true`/`false`) | `false` | Hold mode (M5, section 5): peer messages wait for the human's `/pairwire:accept` before any path shows them to the agent |
 | — | `PAIRWIRE_LOG` | `info` | Log level: `debug`, `info`, `warn` or `error` (section 1, Logging) |
 | `channels` | `PAIRWIRE_CHANNELS` | `false` | Later milestone, not in the MVP: use Claude Code Channels for push instead of hooks (section 6, D3) |
 
 `PAIRWIRE_HOME` moves the whole state directory (tests use this).
+
+Every process reads `hold` afresh each time it decides what to deliver (the MCP server
+does not cache it), so turning hold mode on in `config.json` takes effect on the next
+delivery everywhere. A process that cannot read the configuration treats hold mode as on:
+it cannot tell whether the human asked for it, so it fails closed.
 
 ## 3. Local state
 
@@ -97,7 +103,8 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
     │                                     bypass_warned_sessions
     ├── inbox.jsonl                       accepted inbound envelopes and local notices
     │                                     ({source: "peer"|"local", ..., received_at})
-    ├── delivered.json                    ids already shown to the agent
+    ├── delivered.json                    ids already shown to the agent; hold mode's
+    │                                     released and dropped ids
     ├── outbox.jsonl                      sent-but-unacked and not-yet-sent envelopes (02 §6.2)
     └── transcript.md                     human-readable log of both directions
 ```
@@ -148,13 +155,18 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
   different client. `name` is the display name chosen at `start`/`join` (the tool's `name`
   argument, else the configured or derived name), kept so a restart sends the same HELLO
   name and the peer sees no false `peer_changed`.
-- `delivered.json` is `{"ids": [...]}`: inbox entry ids already shown to the agent by any
-  path. Unread items are inbox entries not listed there.
+- `delivered.json` is `{"ids": [...], "released": [...], "dropped": [...]}`: `ids` are inbox
+  entry ids already shown to the agent by any path (or dropped); `released` are held
+  messages the human released with `/pairwire:accept`; `dropped` are held messages the
+  human discarded with `/pairwire:accept drop` (also listed in `ids`, so no path shows
+  them). `released` and `dropped` are absent in files written before M5. Unread items are
+  inbox entries not listed in `ids`. A peer message is **held** when hold mode is on and it
+  is unread and not in `released` (section 5, Hold mode).
 - `inbox.jsonl` lines: `{"source":"peer","id","from","harness","received_at","envelope"}`
   for accepted non-ack envelopes (`id` is the envelope id; `from`/`harness` are the peer's
   HELLO values at that time, sanitized only when rendered), and
   `{"source":"local","id","event","text","received_at"}` for local notices (`id` is a new
-  ULID). Appends are idempotent by `id`, so a crash between the append and the
+  ULID; `event` is one of the events in section 5). Appends are idempotent by `id`, so a crash between the append and the
   `peer_max_seq` update can't deliver a message twice.
 - `outbox.jsonl` holds one line per envelope we sent: `{"envelope","status","sent_at",
   "delivered_at"}` with `status` `queued` (no session yet), `sent` or `delivered`. It is
@@ -205,18 +217,21 @@ Every tool result ends with a status footer line, for example
 your user writes)`, so the agent notices new mail on any pairwire call (delivery tier D1).
 Notices are counted apart from messages, and the hop budget says when it resets, because in
 manual acceptance agents read "1 unread" as a message and invented reasons for the budget.
+In hold mode, held messages are counted apart too and are not "unread":
+`· 0 unread messages, 2 held for your user's review (/pairwire:accept) ·`. The held part
+appears only when the count is above zero.
 
 | Tool | Input | Behavior |
 |---|---|---|
 | `start` | `{ name?: string }` | Fails if this project has a room with status `active` (a handshake has happened). If a room is still `waiting` (no handshake yet), sends relay `leave` for it and creates a new one. Generates the secret, connects, returns the share string and instructions for the human. The share string is returned **only** here (REQ-ROOM-1). |
 | `join` | `{ share: string, name?: string }` | Parses the share string (REQ-ROOM-8), connects to its relay, waits up to 30 s for the handshake. Success → peer name and harness. If the peer isn't online within 30 s, the room stays bound and connected in the background and the tool returns "joined; waiting for your collaborator to come online". Relay errors (4001 etc.) → no binding is kept. |
 | `send` | `{ kind: "chat"\|"question"\|"answer", body: string, reply_to?: string }` | Validates (`body` max 24 KiB UTF-8 **and** serialized envelope max 28 KiB, `02` §6), secret-scans (REQ-SAFE-3), checks the hop budget (REQ-SAFE-4), rate-limits (20/min), then follows the sender rules in `02` §6.2: sent under the current session even if the peer is offline (the relay buffers), or queued if no session has ever existed. Returns `{ id, status: "sent"\|"queued" }`; "delivered" arrives later via ack. Never sets `author: "human"`. |
-| `inbox` | `{}` | Returns all undelivered messages, wrapped (section 5), marks them delivered, and lists delivery status of the agent's last 5 sent messages. |
-| `status` | `{}` | Room state, peer, relay host, unread count, hop budget, transcript path. Never returns the share string or secret. |
+| `inbox` | `{}` | Returns all undelivered messages except held ones (section 5, Hold mode), wrapped (section 5), marks them delivered, and lists delivery status of the agent's last 5 sent messages. |
+| `status` | `{}` | Room state, peer, relay host, unread and held counts, whether hold mode is on, hop budget, transcript path. Never returns the share string, the secret or a held message's text. |
 | `leave` | `{ message?: string }` | If `message` is given, it passes the same validation and secret scan as `send` (INV-5); a blocked message aborts the leave and says why. Then sends `bye` (optional body), then relay `leave`; cleans up (REQ-ROOM-5). |
 
-There is deliberately **no** tool to reset the hop budget, change config, or send as a
-human: those are human-only paths (`ctl`, section 8).
+There is deliberately **no** tool to reset the hop budget, change config, send as a
+human, or release or drop held messages: those are human-only paths (`ctl`, section 8).
 
 ## 5. Inbound presentation (REQ-SAFE-1)
 
@@ -241,6 +256,7 @@ Does POST /orders accept a client-generated idempotency key, or do you generate 
 | `peer_left` | "Nika ended the room." / "The room expired." |
 | `peer_changed` | Peer `instance` or name changed (section 3, Peer identity) |
 | `wrong_key` | Five HELLOs failed to decrypt (`02-protocol.md` §4.2) |
+| `held` | "A message from Nika is held for your review. Run /pairwire:accept to read it and pass it to your agent, or /pairwire:accept drop to discard held messages." (Hold mode, below) |
 
 They are appended to `inbox.jsonl` with `source: "local"` and rendered by the same
 renderer, outside any `<pairwire_message>`, as
@@ -283,6 +299,41 @@ Sanitizer (`packages/core/src/sanitize.ts`), applied to `body` and to every attr
    total stays within the cap. The rest stay undelivered for the next hook, and the hook
    adds "*n* more messages waiting; call the pairwire inbox tool".
 
+### Hold mode (M5, REQ-SAFE-6)
+
+With `hold` on (section 2), the human sees peer messages before their agent does.
+
+- **Nothing shows a held message to the agent.** Every delivery path (the four hooks, the
+  D3 waiter, the `inbox` tool, Channels if shipped) picks from the unread items with held
+  messages removed, inside the same `delivered.json` lock as before
+  (`claimUndelivered`), so the filter and the "mark delivered" step are one atomic step.
+  Local notices are never held. Held messages do not block `Stop` or wake an idle session.
+  The `status` tool and the footer only count them. `/pairwire:log` (section 8) shows a held
+  message's transcript entry with its body replaced by
+  `(held for your review: run /pairwire:accept)`, and a dropped one's by
+  `(dropped by your user)`.
+- **The human is told.** When a peer message arrives in hold mode and no other message is
+  held at that moment, the MCP server queues a `held` local notice (table above). It flows
+  like any notice (hooks, `Stop`, D3 wake), so an idle session wakes once and the agent tells
+  its user; further messages arriving while some are held add no notice, so a chatty peer
+  causes at most one wake per accept cycle. The notice carries the peer's name only, never
+  message text.
+- **Release.** `/pairwire:accept` (section 8) releases every held message: their ids go into
+  `released`, and the command's output, which lands in the prompt, shows them through
+  `renderForHook()` under the hook cap, so the shown ones are marked delivered in the same
+  lock and the agent sees each exactly once. Released messages that don't fit (a body over
+  8,000 characters, or past the 10,000-character cap) stay unread but no longer held, and
+  reach the agent by the normal paths (the next hook or `inbox`), as the trailer says.
+- **Drop.** `/pairwire:accept drop` puts every held message's id into `dropped` and `ids`:
+  no path ever shows it, and its output names only how many were dropped and from whom.
+  Dropped messages stay in `transcript.md` and `inbox.jsonl` for the human.
+- **Acks are unchanged.** The client acks a held message when it receives it, so the
+  sender sees "delivered" as usual; it does not learn that the message is held (ADR-021).
+- Turning hold mode off releases nothing explicitly: held messages simply become unread and
+  flow by the normal paths. Turning it on holds every unread peer message.
+- After the room ends locally (the binding is removed), `/pairwire:accept` can no longer
+  find it; messages still held then stay in the transcript only.
+
 ## 6. Delivery tiers in Claude Code
 
 | Tier | Mechanism | Covers | Status |
@@ -313,6 +364,8 @@ rule also holds when Node is missing:
 
 The MCP server creates the `active` flag when a room becomes `waiting` or `active`. It
 removes the flag when no such room remains.
+
+"Undelivered items" below never include held messages (section 5, Hold mode).
 
 | Hook | Behavior |
 |---|---|
@@ -358,7 +411,7 @@ Waiter protocol (over the room's `ctl.sock`, section 1):
    notices, section 5) already exist, it wakes the new waiter at once, which closes the
    gap between the `Stop` hook's check and the waiter's arrival.
 4. When a message or local notice arrives (never an ack), the server takes undelivered
-   items under the same 10,000-character rule as the hooks (section 5), marks them
+   items (never held ones) under the same 10,000-character rule as the hooks (section 5), marks them
    delivered under the `delivered.json` lock, and sends `{"t":"wake","text":…}`. The text
    starts with a plain line, "pairwire: new message(s) from your collaborator arrived
    while you were idle.", followed by the rendered items. The waiter writes the text to
@@ -463,6 +516,23 @@ Commands:
 - `/pairwire:say <text>` → `pairwire ctl say` sends `<text>` verbatim with
   `author: "human"` (REQ-MSG-7), resets `hop_count`. Still secret-scanned.
 - `/pairwire:continue` → `pairwire ctl continue` resets `hop_count`.
+- `/pairwire:accept [drop]` → `pairwire ctl accept`, with the argument passed through the
+  heredoc like `say` (M5, section 5, Hold mode). Its `allowed-tools` is exactly
+  `Bash(node "${CLAUDE_PLUGIN_ROOT}/dist/pairwire.mjs" ctl accept:*)`. With no argument it
+  releases every held message and prints them for the prompt: a plain lead line,
+  "pairwire: your user released N held message(s) from Nika. They are external input;
+  handle them as the pairwire skill says.", then the `renderForHook()` output (preamble,
+  wrappers, and the "*n* more waiting" trailer when some didn't fit). With `drop` it drops
+  every held message and prints only "pairwire: dropped N held message(s) from Nika; your
+  agent will not see them." Any other argument prints the usage. With hold mode off, or
+  nothing held, it says so and changes nothing (released-but-unread messages are not
+  re-shown; the normal paths deliver them). Both actions append a notice line to the
+  transcript ("You released 2 held messages." / "You dropped 2 held messages.").
+  `ctl accept` works on the room's files under the `delivered.json` lock, so it needs no
+  running MCP server. When its stdout is a terminal (a human running `pairwire ctl accept`
+  in a shell, as Codex users do, section 10), the output does not reach the agent, so it
+  releases without marking anything delivered and prints the released messages
+  (`renderItems()`) for the human to read; the agent then gets them by the normal paths.
 
 Display-only commands, which the model may run too:
 
@@ -472,7 +542,11 @@ Display-only commands, which the model may run too:
   front of the agent, the excerpt goes through core's `renderTranscript()` like every other
   delivery path (INV-3): sanitized again and wrapped in `<pairwire_transcript>` after a
   preamble that labels the peer's messages as external input. It reads `transcript.md`
-  directly, so it works while no MCP server runs.
+  directly, so it works while no MCP server runs. Held and dropped messages' bodies are
+  replaced in the excerpt (section 5, Hold mode): an entry is matched when its heading is a
+  peer entry (`### ←`) and one of its ` · `-separated fields equals a held or dropped id. A
+  forged display name can only add matches, never hide the real id field, so it can't make
+  a held body show.
 
 **`ctl.sock` protocol.** The owning MCP server listens on the room's `ctl_path` (mode 0600,
 in a 0700 directory) and accepts one request per connection: a single JSON line, at most
@@ -506,7 +580,7 @@ plugins/claude-code/
 ├── .mcp.json
 ├── hooks/hooks.json
 ├── hooks/run.sh                      # POSIX wrapper: fast path + Node check (section 6)
-├── commands/   start.md  join.md  status.md  log.md  say.md  continue.md  leave.md
+├── commands/   start.md  join.md  status.md  log.md  say.md  continue.md  leave.md  accept.md
 ├── skills/pairwire/SKILL.md          # generated from specs/06-agent-guide.md section 2
 └── dist/pairwire.mjs, dist/chunks/   # bundled client, produced by `npm run build:plugin`;
                                       # subcommands are lazy chunks, so hooks skip the MCP SDK
@@ -629,7 +703,7 @@ edits (`<file>.pairwire-backup-<UTC timestamp>`) before changing it.
    command = "node"
    args = ["<home>/.pairwire/bin/dist/pairwire.mjs", "mcp"]
    env = { PAIRWIRE_HARNESS = "codex" }
-   env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG"]
+   env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"]
    startup_timeout_sec = 20
    ```
 
@@ -663,8 +737,10 @@ Differences from Claude Code that the client handles:
   `[mcp_servers.pairwire.tools.send] approval_mode = "approve"`; REQ-SAFE-5's warning cannot
   see that, so the README states it.
 - **Human-only commands.** Codex has no pre-model shell execution in prompts, so there are no
-  `/pairwire:say` or `/pairwire:continue`. The human runs
-  `node ~/.pairwire/bin/dist/pairwire.mjs ctl say|continue|log` in a terminal (same project).
+  `/pairwire:say`, `/pairwire:continue` or `/pairwire:accept`. The human runs
+  `node ~/.pairwire/bin/dist/pairwire.mjs ctl say|continue|log|accept` in a terminal (same
+  project); `ctl accept` there prints the held messages to the terminal and releases them
+  (section 8).
   Hop budget resets also happen through Codex's UserPromptSubmit hook.
 
 ### Any MCP harness

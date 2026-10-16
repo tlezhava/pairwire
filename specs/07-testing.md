@@ -120,6 +120,18 @@ From then on it fails CI.
 - INV-3: `ctl log` output passes through `renderTranscript()`: wrapped, labeled, and a peer
   body cannot close the wrapper. `ctl say` sends `author: "human"`, resets the hop budget and
   is secret-scanned; `ctl.sock` is 0600.
+- REQ-SAFE-6 hold mode (`04` §5, Hold mode): with `hold` on, a peer message reaches no
+  hook, no D3 waiter and no `inbox` result, and does not block `Stop`; local notices still
+  flow; the footer and `status` count it as held; exactly one `held` notice is queued per
+  accept cycle; no MCP tool releases it (every tool is called and the message stays held);
+  `ctl accept` shows it once through the renderer (wrapped, labeled, a hostile body cannot
+  close the wrapper) and marks it delivered, so no later path shows it again; a body over the
+  hook threshold is released but left for `inbox`; `ctl accept drop` shows no body and no
+  path ever delivers the message; `ctl accept` with a terminal stdout releases without
+  marking delivered; `ctl log` replaces held and dropped bodies, also when the peer's
+  display name imitates an id; the sender still sees "delivered"; a config that can't be
+  read holds; `PAIRWIRE_HOLD` overrides `config.json` and is passed through by the Codex
+  install.
 
 ### hooks
 

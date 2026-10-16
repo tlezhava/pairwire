@@ -244,6 +244,51 @@ sanitized, wrapped in `<pairwire_transcript>` and preceded by a preamble labelin
 as external input. This tightens `04` §8; INV-3's text is unchanged. The ctl socket protocol
 is defined at the same time (one JSON request and reply per connection).
 
+## ADR-021 Inbound hold mode: messages wait for /pairwire:accept (M5)
+
+Status: proposed (2026-10-16)
+
+Some users want to read what the peer sent before their agent does. M5 adds hold mode
+(`hold` in `config.json`, `PAIRWIRE_HOLD`, default off; REQ-SAFE-6; `04` §5, Hold mode).
+
+Decisions:
+
+- **Held is derived, not stored per message.** A peer message is held when hold mode is
+  on, it is unread and the human hasn't released it. `delivered.json` gains `released` and
+  `dropped` id lists, so the filter, the release and the "mark delivered" step all happen
+  under the one `delivered.json` lock that already keeps hooks, the waiter and `inbox` from
+  showing an item twice. No new file, and old files stay valid.
+- **Every reader re-reads `hold`, and a broken config holds.** The MCP server used to load
+  the config once; a server that cached "hold off" while the hooks saw "hold on" would leak
+  through the `inbox` tool. The Codex install passes `PAIRWIRE_HOLD` through `env_vars`
+  for the same reason (Codex clears the MCP server's environment).
+- **`/pairwire:accept` releases by showing.** Its `!` output lands in the prompt, so it is a
+  delivery path: it renders through `renderForHook()` (INV-3) and marks what it showed
+  delivered. What doesn't fit is released and delivered by the normal paths. Run from a
+  terminal (Codex has no `!` commands) it releases only, because its output never reaches
+  the agent. It is human-only like `say` (`disable-model-invocation`, a heredoc for the
+  argument, `allowed-tools` for exactly `ctl accept`), and no MCP tool releases or drops
+  held messages, mirroring INV-6's "no tool resets the budget".
+- **Drop exists** (`/pairwire:accept drop`), because a human who reads a hostile message in
+  the transcript needs a way to keep it from the agent for good. Its output carries no body.
+  Accepting or dropping individual messages by id is left for later.
+- **One `held` notice per accept cycle.** Without a signal, an idle session in hold mode
+  would sit on messages nobody knows about. A local notice (name only, no text) wakes the
+  session once; later arrivals while something is held add none, so a peer cannot drive
+  repeated wakes.
+- **`/pairwire:log` hides held and dropped bodies.** It is model-invocable and prints the
+  transcript into the prompt, so it would otherwise bypass hold mode.
+- **The sender does not learn "held" in v1.** Acks are sent on receipt as before, so the
+  sender sees "delivered" (the peer's client has it). Reporting "held" or "released" would
+  need a new envelope kind or ack field (`02` §6), and tells the peer about the receiver's
+  review policy; the receiving agent can say so itself once released. Revisit if users find
+  "delivered" misleading.
+
+Consequences: the agent can still read held messages through files under `~/.pairwire` if
+its harness lets it (`05-security.md`, residual risk 7), and an agent that can run
+`pairwire ctl accept` can release them (residual risk 2). Proposed SKILL.md wording for the
+new command is not yet in `06-agent-guide.md` §2, which needs the human's approval.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
