@@ -824,10 +824,9 @@ Releases follow ADR-021. One version covers the npm package, the plugin and both
 - **Release workflow.** `.github/workflows/release.yml` runs on a pushed `v*` tag. It runs the
   CI workflow in full (lint, tests, e2e, traceability, the bundle check, plugin validation,
   the relay image smoke test) and `release.ts --check` against the tag; then, in parallel,
-  publishes `build/npm/` with `npm publish --provenance --access public` (repository secret
-  `NPM_TOKEN`: an npm granular access token with read-write access to the `pairwire`
-  package and "bypass 2FA" enabled, which expires within at most 90 days; npm no longer
-  issues classic or automation tokens, and ADR-021 plans the move to trusted publishing)
+  publishes `build/npm/` with `npm publish --provenance --access public` through npm trusted
+  publishing (OIDC: the `pairwire` package trusts this workflow, so no npm token is stored;
+  npm >= 11.5.1; 0.1.0 itself was published with a temporary granular token, ADR-021)
   and pushes the relay-node image to `ghcr.io/tlezhava/pairwire-relay` for linux/amd64 and
   linux/arm64 with the repository's `GITHUB_TOKEN`; finally it creates the GitHub release
   with generated notes. Each job has only the permissions it needs (`id-token: write` for provenance,

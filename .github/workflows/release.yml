@@ -1,12 +1,10 @@
 # Release (specs/04-client.md section 9, ADR-021). Runs when a v* tag is pushed; the tag comes
 # from `npm run release -- <version>`, which never pushes.
 #
-# Needs one repository secret: NPM_TOKEN, an npm granular access token with read-write access to
-# the `pairwire` package and "bypass 2FA" enabled (npm no longer issues classic or automation
-# tokens). It expires within at most 90 days, so renew it before a release. After the first
-# publish, move to npm trusted publishing (OIDC) and drop the secret (ADR-021). The image is
-# pushed with the workflow's own GITHUB_TOKEN. npm provenance requires a public repository, and
-# a new GHCR package starts private: make it public once.
+# Needs no secrets. npm publishes through trusted publishing (OIDC): the pairwire package on
+# npmjs.com trusts this workflow (tlezhava/pairwire, release.yml), so no npm token exists
+# (ADR-021). The image is pushed with the workflow's own GITHUB_TOKEN. npm provenance requires a
+# public repository.
 name: Release
 
 on:
@@ -56,15 +54,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          registry-url: https://registry.npmjs.org
       - run: npm ci
       - run: npm run pack:npm
+      # npm trusted publishing (OIDC): npm trusts this workflow for the pairwire package, so
+      # no token is stored anywhere. Needs npm >= 11.5.1 and id-token: write (ADR-021).
       - name: Publish pairwire
         working-directory: build/npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           DIST_TAG: ${{ needs.version.outputs.prerelease == 'true' && 'next' || 'latest' }}
-        run: npm publish --provenance --access public --tag "$DIST_TAG"
+        run: npx -y npm@11.21.0 publish --provenance --access public --tag "$DIST_TAG"
 
   image:
     needs: [ci, version]

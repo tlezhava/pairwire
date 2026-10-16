@@ -114,19 +114,17 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   a `manual` entry or a `deferred` entry in `tests/traceability.json`.
 - [x] **M4-7 Manual acceptance** (`07-testing.md` checklist) on two folders, then 👤 two
   machines; results in `tests/manual/RESULTS.md`.
-- [ ] **M4-8** 👤 Production relay deployed; `DEFAULT_RELAY_HOST` set; tag `v0.1.0`;
+- [x] **M4-8** 👤 Production relay deployed; `DEFAULT_RELAY_HOST` set; tag `v0.1.0`;
   publish npm package `pairwire`; Docker image to GHCR.
   - Prepared (ADR-021, `04` §9 Releases): `npm run pack:npm` builds the self-contained npm
     package in `build/npm/` (e2e-tested from an installed tarball); `npm run release --
     <version>` bumps every version location, rebuilds, checks, commits and tags locally;
     `.github/workflows/release.yml` publishes npm (provenance), the multi-arch GHCR image and
     the GitHub release when a `v*` tag is pushed.
-  - Left for the human: decide the production relay host (keep or change
-    `DEFAULT_RELAY_HOST`) and deploy it; make the repository public (npm provenance needs
-    it); add the `NPM_TOKEN` repository secret (an npm granular access token with
-    read-write access to the `pairwire` package and "bypass 2FA" enabled; it expires within
-    at most 90 days); run `npm run release -- 0.1.0`, then push `main` and the tag; after
-    the first image push, make the GHCR package public.
+  - Done 2026-10-16: production relay kept at `pairwire-relay.tazo.workers.dev` and redeployed
+    at 0.1.0; repository public; `v0.1.0` tagged and released: `pairwire@0.1.0` on npm (with
+    provenance), `ghcr.io/tlezhava/pairwire-relay:0.1.0`, GitHub release. The first publish
+    used a temporary granular npm token; later releases use trusted publishing.
 
 ## M5 — Collaboration features
 

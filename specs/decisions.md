@@ -279,8 +279,10 @@ Preparing M4-8 needed three decisions the specs left open.
   A tag with a prerelease suffix (`v0.2.0-rc.1`) publishes under the npm dist-tag `next`,
   doesn't move the image's `latest` and makes a GitHub prerelease.
 
-Follow-up: npm trusted publishing (OIDC) can only be configured for a package that already
-exists on the registry, so the first publish uses `NPM_TOKEN`. After it, configure
+Follow-up (done after 0.1.0): `release.yml` publishes through trusted publishing, with no
+token. Background: trusted publishing (OIDC) can only be configured for a package that already
+exists on the registry, so the first publish used `NPM_TOKEN`. npm also created a
+`0.0.0-stage` placeholder version for that first, staged publish. After it, configure
 `.github/workflows/release.yml` as the package's trusted publisher, drop
 `NODE_AUTH_TOKEN`/`NPM_TOKEN` from the workflow (the job already has `id-token: write`),
 delete the repository secret and revoke the token. That removes the long-lived credential and
