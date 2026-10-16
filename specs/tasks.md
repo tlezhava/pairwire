@@ -112,7 +112,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   self-hosting (Deploy button + Docker), live mode if Channels shipped, pre-1.0 notice.
 - [x] **M4-6 Traceability check switches to errors;** every REQ/INV is covered by a test,
   a `manual` entry or a `deferred` entry in `tests/traceability.json`.
-- [ ] **M4-7 Manual acceptance** (`07-testing.md` checklist) on two folders, then 👤 two
+- [x] **M4-7 Manual acceptance** (`07-testing.md` checklist) on two folders, then 👤 two
   machines; results in `tests/manual/RESULTS.md`.
 - [ ] **M4-8** 👤 Production relay deployed; `DEFAULT_RELAY_HOST` set; tag `v0.1.0`;
   publish npm package `pairwire`; Docker image to GHCR.

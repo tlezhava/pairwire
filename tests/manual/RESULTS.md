@@ -30,4 +30,17 @@ and for each step pass/fail with a note (what was seen, anything surprising).
 
 ## Run 2: two machines
 
-(Same table.)
+- Date: 2026-10-16
+- Commit: 34f831b (plugin installed from the public GitHub marketplace)
+- Machine A: the maintainer, Claude Code 2.1.301, `auto` mode. Machine B: a second person on
+  their own computer and account, Claude Code in `default` mode.
+- Relay: default (`pairwire-relay.tazo.workers.dev`)
+
+| Step | Result | Notes |
+|---|---|---|
+| 1 | pass | B installed with the two `/plugin` commands from the public repo; no other setup. |
+| 2 | pass | `/pairwire:start` on A, `/pairwire:join` on B: both sides showed the peer. |
+| 3 | pass | A asked a question; B's agent answered on its own, and B's human got the "pairwire – Send" approval prompt for every message, showing the text. |
+
+The remaining steps were covered in run 1 on one machine; the person on machine B was not
+needed for them.
