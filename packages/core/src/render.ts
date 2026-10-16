@@ -13,7 +13,7 @@ export const PREAMBLE = [
 export const HOOK_CONTEXT_CAP = 10_000;
 export const HOOK_MAX_BODY = 8_000;
 
-export type NoticeEvent = "peer_joined" | "peer_left" | "peer_changed" | "wrong_key";
+export type NoticeEvent = "peer_joined" | "peer_left" | "peer_changed" | "wrong_key" | "held";
 export interface Notice {
   event: NoticeEvent;
   text: string;
@@ -48,6 +48,14 @@ export function noticeWrongKey(): Notice {
   return {
     event: "wrong_key",
     text: "Someone with the wrong key is in this room. pairwire disconnected and won't reconnect until you run a pairwire command.",
+  };
+}
+
+/** Hold mode (04 §5): tells the human a message waits for them. Names the peer, never the text. */
+export function noticeHeld(name: string): Notice {
+  return {
+    event: "held",
+    text: `A message from ${displayName(name)} is held for your review. Run /pairwire:accept to read it and pass it to your agent, or /pairwire:accept drop to discard held messages.`,
   };
 }
 

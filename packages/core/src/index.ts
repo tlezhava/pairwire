@@ -55,6 +55,7 @@ export {
   HOOK_CONTEXT_CAP,
   HOOK_MAX_BODY,
   PREAMBLE,
+  noticeHeld,
   noticePeerChanged,
   noticePeerJoined,
   noticePeerLeft,
