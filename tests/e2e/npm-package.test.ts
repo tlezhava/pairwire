@@ -40,26 +40,29 @@ describe("npm package", () => {
 
     const prefix = tempDir();
     execFileSync(NPM, ["install", "--global", "--prefix", prefix, "--offline", "--no-audit", "--no-fund", join(packDir, packed!.filename)], { env: npmEnv, encoding: "utf8", shell: WIN });
-    const bin = join(prefix, "bin", "pairwire");
-    const installed = join(prefix, "lib", "node_modules", "pairwire");
+    // npm's global layout: <prefix>/bin + <prefix>/lib/node_modules, or on Windows
+    // <prefix>/pairwire.cmd + <prefix>/node_modules.
+    const bin = WIN ? join(prefix, "pairwire.cmd") : join(prefix, "bin", "pairwire");
+    const installed = WIN ? join(prefix, "node_modules", "pairwire") : join(prefix, "lib", "node_modules", "pairwire");
     expect(existsSync(bin)).toBe(true);
 
     const relay = await startRelay();
     const home = tempDir();
-    const env = { PATH: process.env.PATH ?? "", HOME: home, CODEX_HOME: join(home, ".codex"), PAIRWIRE_HOME: join(home, ".pairwire"), PAIRWIRE_RELAY: relay.host };
+    // Windows: the .cmd shim runs under cmd.exe, which needs the system environment.
+    const env = { ...(WIN ? process.env : { PATH: process.env.PATH ?? "" }), HOME: home, CODEX_HOME: join(home, ".codex"), PAIRWIRE_HOME: join(home, ".pairwire"), PAIRWIRE_RELAY: relay.host };
 
     // Async: the relay runs in this process and must keep answering while doctor checks it.
-    const doctor = await run(bin, ["doctor"], { env, encoding: "utf8" });
+    const doctor = await run(bin, ["doctor"], { env, encoding: "utf8", shell: WIN });
     expect(doctor.stdout).toContain(`ok    relay ${relay.host} answers /health`);
     expect(doctor.stdout).not.toContain("FAIL");
     expect(doctor.stdout).not.toContain("plugin hooks"); // no .claude-plugin: nothing to check
 
-    const printed = (await run(bin, ["install", "--print-config", "cursor"], { env, encoding: "utf8" })).stdout;
+    const printed = (await run(bin, ["install", "--print-config", "cursor"], { env, encoding: "utf8", shell: WIN })).stdout;
     const entry = JSON.parse(printed.slice(printed.indexOf("{"), printed.indexOf("\n}\n") + 2)) as { mcpServers: { pairwire: { args: string[] } } };
     expect(entry.mcpServers.pairwire.args).toEqual([join(installed, "dist", "pairwire.mjs"), "mcp"]);
     expect(printed).toContain("# Agent guide");
 
-    const codex = await run(bin, ["install", "--codex"], { env, encoding: "utf8" });
+    const codex = await run(bin, ["install", "--codex"], { env, encoding: "utf8", shell: WIN });
     expect(codex.stdout).toContain("Run /hooks in Codex and trust the four pairwire hooks");
     for (const f of ["dist/pairwire.mjs", "hooks/run.sh"]) expect(existsSync(join(home, ".pairwire", "bin", f))).toBe(true);
     expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toContain(JSON.stringify(join(home, ".pairwire", "bin", "dist", "pairwire.mjs")));
