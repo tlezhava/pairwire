@@ -17,7 +17,7 @@ import {
   external_exports,
   formatRelayAddress,
   parseRelayAddress
-} from "./chunk-WZNRRE4K.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 import {
   randomBytes
 } from "./chunk-KARZWXGF.mjs";
@@ -237,6 +237,27 @@ function expiresAt(state) {
   return state.expires_at ?? state.created_at + RELAY_LIMITS.maxAgeMs;
 }
 var isOpen = (state) => state.status === "waiting" || state.status === "active";
+var MAX_CAPS = 16;
+var MAX_CAP_CHARS = 32;
+var capsFileSchema = external_exports.record(hex, external_exports.array(external_exports.string().max(MAX_CAP_CHARS)).max(MAX_CAPS));
+function readSessionCaps(home, roomId) {
+  try {
+    const parsed = capsFileSchema.safeParse(JSON.parse(readFileSync(roomFile(home, roomId, "caps.json"), "utf8")));
+    return parsed.success ? parsed.data : {};
+  } catch {
+    return {};
+  }
+}
+function writeSessionCaps(home, roomId, sid, caps, keep) {
+  const path = roomFile(home, roomId, "caps.json");
+  withLock(path, () => {
+    const current = readSessionCaps(home, roomId);
+    const next = {};
+    for (const s of keep) if (current[s]) next[s] = current[s];
+    next[sid] = [...new Set(caps.filter((c) => c.length <= MAX_CAP_CHARS))].slice(0, MAX_CAPS);
+    writeFileAtomic(path, JSON.stringify(next) + "\n");
+  });
+}
 function refreshActiveFlag(home) {
   const open = listRooms(home).some((id) => {
     try {
@@ -358,6 +379,8 @@ export {
   listRooms,
   expiresAt,
   isOpen,
+  readSessionCaps,
+  writeSessionCaps,
   refreshActiveFlag,
   DEFAULT_CONFIG,
   loadConfig,

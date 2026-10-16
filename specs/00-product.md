@@ -138,6 +138,37 @@ client unless stated otherwise. Each requirement has at least one test (see
 - **REQ-X-2** (M6) A Codex user SHALL be able to install pairwire with one command and pair
   with a Claude Code user.
 
+### Collaboration (M5)
+
+ADR-027, approved by the human on 2026-10-16. Protocol in `02-protocol.md` §6.3.
+
+- **REQ-COLLAB-1** (M5) WHEN an agent sends a `heads_up` THE SYSTEM SHALL deliver
+  it to the peer's agent with its paths shown as sanitized attributes, and nothing else
+  SHALL happen on the receiving side.
+- **REQ-COLLAB-2** (M5) WHEN an agent sends a `claim` THE SYSTEM SHALL show it to
+  the peer's agent with its paths and a locally computed expiry, and list it in both sides'
+  `status` until its sender releases it, it expires or the room ends; THE SYSTEM SHALL NOT
+  lock, block or deny any edit because of a claim.
+- **REQ-COLLAB-3** (M5) WHEN an agent proposes a contract THE SYSTEM SHALL bind the
+  proposal to the name, version and SHA-256 of a file in the proposer's project (for an
+  inline proposal, the exact bytes shown in the approval prompt), and WHEN the peer answers
+  THE SYSTEM SHALL record the decision only if the answer names the live proposal with the
+  same name, version and hash.
+- **REQ-COLLAB-4** (M5) WHEN the peer's client did not advertise `collab1` THE
+  SYSTEM SHALL send a structured kind as a `chat` with a header line under the same id and
+  seq, so a 0.1.0 peer receives and acks it and ordering never stalls.
+- **REQ-COLLAB-5** (M5) WHEN an envelope from the peer decrypts but cannot be read (unknown
+  kind, or a structured kind with invalid data) THE SYSTEM SHALL count it for ordering and
+  ack it as 0.1.1 does (ADR-025), show and store nothing from it, and tell the user with at
+  most one `peer_unreadable` notice per connection.
+- **REQ-COLLAB-6** (M5) WHEN a structured message arrives THE SYSTEM SHALL NOT
+  write, fetch, stat or open any file the peer named, change any setting or permission, or
+  send anything other than the protocol's ack, and the message SHALL change the coordination view only for the peer's own
+  claims and for answers to our own proposals.
+- **REQ-COLLAB-7** (M5) WHEN an agent proposes a contract or accepts one with a
+  local copy THE SYSTEM SHALL refuse a file outside the project, under a dot-directory, with
+  a sensitive name, larger than 1 MiB, or whose content fails the secret scan.
+
 ## MVP (release 0.1.0)
 
 In: REQ-ROOM-*, REQ-MSG-1..3, 5..8, REQ-MSG-4 on a best-effort basis (whatever the M0

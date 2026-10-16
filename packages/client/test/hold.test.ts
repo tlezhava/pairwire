@@ -131,7 +131,8 @@ describe("hold mode", () => {
     expect((await a.session.inbox()).text).not.toContain("HOLDME");
   });
 
-  it("REQ-SAFE-6 accept and drop retire the unread held notice, so the agent never gets a stale one", async () => {
+  // Three pairings in one test: more than the default 5 s under a loaded parallel run.
+  it("REQ-SAFE-6 accept and drop retire the unread held notice, so the agent never gets a stale one", { timeout: 20_000 }, async () => {
     for (const how of ["accept", "drop", "terminal"] as const) {
       const { a, fromB } = await holdA();
       await fromB(`${how} HOLDME`);

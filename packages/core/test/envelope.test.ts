@@ -12,7 +12,7 @@ import {
   receiveDecision,
   sealMsg,
   serializeEnvelope,
-  type Envelope,
+  type BasicEnvelope,
 } from "../src/envelope.js";
 import { Handshake, type Session } from "../src/handshake.js";
 import { deriveRoomKeys } from "../src/keys.js";
@@ -22,7 +22,7 @@ const ID1 = "01JABCDEFGHJKMNPQRSTVWXYZ0";
 const ID2 = "01JABCDEFGHJKMNPQRSTVWXYZ1";
 const TS = "2026-10-15T12:00:00.000Z";
 
-const chat = (over: Partial<Envelope> = {}): Envelope => ({
+const chat = (over: Partial<BasicEnvelope> = {}): BasicEnvelope => ({
   v: 1,
   id: ID1,
   seq: 1,
@@ -50,7 +50,7 @@ function pairSessions(): { roomIdBytes: Uint8Array; a: Session; b: Session } {
 
 describe("envelope schema (02 §6)", () => {
   it("accepts every kind in its valid shape", () => {
-    const valid: Envelope[] = [
+    const valid: BasicEnvelope[] = [
       chat(),
       chat({ kind: "question", body: "Does POST /orders accept an idempotency key?" }),
       chat({ kind: "answer", reply_to: ID2, body: "Yes." }),
@@ -105,9 +105,15 @@ describe("envelope schema (02 §6)", () => {
     });
   }
 
-  it("reports unknown and reserved kinds separately so they can be counted, not shown", () => {
-    for (const kind of ["heads_up", "claim", "contract_propose", "teleport"]) {
+  it("reports unknown kinds separately so they can be counted, not shown", () => {
+    for (const kind of ["teleport", "claim_v2", "lock"]) {
       expect(parseEnvelope({ ...chat(), kind })).toEqual({ ok: false, reason: "unknown_kind" });
+    }
+  });
+
+  it("rejects an M5 kind without its data as a bad envelope (02 §6.3.3)", () => {
+    for (const kind of ["heads_up", "claim", "release", "contract_propose", "contract_response"]) {
+      expect(parseEnvelope({ ...chat(), kind })).toEqual({ ok: false, reason: "bad_envelope" });
     }
   });
 
@@ -232,7 +238,7 @@ describe("MSG frames (02 §3, §6)", () => {
       reason: "bad_envelope",
       skipSeq: chat().seq,
     });
-    expect(openMsg(sealRaw(JSON.stringify({ ...chat(), kind: "heads_up" })), { roomIdBytes, sessions: [b] })).toEqual({
+    expect(openMsg(sealRaw(JSON.stringify({ ...chat(), kind: "teleport" })), { roomIdBytes, sessions: [b] })).toEqual({
       ok: false,
       reason: "unknown_kind",
       skipSeq: chat().seq,

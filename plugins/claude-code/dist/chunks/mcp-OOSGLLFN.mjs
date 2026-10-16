@@ -3,16 +3,23 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   listenCtl,
   transcriptEvents
-} from "./chunk-M7U4EUTR.mjs";
+} from "./chunk-AGSKDMSE.mjs";
 import {
+  ContractFileError,
+  appendCoordSent,
   appendInbox,
   claimUndelivered,
+  coordFooter,
+  coordStatusLines,
   inboxCounts,
+  loadView,
+  readContractFile,
+  readCoordSent,
   readOutbox,
-  toRenderItem,
+  renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-EUE26XHT.mjs";
+} from "./chunk-GH2BAUU7.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -22,10 +29,10 @@ import {
   isProcessAlive,
   removeBindingFor,
   resolveProjectDir
-} from "./chunk-VU23LRE3.mjs";
+} from "./chunk-L37HB6AK.mjs";
 import {
   assertStatePrivate
-} from "./chunk-QXIUGJEG.mjs";
+} from "./chunk-CGGNPNBK.mjs";
 import {
   createRoom,
   expiresAt,
@@ -33,11 +40,13 @@ import {
   isOpen,
   loadConfig,
   readSecret,
+  readSessionCaps,
   readState,
   removeFile,
   resolveDisplayName,
-  updateState
-} from "./chunk-5XLM2UC5.mjs";
+  updateState,
+  writeSessionCaps
+} from "./chunk-YNXENSKT.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -47,12 +56,18 @@ import {
   $ZodObject,
   $ZodType,
   $constructor,
+  CLAIM_TTL_MIN,
   CLIENT_LIMITS,
+  COLLAB_CAP,
   DEFAULT_RELAY_HOST,
   EnvelopeTooLargeError,
   HARNESSES,
   HELLO_TYPE,
   Handshake,
+  MAX_ACTIVE_CLAIMS,
+  MAX_CONTRACT_NAMES_PER_SIDE,
+  MAX_CONTRACT_VERSION,
+  MAX_PATHS,
   MSG_TYPE,
   ZodOptional,
   _enum,
@@ -61,16 +76,22 @@ import {
   array,
   boolean,
   clone,
+  contractNameSchema,
   custom,
   deriveRoomKeys,
   discriminatedUnion,
   displayName,
   encodeShareString,
+  envelopeSchema,
   external_exports,
+  fallbackBody,
+  fallbackEnvelope,
   formatRelayAddress,
   generateSecret,
+  inlineContentProblem,
   installLazyProp,
   intersection,
+  isCollabKind,
   iso_exports,
   literal,
   looseObject,
@@ -91,14 +112,18 @@ import {
   parseAsync,
   parseRelayAddress,
   parseShareString,
+  pathsOverlap,
   preprocess,
   receiveDecision,
   record,
+  relPathProblem,
   relayUrl,
   renderForHook,
   renderItems,
+  revSchema,
   safeParse,
   safeParseAsync,
+  sanitizeAttr,
   scanSecrets,
   sealMsg,
   serializeEnvelope,
@@ -106,7 +131,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-WZNRRE4K.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 import {
   __commonJS,
   __require,
@@ -26482,6 +26507,7 @@ function closeRoomLocally(home, roomId, status, error = null) {
     sessions: { current: null, previous: null },
     error: error ?? s.error
   }));
+  removeFile(roomFile(home, roomId, "caps.json"));
   removeBindingFor(home, roomId);
   return state;
 }
@@ -26524,6 +26550,14 @@ var DEFAULT_TUNING = {
   defaultRetryMs: 3e4,
   leaveTimeoutMs: 5e3
 };
+function collabFor(home, roomId, sid) {
+  return readSessionCaps(home, roomId)[sid]?.includes(COLLAB_CAP) ?? false;
+}
+function wireEnvelope(entry, structured) {
+  const env = entry.envelope;
+  const original = env.kind === "chat" ? structured?.get(env.id) : void 0;
+  return original && isCollabKind(original.kind) && original.seq === env.seq ? original : env;
+}
 var toStored = (s) => ({ sid: bytesToHex(s.sid), send_key: bytesToHex(s.sendKey), recv_key: bytesToHex(s.recvKey) });
 var fromStored = (s) => ({ sid: hexToBytes(s.sid), sendKey: hexToBytes(s.send_key), recvKey: hexToBytes(s.recv_key) });
 var MAX_TIMER_MS = 2 ** 31 - 1;
@@ -26596,27 +26630,40 @@ var RoomConnection = class {
   send(input) {
     const s = this.#state();
     if (!s || !isOpen(s)) throw new Error("The room is not open.");
-    const envelope = {
+    const common = {
       v: 1,
       id: this.#ulid(),
       seq: s.my_seq + 1,
       ts: new Date(this.#t.now()).toISOString(),
-      author: input.author,
-      kind: input.kind,
       reply_to: input.reply_to ?? null,
       body: input.body,
       acks: null
     };
+    const structured = "fallbackBody" in input;
+    const envelope = structured ? { ...common, author: "agent", kind: input.kind, data: input.data } : { ...common, author: input.author, kind: input.kind };
     serializeEnvelope(envelope);
+    const fallback = structured ? fallbackEnvelope(envelope, input.fallbackBody) : null;
+    if (fallback) serializeEnvelope(fallback);
     updateState(this.#o.home, this.#roomId, (st) => ({ ...st, my_seq: Math.max(st.my_seq, envelope.seq) }));
     const status = s.sessions.current ? "sent" : "queued";
-    updateOutbox(this.#o.home, this.#roomId, (entries) => [...entries, { envelope, status, sent_at: null, delivered_at: null }]);
+    if (structured) {
+      const sentAt = input.sentAt ?? this.#t.now();
+      appendCoordSent(this.#o.home, this.#roomId, { envelope, sent_at: sentAt, ...input.localPath ? { local_path: input.localPath } : {} });
+    }
+    const entry = { envelope: fallback ?? envelope, status, sent_at: null, delivered_at: null };
+    updateOutbox(this.#o.home, this.#roomId, (entries) => [...entries, entry]);
     this.#o.events?.sent?.(envelope);
     if (status === "sent") {
       this.#queue.push({ t: "env", id: envelope.id });
       this.#pump();
     }
-    return { id: envelope.id, seq: envelope.seq, status };
+    const encoding = !structured || status === "queued" ? null : this.peerHasCollab() ? "structured" : "chat";
+    return { id: envelope.id, seq: envelope.seq, status, envelope, encoding };
+  }
+  /** Whether the current session's peer advertised `collab1` (02 §6.3.2). */
+  peerHasCollab() {
+    const current = this.#state()?.sessions.current;
+    return !!current && collabFor(this.#o.home, this.#roomId, current.sid);
   }
   /**
    * REQ-ROOM-5: sends `bye` (with the optional message) under the current session, then relay
@@ -26758,12 +26805,14 @@ var RoomConnection = class {
   #onSession(session, peer) {
     const before = this.#state();
     if (!before) return;
-    updateState(this.#o.home, this.#roomId, (s) => ({
+    const after = updateState(this.#o.home, this.#roomId, (s) => ({
       ...s,
       status: "active",
       sessions: { current: toStored(session), previous: s.sessions.current },
       peer: { name: peer.name, harness: peer.harness, instance: peer.instance }
     }));
+    const sids = [after.sessions.current, after.sessions.previous].flatMap((x) => x ? [x.sid] : []);
+    writeSessionCaps(this.#o.home, this.#roomId, sids[0], peer.caps, sids);
     this.#o.log.info("session", { first: before.peer === null });
     if (before.peer === null) {
       this.#notice(noticePeerJoined(peer.name, peer.harness));
@@ -26924,7 +26973,10 @@ var RoomConnection = class {
     this.#sentTimes = this.#sentTimes.filter((at) => now - at < this.#tune.windowMs);
     const s = this.#state();
     const session = s?.sessions.current ? fromStored(s.sessions.current) : null;
+    const collab = !!s?.sessions.current && collabFor(this.#o.home, this.#roomId, s.sessions.current.sid);
     const outbox = new Map(readOutbox(this.#o.home, this.#roomId).map((e) => [e.envelope.id, e]));
+    let structured;
+    const structuredFor = () => structured ??= collab ? new Map(readCoordSent(this.#o.home, this.#roomId).map((c) => [c.envelope.id, c.envelope])) : null;
     const sentIds = [];
     while (this.#queue.length > 0 && this.#sentTimes.length < this.#tune.framesPerWindow) {
       const item = this.#queue.shift();
@@ -26936,7 +26988,7 @@ var RoomConnection = class {
       } else if (session && item.t === "env") {
         const entry = outbox.get(item.id);
         if (entry && entry.status !== "delivered") {
-          frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: entry.envelope });
+          frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: wireEnvelope(entry, structuredFor()) });
           sentIds.push(item.id);
         }
       }
@@ -27010,19 +27062,184 @@ var RoomConnection = class {
   }
 };
 
+// packages/client/src/collab-send.ts
+var CollabSendError = class extends Error {
+  name = "CollabSendError";
+};
+var MINUTE = 6e4;
+var refuse = (message) => {
+  throw new CollabSendError(message);
+};
+function checkPaths(paths) {
+  if (paths.length > MAX_PATHS) refuse(`At most ${MAX_PATHS} paths per message; nothing was sent.`);
+  paths.forEach((p, i) => {
+    const why = relPathProblem(p);
+    if (why) refuse(`paths[${i}] ${why}; nothing was sent.`);
+  });
+  if (new Set(paths).size !== paths.length) refuse("paths has duplicates; nothing was sent.");
+  return [...paths];
+}
+function overlapWarnings(view, paths, peerName) {
+  return view.claims.peer.flatMap((c) => {
+    const hit = c.paths.filter((cp) => paths.some((p) => pathsOverlap(p, cp)));
+    return hit.length > 0 ? [`Warning: overlaps ${peerName}'s claim ${c.id} (${hit.map((h) => sanitizeAttr(h)).join(", ")}).`] : [];
+  });
+}
+function readFileFor(projectDir, path, verb) {
+  try {
+    return readContractFile(projectDir, path);
+  } catch (e) {
+    if (e instanceof ContractFileError) refuse(`Not ${verb}: ${e.message}.`);
+    throw e;
+  }
+}
+function planStructured(input, ctx) {
+  const { view } = ctx.loaded;
+  const body = input.body === void 0 || input.body === "" ? null : input.body;
+  const needsBody = !(input.kind === "release" || input.kind === "contract_response" && input.decision !== "reject");
+  if (needsBody && body === null) refuse(`A ${input.kind} needs a body${input.kind === "claim" ? " saying why" : ""}; nothing was sent.`);
+  const lines = [];
+  const scan = [];
+  if (body !== null) scan.push(["body", body]);
+  let data;
+  let replyTo = null;
+  let localPath;
+  let claimUntil;
+  switch (input.kind) {
+    case "heads_up": {
+      const paths = checkPaths(input.paths ?? []);
+      paths.forEach((p, i) => scan.push([`paths[${i}]`, p]));
+      data = { paths };
+      lines.push(...overlapWarnings(view, paths, ctx.peerName));
+      break;
+    }
+    case "claim": {
+      if (!input.paths || input.paths.length === 0) refuse("A claim needs paths: the files or globs you are about to change; nothing was sent.");
+      const paths = checkPaths(input.paths);
+      paths.forEach((p, i) => scan.push([`paths[${i}]`, p]));
+      const ttl = input.ttl_minutes ?? CLAIM_TTL_MIN.default;
+      if (!Number.isInteger(ttl) || ttl < CLAIM_TTL_MIN.min || ttl > CLAIM_TTL_MIN.max) {
+        refuse(`ttl_minutes must be a whole number from ${CLAIM_TTL_MIN.min} to ${CLAIM_TTL_MIN.max}; nothing was sent.`);
+      }
+      if (view.claims.ours.length >= MAX_ACTIVE_CLAIMS) refuse(`You already have ${MAX_ACTIVE_CLAIMS} active claims; release one first. Nothing was sent.`);
+      data = { paths, ttl_min: ttl };
+      claimUntil = Math.min(ctx.now + ttl * MINUTE, ctx.roomExpiresAt);
+      lines.push(`Claim active until ${new Date(claimUntil).toISOString()} (advisory; pairwire locks nothing).`);
+      lines.push(...overlapWarnings(view, paths, ctx.peerName));
+      break;
+    }
+    case "release": {
+      if (!input.reply_to) refuse("A release needs reply_to: the id of your claim; nothing was sent.");
+      replyTo = input.reply_to;
+      if (!view.claims.ours.some((c) => c.id === replyTo)) refuse(`No active claim of yours with id ${replyTo}; nothing was sent.`);
+      data = {};
+      break;
+    }
+    case "contract_propose": {
+      const name = input.contract_name;
+      if (!name || !contractNameSchema.safeParse(name).success) {
+        refuse("contract_name must be 1 to 64 lowercase letters, digits, '.', '_' or '-', starting with a letter or digit; nothing was sent.");
+      }
+      if (!input.contract_path) refuse("A contract_propose needs contract_path: the contract file in this project; nothing was sent.");
+      if (input.rev !== void 0 && !revSchema.safeParse(input.rev).success) refuse("rev must be a git commit id: 7 to 40 lowercase hex characters; nothing was sent.");
+      const path = input.contract_path;
+      scan.push(["contract_name", name], ["contract_path", path], ...input.rev ? [["rev", input.rev]] : []);
+      const file = readFileFor(ctx.projectDir, path, "proposed");
+      let content2 = null;
+      if (input.contract_content !== void 0) {
+        if (input.contract_content !== file.text) refuse("contract_content differs from the file at contract_path; not proposed.");
+        const why = inlineContentProblem(input.contract_content, file.sha256);
+        if (why) refuse(`Not proposed: ${why}. Send it without contract_content (by reference).`);
+        content2 = input.contract_content;
+        scan.push(["contract_content", content2]);
+      }
+      if (!view.contracts.some((c) => c.name === name) && view.contractNames.ours >= MAX_CONTRACT_NAMES_PER_SIDE) {
+        refuse(`You have already proposed ${MAX_CONTRACT_NAMES_PER_SIDE} contract names in this room; propose a new version of one of them instead. Nothing was sent.`);
+      }
+      const version = view.maxVersion(name) + 1;
+      if (version > MAX_CONTRACT_VERSION) refuse("This contract has reached the highest version pairwire supports; use a new contract_name.");
+      replyTo = input.reply_to ?? null;
+      data = { name, version, path, sha256: file.sha256, rev: input.rev ?? null, content: content2 };
+      lines.push(`Contract ${name} v${version}, sha256 ${file.sha256}.`);
+      break;
+    }
+    case "contract_response": {
+      if (!input.reply_to) refuse("A contract_response needs reply_to: the id of the proposal; nothing was sent.");
+      if (!input.decision) refuse('A contract_response needs decision: "accept" or "reject"; nothing was sent.');
+      if (input.local_path !== void 0 && input.decision !== "accept") refuse("local_path applies only when accepting; nothing was sent.");
+      replyTo = input.reply_to;
+      const { ledger } = ctx.loaded;
+      const p = view.proposal("peer", replyTo);
+      const open = p && p.counted && view.contracts.includes(p) && p.state === "pending" && ledger.ids.has(replyTo) && !ledger.dropped.has(replyTo);
+      if (!open) refuse(`No open proposal from your collaborator with id ${replyTo}; nothing was sent.`);
+      if (input.local_path !== void 0) {
+        const file = readFileFor(ctx.projectDir, input.local_path, "accepted");
+        if (file.sha256 !== p.sha256) refuse(`Your copy at ${input.local_path} doesn't match the proposal; not accepted.`);
+        localPath = input.local_path;
+      }
+      data = { decision: input.decision, name: p.name, version: p.version, sha256: p.sha256 };
+      lines.push(`Contract ${p.name} v${p.version}, sha256 ${p.sha256}.`);
+      break;
+    }
+  }
+  const candidate = {
+    v: 1,
+    id: "0".repeat(26),
+    seq: ctx.nextSeq,
+    ts: new Date(ctx.now).toISOString(),
+    author: "agent",
+    kind: input.kind,
+    reply_to: replyTo,
+    body,
+    acks: null,
+    data
+  };
+  const parsed = envelopeSchema.safeParse(candidate);
+  if (!parsed.success) refuse(`Not sent: ${parsed.error.issues.map((i) => i.message).join("; ")}.`);
+  const env = parsed.data;
+  const fallback = fallbackBody(env, claimUntil === void 0 ? {} : { claimUntil });
+  serializeEnvelope(env);
+  serializeEnvelope(fallbackEnvelope(env, fallback));
+  scan.push(["the chat fallback", fallback]);
+  return { kind: input.kind, data, body, reply_to: replyTo, fallbackBody: fallback, scan, lines, ...localPath ? { localPath } : {} };
+}
+
 // packages/client/src/version.ts
 var CLIENT_VERSION = "0.1.1";
 
 // packages/client/src/session.ts
 var WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";
 var SENDS_PER_MINUTE = 20;
-var MINUTE = 6e4;
+var MINUTE2 = 6e4;
 var ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
+var SEND_KINDS = ["chat", "question", "answer", "heads_up", "claim", "release", "contract_propose", "contract_response"];
 var sendInputSchema = external_exports.object({
-  kind: external_exports.enum(["chat", "question", "answer"]),
-  body: external_exports.string().min(1, "body is empty"),
-  reply_to: external_exports.string().regex(ULID, "reply_to must be a message id").optional()
+  kind: external_exports.enum(SEND_KINDS).describe(
+    "chat, question, answer; or a coordination record: heads_up (a change that affects the peer), claim / release (ask the peer not to edit paths for a while), contract_propose / contract_response (agree on a contract file by its SHA-256)"
+  ),
+  body: external_exports.string().optional().describe("The message. Required except for release and an accepting contract_response."),
+  reply_to: external_exports.string().regex(ULID, "reply_to must be a message id").optional().describe("answer: the question's id; release: your claim's id; contract_response: the proposal's id; contract_propose: a proposal it counters (optional)"),
+  paths: external_exports.array(external_exports.string()).max(MAX_PATHS).optional().describe("heads_up (optional), claim (required): project-relative paths or globs, first segment literal"),
+  ttl_minutes: external_exports.number().int().optional().describe(`claim only: minutes until it expires, ${CLAIM_TTL_MIN.min} to ${CLAIM_TTL_MIN.max} (default ${CLAIM_TTL_MIN.default})`),
+  contract_name: external_exports.string().optional().describe("contract_propose only: lowercase name, e.g. orders-api"),
+  contract_path: external_exports.string().optional().describe("contract_propose only: the contract file in this project (no globs); pairwire hashes it"),
+  contract_content: external_exports.string().optional().describe("contract_propose only: the file's exact text, to send it inline; otherwise only its hash is sent"),
+  rev: external_exports.string().optional().describe("contract_propose only: the git commit that has the file (7 to 40 hex)"),
+  decision: external_exports.enum(["accept", "reject"]).optional().describe("contract_response only"),
+  local_path: external_exports.string().optional().describe("contract_response with accept only: your copy of the contract file; it must match the proposal's hash. Not sent.")
 });
+var KIND_FIELDS = {
+  chat: ["body", "reply_to"],
+  question: ["body", "reply_to"],
+  answer: ["body", "reply_to"],
+  heads_up: ["body", "paths"],
+  claim: ["body", "paths", "ttl_minutes"],
+  release: ["body", "reply_to"],
+  contract_propose: ["body", "reply_to", "contract_name", "contract_path", "contract_content", "rev"],
+  contract_response: ["body", "reply_to", "decision", "local_path"]
+};
+var OPTIONAL_FIELDS = Object.keys(sendInputSchema.shape).filter((k) => k !== "kind");
+var HELLO_CAPS = ["ack", "say", COLLAB_CAP];
 var startInputSchema = external_exports.object({ name: external_exports.string().max(200).optional() });
 var joinInputSchema = external_exports.object({ share: external_exports.string().max(4096), name: external_exports.string().max(200).optional() });
 var leaveInputSchema = external_exports.object({ message: external_exports.string().optional() });
@@ -27133,8 +27350,9 @@ var ClientSession = class {
     const state = this.#roomState();
     if (this.#waiters.size === 0 || !state) return;
     for (const [session, socket] of this.#waiters) {
-      const rendered = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => {
-        const r = renderForHook(items.map(toRenderItem));
+      const hold = this.#hold();
+      const rendered = claimUndelivered(this.#o.home, state.roomId, { hold }, (items, ledger) => {
+        const r = renderForHook(renderItemsFor(this.#o.home, state.roomId, items, { hold, now: this.#now(), ledger }));
         return { ids: r.deliveredIds, result: r.text };
       });
       if (rendered === null) return;
@@ -27230,19 +27448,50 @@ ${rendered}` }) + "\n");
     return this.#tool(async () => {
       const config = this.#ready();
       const state = this.#requireRoom();
-      if (input.kind === "answer" && !input.reply_to) throw new ToolError("An answer needs reply_to: the id of the question it answers.");
-      this.#checkOutbound(input.body, state, input.kind, input.reply_to ?? null);
-      if (state.hop_count >= config.hopBudget) throw new ToolError("Hop budget reached. Ask your human whether to continue.");
+      const given = input;
+      const extra = OPTIONAL_FIELDS.filter((k) => given[k] !== void 0 && !KIND_FIELDS[input.kind].includes(k));
+      if (extra.length > 0) throw new ToolError(`${extra.join(", ")} ${extra.length === 1 ? "doesn't" : "don't"} apply to kind "${input.kind}"; nothing was sent.`);
       const now = this.#now();
-      this.#sendTimes = this.#sendTimes.filter((t) => now - t < MINUTE);
+      let plan = null;
+      if (isCollabKind(input.kind)) {
+        plan = planStructured({ ...input, kind: input.kind }, {
+          loaded: loadView(this.#o.home, state.roomId, { hold: this.#hold(), now }),
+          projectDir: this.projectDir,
+          peerName: state.peer ? displayName(state.peer.name) : "your collaborator",
+          now,
+          roomExpiresAt: expiresAt(state),
+          nextSeq: state.my_seq + 1
+        });
+        this.#scan(plan.scan);
+      } else {
+        if (input.kind === "answer" && !input.reply_to) throw new ToolError("An answer needs reply_to: the id of the question it answers.");
+        if (!input.body) throw new ToolError("body is empty; nothing was sent.");
+        this.#checkOutbound(input.body, state, input.kind, input.reply_to ?? null);
+      }
+      if (state.hop_count >= config.hopBudget) throw new ToolError("Hop budget reached. Ask your human whether to continue.");
+      this.#sendTimes = this.#sendTimes.filter((t) => now - t < MINUTE2);
       if (this.#sendTimes.length >= SENDS_PER_MINUTE) {
-        const wait = Math.ceil((this.#sendTimes[0] + MINUTE - now) / 1e3);
+        const wait = Math.ceil((this.#sendTimes[0] + MINUTE2 - now) / 1e3);
         throw new ToolError(`Rate limit: at most ${SENDS_PER_MINUTE} messages per minute. Try again in ${wait} s.`);
       }
-      const sent = this.#conn.send({ kind: input.kind, body: input.body, reply_to: input.reply_to ?? null, author: "agent" });
+      const sent = plan ? this.#conn.send({
+        kind: plan.kind,
+        data: plan.data,
+        body: plan.body,
+        reply_to: plan.reply_to,
+        author: "agent",
+        fallbackBody: plan.fallbackBody,
+        sentAt: now,
+        ...plan.localPath ? { localPath: plan.localPath } : {}
+      }) : this.#conn.send({ kind: input.kind, body: input.body, reply_to: input.reply_to ?? null, author: "agent" });
       this.#sendTimes.push(now);
       updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: s.hop_count + 1 }));
-      return sent.status === "sent" ? `Sent (id ${sent.id}). You'll see "delivered" in status once their client receives it.` : `Queued (id ${sent.id}): it goes out as soon as your collaborator connects.`;
+      const lines = [
+        sent.status === "sent" ? `Sent (id ${sent.id}). You'll see "delivered" in status once their client receives it.` : `Queued (id ${sent.id}): it goes out as soon as your collaborator connects.`,
+        ...plan?.lines ?? [],
+        ...sent.encoding === "chat" ? ["Your collaborator's pairwire is older, so this went out as a chat message with a header line."] : []
+      ];
+      return lines.join("\n");
     });
   }
   inbox() {
@@ -27250,9 +27499,10 @@ ${rendered}` }) + "\n");
       this.#ready();
       const state = this.#roomState();
       if (!state) throw new ToolError("No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
-      const text = claimUndelivered(this.#o.home, state.roomId, { hold: this.#hold() }, (items) => ({
+      const hold = this.#hold();
+      const text = claimUndelivered(this.#o.home, state.roomId, { hold }, (items, ledger) => ({
         ids: items.map((i) => i.id),
-        result: items.length > 0 ? renderItems(items.map(toRenderItem)) : "No new messages."
+        result: items.length > 0 ? renderItems(renderItemsFor(this.#o.home, state.roomId, items, { hold, now: this.#now(), ledger })) : "No new messages."
       }));
       return `${text}
 
@@ -27274,6 +27524,10 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : [],
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
+        ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
+          peer: state.peer ? displayName(state.peer.name) : "your collaborator",
+          projectDir: this.projectDir
+        }),
         `Transcript: ${roomFile(this.#o.home, state.roomId, "transcript.md")}`
       ];
       return `${lines.join("\n")}
@@ -27297,7 +27551,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
     try {
       result = { text: await fn() };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError || e.name === "ShareStringError";
+      const known = e instanceof ToolError || e instanceof CollabSendError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError || e.name === "ShareStringError";
       if (!known) this.#o.log.error("tool_failed", e);
       result = { text: known ? e.message : "pairwire hit an internal error; details are in its log.", isError: true };
     }
@@ -27314,7 +27568,9 @@ ${this.footer()}` };
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
-    return `[pairwire] ${who} \xB7 ${unreadText(inboxCounts(this.#o.home, state.roomId, this.#hold()), harnessOf(this.#o.env))} \xB7 hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)`;
+    const hold = this.#hold();
+    const coord = coordFooter(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }).view);
+    return `[pairwire] ${who} \xB7 ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))} \xB7 hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)${coord}`;
   }
   #ready() {
     if (this.#fatal) throw new ToolError(this.#fatal);
@@ -27367,7 +27623,7 @@ ${this.footer()}` };
       harness: harnessOf(this.#o.env),
       client: `pairwire/${CLIENT_VERSION}`,
       instance: state.instance,
-      caps: ["ack", "say"]
+      caps: this.#o.helloCaps ?? HELLO_CAPS
     };
     const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${roomId}`;
     this.#roomId = roomId;
@@ -27380,7 +27636,14 @@ ${this.footer()}` };
       events: mergeEvents(
         // Messages and notices (never acks) wake an idle session (D3).
         { inbound: () => this.#wake() },
-        transcriptEvents(this.#o.home, roomId, this.#now, (e) => this.#o.log.error("transcript_failed", e), () => !!readState(this.#o.home, roomId)?.sessions.current),
+        transcriptEvents(
+          this.#o.home,
+          roomId,
+          this.#now,
+          (e) => this.#o.log.error("transcript_failed", e),
+          () => !!readState(this.#o.home, roomId)?.sessions.current,
+          () => this.#conn?.peerHasCollab() ?? false
+        ),
         // After the transcript has the message, so the notice's line follows it.
         { inbound: (entry) => this.#noteHeld(entry) },
         this.#o.events
@@ -27428,9 +27691,14 @@ ${this.footer()}` };
       body,
       acks: null
     });
-    const findings = scanSecrets(body);
-    if (findings.length > 0) {
-      const where = findings.map((f) => `${f.rule} at character ${f.offset}`).join(", ");
+    this.#scan([["body", body]]);
+  }
+  /** The secret scan over every labeled text (04 §7 step 3, INV-5); names rules and offsets, never the match. */
+  #scan(texts) {
+    for (const [label, text] of texts) {
+      const findings = scanSecrets(text);
+      if (findings.length === 0) continue;
+      const where = findings.map((f) => `${f.rule} at character ${f.offset}`).join(", ") + (label === "body" ? "" : ` in ${label}`);
       throw new ToolError(`Blocked: the message looks like it contains a secret (${where}). Remove it and send again; nothing was sent.`);
     }
   }
@@ -27443,7 +27711,8 @@ ${this.footer()}` };
   #recentSends(roomId) {
     const recent = readOutbox(this.#o.home, roomId).filter((e) => e.envelope.kind !== "ack").slice(-5).reverse();
     if (recent.length === 0) return "";
-    return ["Your recent messages:", ...recent.map((e) => `- ${e.envelope.id} (${e.envelope.kind}): ${e.status}`)].join("\n");
+    const kinds = new Map(readCoordSent(this.#o.home, roomId).map((c) => [c.envelope.id, c.envelope.kind]));
+    return ["Your recent messages:", ...recent.map((e) => `- ${e.envelope.id} (${kinds.get(e.envelope.id) ?? e.envelope.kind}): ${e.status}`)].join("\n");
   }
   async #waitFor(cond, ms) {
     const deadline = this.#now() + ms;
@@ -27503,7 +27772,7 @@ function createMcpServer(session) {
     "send",
     {
       title: "Send to collaborator",
-      description: `Send this message to your paired collaborator: it goes to another person's coding agent and is shown to that person. Use kind "question" when you need an answer and "answer" (with reply_to) to answer one. Never include secrets, credentials, private data or the pairwire share string; messages containing likely secrets are blocked.`,
+      description: `Send this message to your paired collaborator: it goes to another person's coding agent and is shown to that person. Use kind "question" when you need an answer and "answer" (with reply_to) to answer one. Never include secrets, credentials, private data or the pairwire share string; messages containing likely secrets are blocked. The coordination kinds (heads_up, claim, release, contract_propose, contract_response) are records shown to the peer: pairwire never locks, fetches or writes files because of them, and a claim is a request, not a lock.`,
       inputSchema: sendInputSchema.shape,
       // Open-world, so harnesses that skip prompts for closed-world tools (Codex) still ask (INV-4).
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }

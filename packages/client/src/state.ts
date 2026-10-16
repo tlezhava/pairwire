@@ -155,6 +155,38 @@ export function expiresAt(state: RoomState): number {
 
 export const isOpen = (state: RoomState) => state.status === "waiting" || state.status === "active";
 
+// --- caps.json: the peer HELLO caps behind each stored session (04 §3, 02 §6.3.2) -------
+
+const MAX_CAPS = 16;
+const MAX_CAP_CHARS = 32;
+const capsFileSchema = z.record(hex, z.array(z.string().max(MAX_CAP_CHARS)).max(MAX_CAPS));
+
+/** sid (hex) → caps. Missing or unreadable means no session has recorded caps. */
+export function readSessionCaps(home: string, roomId: string): Record<string, string[]> {
+  try {
+    const parsed = capsFileSchema.safeParse(JSON.parse(readFileSync(roomFile(home, roomId, "caps.json"), "utf8")));
+    return parsed.success ? parsed.data : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Records `caps` for session `sid` and keeps only the sessions in `keep` (current and
+ * previous). Written after the session itself is stored, so a crash in between only means
+ * "no collab1" for that session.
+ */
+export function writeSessionCaps(home: string, roomId: string, sid: string, caps: readonly string[], keep: readonly string[]): void {
+  const path = roomFile(home, roomId, "caps.json");
+  withLock(path, () => {
+    const current = readSessionCaps(home, roomId);
+    const next: Record<string, string[]> = {};
+    for (const s of keep) if (current[s]) next[s] = current[s];
+    next[sid] = [...new Set(caps.filter((c) => c.length <= MAX_CAP_CHARS))].slice(0, MAX_CAPS);
+    writeFileAtomic(path, JSON.stringify(next) + "\n");
+  });
+}
+
 /** The `active` flag exists iff some room on this machine is waiting or active (04 §6, run.sh). */
 export function refreshActiveFlag(home: string): boolean {
   const open = listRooms(home).some((id) => {

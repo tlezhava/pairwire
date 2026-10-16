@@ -2,26 +2,26 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   claimUndelivered,
-  toRenderItem
-} from "./chunk-EUE26XHT.mjs";
+  renderItemsFor
+} from "./chunk-GH2BAUU7.mjs";
 import {
   hookErrorLogger,
   readBinding,
   resolveProjectDir,
   sessionOwnsBinding
-} from "./chunk-VU23LRE3.mjs";
+} from "./chunk-L37HB6AK.mjs";
 import {
   DEFAULT_CONFIG,
   isOpen,
   loadConfig,
   readState,
   updateState
-} from "./chunk-5XLM2UC5.mjs";
+} from "./chunk-YNXENSKT.mjs";
 import "./chunk-GVGSGJLD.mjs";
 import {
   displayName,
   renderForHook
-} from "./chunk-WZNRRE4K.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/hooks.ts
@@ -76,8 +76,8 @@ function hook(event, input, o) {
   }
   if (config.delivery === "pull") return finish(out);
   if (event === "stop" && !config.autoContinue) return finish(out);
-  const rendered = claimUndelivered(o.home, roomId, { hold: config.hold }, (items) => {
-    const r = renderForHook(items.map(toRenderItem));
+  const rendered = claimUndelivered(o.home, roomId, { hold: config.hold }, (items, ledger) => {
+    const r = renderForHook(renderItemsFor(o.home, roomId, items, { hold: config.hold, now: Date.now(), ledger }));
     return { ids: r.deliveredIds, result: r };
   });
   if (rendered.text !== null) {

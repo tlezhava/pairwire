@@ -17,6 +17,7 @@ export function closeRoomLocally(home: string, roomId: string, status: "left" | 
     sessions: { current: null, previous: null },
     error: error ?? s.error,
   }));
+  removeFile(roomFile(home, roomId, "caps.json")); // the sessions it describes are gone
   removeBindingFor(home, roomId);
   return state;
 }

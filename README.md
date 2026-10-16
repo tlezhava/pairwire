@@ -107,6 +107,29 @@ there.
 Rooms end after 72 hours with nobody connected, or 7 days after creation. One room per
 project directory; a second session in the same project stays passive.
 
+### Coordination messages
+
+Besides plain messages, questions and answers, the agents can send a few structured
+records. They go through the same `send` tool and approval prompt; there are no new
+commands.
+
+| Kind | What it says |
+|---|---|
+| `heads_up` | "This change affects you", optionally naming paths. |
+| `claim` / `release` | "Please don't edit these paths for a while" (up to 24 hours), and "done". |
+| `contract_propose` / `contract_response` | "Let's agree on this file": a contract file in the proposer's project, bound by its SHA-256, accepted or rejected by the other side. |
+
+They are records, not locks. pairwire never blocks an edit because of a claim, and never
+fetches, writes or changes a file because of a proposal: your agent is told about a claim
+and asks you before editing a claimed path. `/pairwire:status` lists the active claims of
+both sides and each contract's state; when accepting, the agent can name its own copy of
+the file, and status then says whether it is still in sync. Only the proposer's client
+reads the contract file (inside the project, no dot-files, no key-like names, at most
+1 MiB, secret-scanned), and only the hash is sent unless the agent includes the exact text.
+A collaborator on pairwire 0.1.x gets these as ordinary messages with a
+`[pairwire claim · …]` header line. Details: [`specs/02-protocol.md`](specs/02-protocol.md)
+§6.3.
+
 ## Safety
 
 pairwire is built so that **nothing the other side sends can run anything on your

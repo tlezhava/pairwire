@@ -1,7 +1,7 @@
 // transcript.md (REQ-MSG-8, 04 §3).
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { encodeShareString, generateSecret, type Envelope } from "@pairwire/core";
+import { encodeShareString, generateSecret, type BasicEnvelope } from "@pairwire/core";
 import { describe, expect, it } from "vitest";
 import { roomFile } from "../src/paths.js";
 import { createRoom } from "../src/state.js";
@@ -13,7 +13,7 @@ import { until } from "./connection/harness.js";
 const ROOM = "abcdefghijklmnopqrstuvwxyz";
 const AT = Date.UTC(2026, 9, 16, 12, 1, 5);
 
-function env(over: Partial<Envelope>): Envelope {
+function env(over: Partial<BasicEnvelope>): BasicEnvelope {
   return { v: 1, id: "01JPW0000000000000000000AB", seq: 1, ts: new Date(AT).toISOString(), author: "agent", kind: "chat", reply_to: null, body: "hi", acks: null, ...over };
 }
 

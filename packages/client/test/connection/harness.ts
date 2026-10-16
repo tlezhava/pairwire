@@ -66,6 +66,8 @@ export interface ClientOptions {
   home?: string;
   /** Different keys than the room's (wrong-key tests). */
   keys?: RoomKeys;
+  /** HELLO caps; default ["ack"], a client without `collab1`. */
+  caps?: string[];
 }
 
 export function makeClient(name: string, port: number, secret: Uint8Array, opts: ClientOptions = {}): Client {
@@ -95,7 +97,7 @@ export function makeClient(name: string, port: number, secret: Uint8Array, opts:
     home,
     keys,
     url: `ws://127.0.0.1:${port}/v1/rooms/${realKeys.roomId}`,
-    hello: { v: 1, name, harness: "claude-code", client: "pairwire/test", instance, caps: ["ack"] },
+    hello: { v: 1, name, harness: "claude-code", client: "pairwire/test", instance, caps: opts.caps ?? ["ack"] },
     log: createLogger({ sink: () => {} }),
     events: handlers,
     socketFactory: recordSends,

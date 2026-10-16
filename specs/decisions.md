@@ -494,6 +494,182 @@ requirement (ADR-010). If it is revisited, `bun build --compile` (all targets fr
 about 17 ms starts) with a first-run download into `${CLAUDE_PLUGIN_DATA}` and a pinned
 checksum is the starting point.
 
+## ADR-027 Structured message kinds: heads-up, claims, contracts (M5)
+
+Status: accepted (2026-10-16, approved by the human). Proposed on branch
+`wf/m5-kinds-proposal`; reconciled with 0.1.1 (ADR-025) on acceptance, see the last list.
+Amended by ADR-028 (contract versions and names, the view's cost, the outbox shape).
+
+The M5 task asks for structured kinds `heads_up`, `claim`/`release` and
+`contract_propose`/`contract_response` "with a checked-in contract file". The spec text is
+in `02-protocol.md` §6.3, `04-client.md` (sections 3, 4 and 5, "Structured kinds" /
+"Coordination state"), `05-security.md` ("Structured kinds", residual risks 9 to 12),
+`06-agent-guide.md` §2 ("Coordination messages") and `07-testing.md` ("Structured kinds").
+
+**Finding: 0.1.0 wedges on an unknown kind.** The task assumed receivers drop unknown kinds
+harmlessly. They don't. 0.1.0's `parseEnvelope()` returns `unknown_kind`, and its receive
+path drops the frame without an ack and without advancing `peer_max_seq`. Every later frame
+from that sender is then out of order and dropped too, while the sender resends the unknown
+envelope every 15 s. The room is wedged in that direction for good. The same holds for any
+envelope 0.1.0's strict schema rejects, including an old kind with `"data": null`. 0.1.1
+fixed the receive side (ADR-025), but 0.1.0 clients exist, so a new kind must never reach a
+client that doesn't advertise it, and that shapes the whole design.
+
+Decisions:
+
+- **No new MCP tools, hooks, locks or repository files.** `send` takes five more kinds and
+  a few optional fields; `status`, `inbox` and the footer show more, read-only. pairwire
+  never writes in either repository, never reads a path the peer named, and never turns a
+  claim into a permission rule or `PreToolUse` deny (INV-2, INV-8).
+- **One new envelope field, `data`.** It is required on the five M5 kinds and absent (not
+  null) on the old ones, so an old-kind envelope from an M5 client is byte-for-byte the
+  shape 0.1.0 accepts. Each kind's `data` is a strict object; any later shape change needs a
+  new capability (`collab2`), never a looser schema. `v` stays 1.
+- **Capability gate with a fallback to chat.** HELLO caps gain `collab1`. The client
+  records the caps of the HELLO behind each stored session, and the encoding is decided when
+  a frame is encrypted: structured under a `collab1` session, otherwise a `chat` with the
+  same id and seq whose body is a header line plus the original body. The fallback body is
+  built, secret-scanned and size-checked at send time and stored in the outbox, so a resend
+  after a downgrade never builds unreviewed text. Falling back instead of refusing keeps one
+  approval and one code path for queued messages, downgrades and upgrades.
+- **Unreadable envelopes: ADR-025's skip and ack.** An envelope that decrypts but fails
+  validation (unknown kind, invalid `data`, `author: "human"` on an M5 kind, bad inline
+  content, an extra field) counts for ordering, is acked, is shown to nobody, and queues one
+  `peer_unreadable` notice per connection. M5 adds no second mechanism.
+- **Structured kinds require `author: "agent"`,** so nobody can present a claim or a
+  contract decision as typed by the collaborator.
+- **Paths are bounded.** Project-relative `RelPath` with `*`, `**` and `?` only, first
+  segment literal, no `.`/`..` segments, no `\` or `,`, no invisible characters; at most 20
+  per message. Contract paths additionally have no globs and no dot-segments (keeps out
+  `.git`, `.github`, `.claude`, `.env*`). At most 16 active claims per side count; extra
+  ones are shown with `match="over_limit"`.
+- **The view is computed, not stored.** `coordView()` in core derives claims and contracts
+  from the peer's messages in `inbox.jsonl` (held and dropped ones left out) and a new
+  append-only `coord-sent.jsonl` (our own structured sends, so they outlive outbox pruning).
+  References resolve per side, keyed by (side, id): the peer can only end its own claims and
+  answer our proposals.
+- **A fixed `match` attribute instead of silent effects.** Every claim, release, proposal
+  and response renders with a client-computed `match` (`yes`, `over_limit`,
+  `unknown_claim`, `not_their_claim`, `already_released`, `stale_version`,
+  `unknown_proposal`, `not_your_proposal`, `hash_mismatch`, `already_answered`,
+  `superseded`). Only `yes` changes the view. Mismatches are still shown, so the agent and
+  the human see a peer trying to release our claims or answer its own proposal. The
+  preamble and the guide say to trust only attributes the client adds.
+- **Clocks.** Claim expiry is local: `received_at` (or our `sent_at`) plus the TTL, capped at
+  the room's `expires_at`. The peer's `ts` is never used. The first valid response to a
+  proposal wins.
+- **Contracts have a name and a version** and the view is keyed by name, so a frontend and a
+  backend in separate repositories can agree on one contract stored at different paths.
+  `path` and `rev` record where the proposer keeps it. The client sets `version` (one more
+  than the highest it knows), and equal versions proposed at once are ordered by id, so both
+  sides compute the same live proposal.
+- **"Checked-in contract file"** means an ordinary file in the proposer's repository that
+  the agent or human writes and commits with their own tools, under harness approval.
+  pairwire hashes it on the sender's side only and runs no git command; `rev` is optional.
+  Ref-only proposals (the default) send the hash; inline proposals also send the content,
+  given in the tool input so the approval prompt shows the exact bytes, checked against the
+  file and required to be sanitizer-invariant so the receiver can verify the hash against
+  what its agent reads. Accepting may name `local_path`, the receiver's own copy: the client
+  hashes it and refuses a mismatch, so "accepted" can mean both repositories hold identical
+  bytes, and `status` can then show "in sync", "changed locally" or "missing" for paths the
+  local agent named.
+- **Contract file reads are confined.** One function reads them: `ContractPath` only,
+  realpath inside the project, regular file, at most 1 MiB, not a sensitive name, content
+  passes the secret scanner. Otherwise a peer could ask the agent to "propose `.env`" and
+  receive a hash oracle for a low-entropy secret.
+- **Held messages stay invisible.** The view leaves out held and dropped messages, and `send`
+  gives a held id the same "unknown id" error as a nonexistent one.
+- **The audit trail is git, not pairwire.** The guide suggests committing an agreed
+  contract with the message `contract: <name> v<n> (pairwire <id>)`; pairwire writes no
+  ledger file.
+
+Alternatives rejected:
+
+- *Refuse the send when the peer lacks `collab1`.* Two approvals, and queued messages and
+  downgrades would need a second path anyway.
+- *`"data": null` on old kinds.* Wedges 0.1.0 receivers (strict schema).
+- *Claims as `PreToolUse` denies.* Gives the peer permission decisions on the receiver's
+  machine (INV-2, INV-8).
+- *Keying contracts by path.* Breaks pairs whose copies live at different paths.
+- *A new tool per kind.* More approval surfaces and tool descriptions for the same pipeline.
+
+The proposal's open questions, as approved: ack-and-skip is ADR-025's (already shipped);
+fall back to chat rather than refuse; the hash is always present while git tracking and
+`rev` stay optional (pairwire runs no git); no `PostToolUse` claim notice; structured kinds
+are delivered like `chat` (no passive delivery); `release` counts toward the hop budget;
+REQ-COLLAB-1..7 are M5 requirements; the SKILL.md text is in `06` §2; the limits stand (16
+active claims per side, TTL 5 to 1,440 minutes with default 120, 20 paths, 50 contract
+names, 16 KiB inline content, 1 MiB contract files); claim expiries may differ between the
+sides by transit or buffering time; a human-only `ctl contracts` stays a later idea; and
+INV-2 and INV-8 keep their text.
+
+Changes on acceptance, reconciling the proposal with 0.1.1 (ADR-025), which shipped after it
+was written:
+
+- The proposal's own ack-and-skip (`02` §6.3.5: an "orderable" test, a quarantine line in
+  `inbox.jsonl`, a transcript line, a notice "if none is unread", and a `skip_unknown` cap)
+  is dropped. ADR-025's rule covers M5 kinds with bad data unchanged, and a cap that every
+  0.1.1 client lacks while behaving exactly that way would gate nothing.
+- The caps of each stored session live in `rooms/<room_id>/caps.json`, keyed by session id,
+  instead of new fields in `state.json`. 0.1.x reads `state.json` with a strict schema and
+  refuses a file with unknown fields, so a user who goes back to 0.1.1 in an open room would
+  be locked out of it; an extra file is ignored. A session without an entry has no
+  `collab1`, so a crash between the two writes only causes a chat fallback. The proposal's
+  `peer.caps` had no reader and is dropped.
+- `coordView()` takes the visible messages of both sides, the room's state and the time;
+  the client leaves out held and dropped messages before calling it (they were the
+  `ledger` argument).
+- Overlap is defined on literal segments (`02` §6.3.4), which is the proposal's
+  "segment-boundary prefix" made exact for patterns whose first glob is mid-segment.
+- The `send` result stays text: the proposal's fields are extra lines.
+- The transcript heading of our `contract_response` doesn't name `local_path` (the
+  connection's `sent` event carries only the envelope); `status` shows it.
+
+## ADR-028 Structured kinds: review hardening of contracts, the view and the outbox (M5)
+
+Status: accepted (2026-10-17). Amends ADR-027 before M5 ships; no released client sends
+structured kinds, so nothing on the wire changes for 0.1.x.
+
+The M5 implementation review found four gaps in ADR-027 as specified:
+
+- **An answered contract could be replaced at the same version.** Equal versions were
+  ordered by envelope id, and the peer picks its own ULID. A peer that had accepted our v1
+  could send its own v1 with id `7ZZZ…`; it became the live proposal, ours turned
+  `superseded`, and "v1" named different bytes, which is the "you already accepted v3"
+  confusion the view exists to prevent. Decision: the id tie-break applies only while the
+  live proposal is `pending` (the simultaneous-proposal case it exists for). Once it is
+  answered, a proposal of the same or a lower version gets `stale_version` (`02` §6.3.4).
+- **Names and versions could be squatted.** The 50-name limit was shared, so a peer's 50
+  names made every later proposal of ours `over_limit` (and `send` didn't check, so our
+  agent was told "Sent" for a proposal its own view left out). A peer could also propose any
+  name at version 1,000,000, after which our client refused to propose under it. Decision:
+  a name counts against each side that has proposed under it, a new name is `over_limit`
+  when its sender already has 25 (so 50 in all, as ADR-027 approved), and `send` refuses a
+  new name past our own 25. A proposal more than one version above the highest seen gets
+  the new `match` value `version_gap`, and doesn't move the highest version. Counting a name
+  for every side that proposed under it, rather than for the side that first made it live,
+  keeps both views equal when both sides introduce a name at once. The cost: if a human drops
+  (hold mode) a proposal, the sender's next version shows as `version_gap` on that side; a
+  new name gets past it.
+- **The view was quadratic in the number of claims.** Each claim filtered every claim seen
+  so far, and the view is rebuilt on every hook, tool result and status. 10,000 claims took
+  about 300 ms, and the relay allows a peer far more over a room's 7 days. Decision:
+  `coordView()` keeps a working set of at most 16 counted, possibly active claims per side,
+  pruned before each check (messages come in time order), so it is linear; a core test
+  holds 50,000 claims to a fixed time budget.
+- **Going back to 0.1.1 could stall a room.** ADR-027 stored the structured envelope and a
+  new `fallback_body` key in `outbox.jsonl`. 0.1.1's strict schemas skip such lines and its
+  next rewrite of the file drops them, while `my_seq` already counts their seqs, so the peer
+  would drop every later message from that user as out of order (`02` §6.1). Decision: the
+  outbox keeps the 0.1.x shape and holds the fallback chat envelope; the structured envelope
+  stays only in `coord-sent.jsonl`, now written by the connection's `send` just before the
+  outbox append, and the pump sends it in place of the chat under a `collab1` session. A
+  downgraded client resends the chat with the same id and seq. Reading the file with a copy
+  of 0.1.1's schemas is a client test.
+
+Also clarified: REQ-COLLAB-6's "send anything" and the INV-6 analysis in `05` exclude the
+protocol's ack, which every accepted message gets (`02` §6.1).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

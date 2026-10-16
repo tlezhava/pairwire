@@ -6,7 +6,8 @@ import { readBinding, sessionOwnsBinding } from "./binding.js";
 import { DEFAULT_CONFIG, loadConfig, type Config } from "./config.js";
 import { hookErrorLogger } from "./log.js";
 import { resolveProjectDir } from "./project.js";
-import { claimUndelivered, toRenderItem } from "./room-files.js";
+import { renderItemsFor } from "./coord.js";
+import { claimUndelivered } from "./room-files.js";
 import { isOpen, readState, updateState, type RoomState } from "./state.js";
 
 export const HOOK_EVENTS = ["session-start", "user-prompt-submit", "post-tool-use", "stop"] as const;
@@ -89,8 +90,8 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
   if (config.delivery === "pull") return finish(out);
   if (event === "stop" && !config.autoContinue) return finish(out);
 
-  const rendered = claimUndelivered(o.home, roomId, { hold: config.hold }, (items) => {
-    const r = renderForHook(items.map(toRenderItem));
+  const rendered = claimUndelivered(o.home, roomId, { hold: config.hold }, (items, ledger) => {
+    const r = renderForHook(renderItemsFor(o.home, roomId, items, { hold: config.hold, now: Date.now(), ledger }));
     return { ids: r.deliveredIds, result: r };
   });
   if (rendered.text !== null) {

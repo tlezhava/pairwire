@@ -110,6 +110,8 @@ ciphertext    = XChaCha20-Poly1305(key = hello_key, nonce, aad).seal(hello_paylo
 }
 ```
 
+M5 clients add `collab1` (§6.3.2).
+
 `harness` is informational (REQ-X-1). A receiver reads any value outside the list as
 `"other"` instead of rejecting the HELLO, so a newer client's harness never breaks the
 handshake. A HELLO whose decrypted payload fails the schema in any other way (`v` != 1,
@@ -251,8 +253,9 @@ reporting both sizes); a receiver drops and counts an envelope that breaks eithe
 | `ack` | Delivery receipt (REQ-MSG-6) | no — updates delivery status only |
 | `bye` | Sent just before `leave`, optional `body` | yes, as "peer ended the room" |
 
-Reserved for M5 (do not implement before then): `heads_up`, `claim`, `release`,
-`contract_propose`, `contract_response`.
+M5 adds `heads_up`, `claim`, `release`, `contract_propose` and `contract_response`. Their
+shapes, receiver rules and the capability gate that keeps them away from older clients are
+in §6.3.
 
 ### 6.1 Receiver rules
 
@@ -295,6 +298,234 @@ For non-ack envelopes:
   a resend burst stays below the relay's limit (`03-relay.md`). On `error rate_limited`,
   wait `retry_after`, then resend unacked envelopes.
 - Acks themselves are not kept or resent; the next ack supersedes them.
+- A structured kind is encrypted structured or as a fallback `chat`, depending on the
+  peer's caps in the session it is encrypted under (§6.3.6).
+
+### 6.3 Structured kinds (M5)
+
+ADR-027. Nothing in this subsection is in 0.1.0 or 0.1.1.
+
+M5 adds five kinds for coordination between the two agents: `heads_up`, `claim`, `release`,
+`contract_propose` and `contract_response`. They are labels and records. Receiving one never
+writes a file, locks anything or changes a permission on the receiver (INV-2, INV-8).
+
+#### 6.3.1 Why a capability gate is mandatory
+
+A 0.1.0 receiver does **not** safely ignore an unknown kind. `parseEnvelope()` rejects it as
+`unknown_kind`, and the receive path drops the frame without an ack and without advancing
+`peer_max_seq` (§6.1). Every later frame then counts as out of order and is dropped too,
+while the sender resends the unknown envelope every 15 s. The room is wedged in that
+direction for good. The same happens to any envelope that fails 0.1.0's strict schema,
+including an old kind carrying an extra `data` key (even `"data": null`). Therefore:
+
+- A structured kind goes on the wire only under a session whose peer HELLO advertised
+  `collab1` (§6.3.2). Otherwise it is encoded as a `chat` (§6.3.6).
+- `data` is **absent** (not null) on the old kinds, so an old-kind envelope from an M5
+  client has exactly the shape 0.1.0 accepts.
+- Receivers from 0.1.1 on skip and ack an envelope they can't read (§6.1, ADR-025), so a
+  future kind cannot wedge them; an M5 kind with invalid data takes the same path (§6.3.5).
+
+#### 6.3.2 Capabilities
+
+An M5 client sends HELLO `caps: ["ack", "say", "collab1"]`. 0.1.0's HELLO schema accepts
+unknown flags, so the handshake itself is unchanged.
+
+- `collab1`: the client understands the five kinds and the `data` shapes in §6.3.3. Any
+  later change to a `data` shape needs a new flag (`collab2`), never a looser schema.
+
+The client records, for each stored session, the caps of the peer HELLO that set it up (at
+most 16 flags of at most 32 characters are kept; `04` §3, `caps.json`). A session without
+recorded caps (stored before M5, or a crash between storing the session and its caps) has
+no `collab1`. The encoding decision (§6.3.6) reads the caps of the session a frame is
+encrypted under, never a value that could change in the middle of a resend.
+
+#### 6.3.3 Envelope changes
+
+- `v` stays 1. The nine fields of §6 are unchanged and always present.
+- New field `data`: **required** on the five M5 kinds and **forbidden** (key absent) on
+  `chat`, `question`, `answer`, `ack` and `bye`.
+- `data` is a strict object per kind: unknown keys are rejected (INV-8).
+- `author` must be `"agent"` on every M5 kind. `/pairwire:say` sends only `chat`, so a
+  structured envelope marked `"human"` is invalid, and nobody can present a claim or a
+  contract decision as typed by the collaborator.
+- `acks` is null and `seq` follows §6 (at least 1, ordered, acked, resent).
+- Size limits are unchanged: `body` at most 24 KiB of UTF-8, the serialized envelope
+  (now including `data`) at most 28 KiB.
+
+Shared value types, in `packages/core` next to `envelopeSchema`:
+
+- `RelPath`: 1..200 characters (code points). Project-relative, `/`-separated, no empty
+  segment. It may use the glob tokens `*` (within one segment), `**` (any number of
+  segments; only as a whole segment) and `?` (one character); every other character is
+  literal. Rejected: a leading `/` or `~`; a drive prefix (`^[A-Za-z]:`); a `.` or `..`
+  segment; a trailing `/`; `\`; `,`; C0 and C1 controls; DEL; any Cf character; the tag
+  block U+E0000–U+E007F; lone surrogates; leading or trailing whitespace. The **first segment must be literal** (no `*` or `?`), so a single path can't
+  cover the whole tree (`**`, `*/src`).
+- `ContractPath`: a `RelPath` with no glob tokens and no segment that starts with `.`
+  (which keeps out `.git`, `.github`, `.claude`, `.env*` and similar).
+- `Paths`: an array of distinct `RelPath`s, at most 20.
+- `ContractName`: `^[a-z0-9][a-z0-9._-]{0,63}$`.
+- `Sha256`: `^[0-9a-f]{64}$`. `Rev`: `^[0-9a-f]{7,40}$` or null.
+
+| kind | `data` | `reply_to` | `body` | Shown to agent? |
+|---|---|---|---|---|
+| `heads_up` | `{"paths": Paths}` (0..20 items) | null | required | yes, informational |
+| `claim` | `{"paths": Paths, "ttl_min": int 5..1440}` (1..20 paths) | null | required (why) | yes; listed in `status` while active |
+| `release` | `{}` | required: the sender's own claim id | null or non-empty | yes; ends that claim |
+| `contract_propose` | `{"name": ContractName, "version": int 1..1000000, "path": ContractPath, "sha256": Sha256, "rev": Rev, "content": string or null}` | null, or the id of the proposal it counters (threading only) | required (summary) | yes; listed in `status` |
+| `contract_response` | `{"decision": "accept" or "reject", "name": ContractName, "version": int, "sha256": Sha256}` | required: the proposal id | required for reject; null or non-empty for accept | yes; updates the contract view |
+
+Contracts:
+
+- A contract is identified by `name`; `version` orders the proposals for one name. `path`
+  and `rev` say where the **proposer** keeps the file (a file in their repository, normally
+  committed). The receiver's copy may live at another path in another repository, so the
+  view is keyed by `name`, never by path.
+- **Ref-only** (`content: null`, the default): the envelope carries the hash only. The
+  receiving side checks it when its user has pulled the file (`04` §4, Structured kinds,
+  `local_path`).
+- **Inline** (`content` non-null): at most 16 KiB of UTF-8. `sha256` must equal
+  SHA-256(utf8(`content`)), and `content` must be unchanged by the sanitizer's text step
+  (`04` §5, steps 1 to 3: NFC, no Cf characters or controls other than `\n` and `\t`, no
+  tag look-alikes), so the bytes the receiving agent reads are exactly the hashed bytes. A
+  receiver checks both; failing either makes the envelope unreadable (§6.3.5). Its UTF-8
+  is counted in the 28 KiB envelope limit like every other field.
+
+Examples (common fields shortened):
+
+```jsonc
+{"v":1,"id":"01JB0000000000000000000001","seq":18,"ts":"2026-10-16T12:00:00.000Z","author":"agent",
+ "kind":"heads_up","reply_to":null,"acks":null,
+ "body":"Renaming OrderStatus.PENDING to OPEN in packages/types; on main within the hour.",
+ "data":{"paths":["packages/types/src/order.ts"]}}
+
+{"kind":"claim","reply_to":null,"acks":null,
+ "body":"Refactoring order validation; please don't edit these until I release them.",
+ "data":{"paths":["src/orders/**","src/api/orders.ts"],"ttl_min":120}}
+
+{"kind":"release","reply_to":"01JB0000000000000000000002","body":null,"acks":null,"data":{}}
+
+{"kind":"contract_propose","reply_to":null,"acks":null,
+ "body":"Orders API v2: POST /orders requires idempotency_key (UUID v4); 409 on reuse with a different body.",
+ "data":{"name":"orders-api","version":2,"path":"contracts/orders-api.yaml",
+         "sha256":"<64 hex>","rev":"a1b2c3d4e5f6","content":null}}
+
+{"kind":"contract_response","reply_to":"01JC0000000000000000000003","acks":null,
+ "body":"Agreed. Checkout sends the key starting Thursday.",
+ "data":{"decision":"accept","name":"orders-api","version":2,"sha256":"<same 64 hex>"}}
+```
+
+#### 6.3.4 Receiver rules for structured kinds
+
+- A schema-valid M5 envelope follows §6.1 unchanged: accepted in order, acked, appended to
+  `inbox.jsonl`. It is never treated as a command. Its only effect besides being shown is on
+  the coordination view, which the client computes from its own files (`04` §3,
+  Coordination state).
+- References resolve **per side**, keyed by (side, id). A peer `release` resolves only
+  against the peer's own claims, a peer `contract_response` only against our own proposals,
+  and the same rule applies the other way. Held and dropped messages (hold mode, `04` §5)
+  don't exist for the view.
+- A semantic mismatch never drops or skips the envelope. The message is still shown,
+  with a `match` attribute that only the client computes (`04` §5, Structured kinds), and it
+  changes the view only when `match` is `yes`. The values are a fixed set:
+
+  | kind | `match` values |
+  |---|---|
+  | `claim` | `yes`; `over_limit` (the sender already has 16 active claims: shown, not counted) |
+  | `release` | `yes`; `unknown_claim`; `not_their_claim`; `already_released` |
+  | `contract_propose` | `yes`; `version_gap` (`version` is more than one above the highest version of the name seen so far); `stale_version` (a higher version of the name is live, or the same version is live and either answered or has a higher id); `over_limit` (a new name, and the sender has already proposed under 25 names) |
+  | `contract_response` | `yes`; `unknown_proposal`; `not_your_proposal`; `hash_mismatch` (`name`, `version` or `sha256` differ from the proposal's); `already_answered`; `superseded` |
+
+- **Claim expiry is local.** A peer claim ends at `min(received_at + ttl_min, room
+  expires_at)`; our own at `min(sent_at + ttl_min, room expires_at)`. The envelope's `ts` is
+  never used, so a future timestamp cannot stretch a claim. The two sides' views may differ
+  by the transit time (or by how long the relay buffered the claim).
+- **Live proposal.** For each name, the live proposal is the one with the highest
+  `version`. Equal versions are ordered by envelope id (the higher ULID wins) only while the
+  live one is still `pending`, so both sides compute the same live proposal when both
+  propose at once. Once the live proposal is answered, a proposal of the same version gets
+  `stale_version`: an answered version is never replaced, whatever id the peer picks. Older
+  ones are `superseded`.
+- **Versions.** A proposal whose `version` is more than one above the highest version of
+  its name seen so far (0 for a new name, so a new name starts at 1) gets `version_gap`
+  and doesn't raise that highest version. Two proposals made at once still fit (both are
+  one above), while a peer can't push a name to the version limit to stop the other side
+  from proposing under it. A proposal following versions the receiver dropped in hold mode
+  also gets `version_gap` there; the sender can use a new name.
+- **Names.** A name counts against each side that has proposed under it (`over_limit` and
+  `version_gap` proposals left out). A proposal that would make a new name live gets
+  `over_limit` when its sender already has 25 names, so each side can always introduce 25
+  names whatever the other side sent, and the view holds at most 50.
+- **Answers.** A live proposal is `pending` until the first `contract_response` from the
+  other side with `match="yes"`, which makes it `accepted` or `rejected`. Later responses to
+  it get `already_answered`.
+- Ending the room (leave, `bye`, expiry) ends every claim. Contracts stay readable in the
+  transcript.
+- **Overlap** (warnings and the `overlaps_yours` attribute only; never a block). The
+  *literal segments* of a path are its `/`-separated segments before the first one that
+  contains `*` or `?` (all of them for a path without glob tokens). Two paths overlap when
+  the literal segments of one are a prefix of (or equal to) those of the other. So
+  `src/orders/**` overlaps `src/orders/a.ts` and `src/*.ts` overlaps `src/x.js`, while
+  `src/a.ts` doesn't overlap `src/a.tsx` or `lib/*.ts`. This over-reports on purpose.
+
+#### 6.3.5 Unreadable envelopes
+
+An M5 envelope that decrypts but fails validation (invalid or missing `data`, `data` on an
+old kind, `author: "human"`, inline content that fails §6.3.3, an extra field, a bad
+`body`, a size limit) is handled exactly like an unknown kind under §6.1 (ADR-025): it is
+skipped, never shown or stored, still counts for ordering when it carries a usable `seq`
+(advanced when next in order, acked, duplicates acked), and the receiver queues the local
+notice `peer_unreadable` once per connection. Nothing else changes: no quarantine record,
+no new capability. The cost is that the sender sees "delivered" for a message the receiver
+could not read; the receiving human and agent learn it from the notice (`05`, residual
+risk 11).
+
+#### 6.3.6 Sender encoding
+
+The encoding is decided each time the frame is encrypted, from the caps stored with the
+session it is encrypted under (§6.3.2):
+
+- `collab1` present: the structured envelope.
+- `collab1` absent, or no stored caps: the **fallback envelope**. Same `v`, `id`, `seq`,
+  `ts`, `author` and `reply_to`; `kind: "chat"`; `acks: null`; no `data`; `body` = the
+  fallback body.
+
+The fallback body is built once, at send time, by a pure function in core. The outbox
+entry holds the fallback envelope, in exactly the shape 0.1.x reads, and the structured
+envelope is kept in `coord-sent.jsonl` under the same id (`04` §3). It is secret-scanned and size-checked then,
+together with the structured form, and both must meet the §6 limits. A resend never builds
+new text. It is a header line, a blank line, then the body (or `(no message)`); for an
+inline contract the content follows after a line `--- contract content (sha256 <hex>) ---`.
+
+```
+[pairwire heads-up · paths: packages/types/src/order.ts]
+[pairwire claim · paths: src/orders/**, src/api/orders.ts · for 120 min, until 2026-10-16T14:00Z]
+[pairwire release of claim 01JB0000000000000000000002]
+[pairwire contract_propose · orders-api v2 · contracts/orders-api.yaml @ a1b2c3d · sha256 <64 hex>]
+[pairwire contract_response · accept · orders-api v2 · re 01JC0000000000000000000003 · sha256 <64 hex>]
+```
+
+A `heads_up` without paths has the header `[pairwire heads-up]`. A claim's `until` is the
+sender's own expiry for it (§6.3.4) in UTC to the minute; a contract's `@ <rev>` shows the
+first 7 characters of `rev` and is left out when `rev` is null. Under a `collab1` session
+the client sends the structured envelope from `coord-sent.jsonl` in place of the outbox's
+fallback, so a resend after the peer upgrades goes out structured and a resend after a
+downgrade goes out as chat. Id and seq are the same either way, so ordering and acks are
+unaffected. A user who goes back to 0.1.1 in an open room keeps an outbox 0.1.1 can read,
+and it resends every unacked message as the fallback chat (ADR-028).
+
+| Sender → receiver | Old kinds | M5 kinds |
+|---|---|---|
+| M5 → M5 | unchanged | structured (both advertise `collab1`) |
+| M5 → 0.1.0 | unchanged (`data` absent) | fallback `chat`, same id and seq: delivered and acked, no wedge |
+| 0.1.0 → M5 | unchanged | n/a |
+| M5, no session yet | queued as today | queued structured; encoding decided at first encryption |
+| peer downgrades between sessions | unchanged | unacked M5 envelopes are resent as chat under the new session; frames the relay already buffered under the old session arrive structured and are skipped (§6.3.5) |
+| peer upgrades | unchanged | the next resend goes out structured |
+
+A line that looks like a header inside a peer's ordinary `chat` is only text: it has no
+effect on the view, and the agent guide tells agents to trust only the attributes their own
+client adds.
 
 ## 7. Test vectors
 

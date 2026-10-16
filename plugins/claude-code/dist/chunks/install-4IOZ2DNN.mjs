@@ -5,7 +5,7 @@ import {
 } from "./chunk-HDMYU3UC.mjs";
 import {
   HARNESSES
-} from "./chunk-WZNRRE4K.mjs";
+} from "./chunk-F4RFDSWT.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/install.ts

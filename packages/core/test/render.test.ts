@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Envelope } from "../src/envelope.js";
+import type { BasicEnvelope } from "../src/envelope.js";
 import {
   acceptHint,
   HOOK_CONTEXT_CAP,
@@ -20,7 +20,7 @@ import {
 let n = 0;
 const nextId = () => `01JABCDEFGHJKMNPQRSTV${String(n++).padStart(5, "0")}`;
 
-function peer(body: string | null, over: Partial<Envelope> = {}, from = "Nika"): RenderItem {
+function peer(body: string | null, over: Partial<BasicEnvelope> = {}, from = "Nika"): RenderItem {
   const id = over.id ?? nextId();
   return {
     source: "peer",
