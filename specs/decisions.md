@@ -986,3 +986,9 @@ Answer:
 
 Evidence: `spikes/s10/out/events.jsonl` (local, gitignored; the code is not recorded
 elsewhere) and the outputs pasted by the human.
+
+Decision: the short authentication string proposal is buildable as designed, with two
+changes from S10 (the grant ignores `<task-notification>` prompts and must match the prompt's
+start; a terminal counts as presence only as a speed bump, stated as residual risk). The
+human deferred it on 2026-10-18 until after the external security review: it defends only
+against an attacker holding both the share string and the relay, and it is a large change.
