@@ -21,8 +21,90 @@ import {
   randomBytes
 } from "./chunk-KARZWXGF.mjs";
 
+// packages/client/src/ctl-key.ts
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readSync, renameSync, writeSync } from "node:fs";
+var CtlKeyError = class extends Error {
+  constructor(problem) {
+    super(
+      problem === "corrupt" ? "The control channel key is corrupt." : problem === "not_private" ? "The control channel key is not private." : "The control channel key can't be read."
+    );
+    this.problem = problem;
+  }
+  problem;
+  name = "CtlKeyError";
+};
+function ensureCtlKey(home, roomId) {
+  const path = roomFile(home, roomId, "ctl.key");
+  let replace = false;
+  try {
+    const st = lstatSync(path);
+    if (!st.isFile() || st.size === CTL_KEY_BYTES) return;
+    replace = true;
+  } catch (e) {
+    if (errorCode(e) !== "ENOENT") throw e;
+  }
+  const tmp = `${path}.${process.pid}.${bytesToHex(randomBytes(8))}.tmp`;
+  try {
+    const fd = openSync(tmp, "wx", PRIVATE_FILE_MODE);
+    try {
+      const key = randomBytes(CTL_KEY_BYTES);
+      let off = 0;
+      while (off < key.length) off += writeSync(fd, key, off, key.length - off);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    if (replace) renameSync(tmp, path);
+    else {
+      try {
+        linkSync(tmp, path);
+      } catch (e) {
+        if (errorCode(e) !== "EEXIST") throw e;
+      }
+    }
+  } finally {
+    removeFile(tmp);
+  }
+}
+var posix = process.platform !== "win32";
+function readCtlKey(home, roomId) {
+  let fd;
+  try {
+    fd = openSync(roomFile(home, roomId, "ctl.key"), posix ? constants.O_RDONLY | constants.O_NOFOLLOW : "r");
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return null;
+    throw new CtlKeyError("unreadable");
+  }
+  try {
+    let st;
+    try {
+      st = fstatSync(fd);
+    } catch {
+      throw new CtlKeyError("unreadable");
+    }
+    if (!st.isFile()) throw new CtlKeyError("unreadable");
+    if (posix && (st.uid !== process.getuid?.() || (st.mode & 63) !== 0)) throw new CtlKeyError("not_private");
+    if (st.size !== CTL_KEY_BYTES) throw new CtlKeyError("corrupt");
+    const key = new Uint8Array(CTL_KEY_BYTES + 1);
+    let n = 0;
+    try {
+      while (n < key.length) {
+        const r = readSync(fd, key, n, key.length - n, null);
+        if (r === 0) break;
+        n += r;
+      }
+    } catch {
+      throw new CtlKeyError("unreadable");
+    }
+    if (n !== CTL_KEY_BYTES) throw new CtlKeyError("corrupt");
+    return key.slice(0, CTL_KEY_BYTES);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 // packages/client/src/ctl-server.ts
-import { chmodSync, lstatSync } from "node:fs";
+import { chmodSync, lstatSync as lstatSync2 } from "node:fs";
 import { createServer } from "node:net";
 import { dirname } from "node:path";
 var CTL_MAX_REQUEST = 64 * 1024;
@@ -78,7 +160,7 @@ async function listenFresh(path, next, listen, retries = CTL_LISTEN_RETRIES, onR
 }
 function preparePrivateDir(dir) {
   ensurePrivateDir(dir);
-  const st = lstatSync(dir);
+  const st = lstatSync2(dir);
   const uid = process.getuid?.();
   if (!st.isDirectory() || uid !== void 0 && st.uid !== uid || (st.mode & 63) !== 0) {
     throw new Error(`The control socket directory ${dir} is not private to you.`);
@@ -157,47 +239,8 @@ async function listenCtl(path, handle, log, wait, proof) {
   };
 }
 
-// packages/client/src/ctl-key.ts
-import { closeSync, fsyncSync, openSync, readFileSync, writeSync } from "node:fs";
-var CtlKeyError = class extends Error {
-  name = "CtlKeyError";
-};
-function ensureCtlKey(home, roomId) {
-  const path = roomFile(home, roomId, "ctl.key");
-  let fd;
-  try {
-    fd = openSync(path, "wx", PRIVATE_FILE_MODE);
-  } catch (e) {
-    if (errorCode(e) === "EEXIST") return;
-    throw e;
-  }
-  try {
-    try {
-      const key = randomBytes(CTL_KEY_BYTES);
-      let off = 0;
-      while (off < key.length) off += writeSync(fd, key, off, key.length - off);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-  } catch (e) {
-    removeFile(path);
-    throw e;
-  }
-}
-function readCtlKey(home, roomId) {
-  let bytes;
-  try {
-    bytes = readFileSync(roomFile(home, roomId, "ctl.key"));
-  } catch (e) {
-    if (errorCode(e) === "ENOENT") return null;
-    throw new CtlKeyError("The control channel key can't be read.");
-  }
-  if (bytes.length !== CTL_KEY_BYTES) throw new CtlKeyError("The control channel key is corrupt.");
-  return new Uint8Array(bytes);
-}
-
 export {
+  CtlKeyError,
   ensureCtlKey,
   readCtlKey,
   CTL_MAX_REQUEST,

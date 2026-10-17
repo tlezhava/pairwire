@@ -20,10 +20,10 @@ import {
   CtlUnreachableError,
   ctlCall,
   ctlTarget
-} from "./chunk-N77BPDRS.mjs";
+} from "./chunk-75XVYTUS.mjs";
 import {
   CTL_MAX_REQUEST
-} from "./chunk-HDC7T5ZK.mjs";
+} from "./chunk-MTXTLJYG.mjs";
 import {
   holdMode,
   isOpen,
@@ -148,6 +148,10 @@ async function runCtl(args, io) {
       } catch (e) {
         if (e instanceof CtlProofError) {
           print(CTL_PROOF_FAILED_TEXT);
+          return 0;
+        }
+        if (!(e instanceof CtlUnreachableError)) {
+          print("pairwire: your agent session did not answer, so the hop budget was not reset; try again.");
           return 0;
         }
         if (isOpen(state)) updateState(home, roomId, (s) => ({ ...s, hop_count: 0 }));

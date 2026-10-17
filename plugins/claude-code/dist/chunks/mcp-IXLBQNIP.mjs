@@ -28,7 +28,7 @@ import {
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-HDC7T5ZK.mjs";
+} from "./chunk-MTXTLJYG.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -27659,6 +27659,8 @@ ${this.footer()}` };
     });
     this.#conn.start();
     this.#closeCtl();
+    const after = readState(this.#o.home, roomId);
+    if (!after || !isOpen(after)) return;
     this.#ctl = this.#listenCtl(roomId, state.ctl_path, keys.roomIdBytes).catch((e) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;

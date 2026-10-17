@@ -9,8 +9,11 @@ import {
   CtlUnreachableError,
   ctlCall,
   ctlTarget
-} from "./chunk-N77BPDRS.mjs";
-import "./chunk-HDC7T5ZK.mjs";
+} from "./chunk-75XVYTUS.mjs";
+import {
+  CtlKeyError,
+  readCtlKey
+} from "./chunk-MTXTLJYG.mjs";
 import {
   bindingsForRoom,
   expiresAt,
@@ -142,8 +145,16 @@ var PROOF_REASONS = {
   key_unreadable: "the room's ctl.key can't be read"
 };
 async function checkCtlProof(home, roomId, ctlPath) {
-  if (!existsSync(roomFile(home, roomId, "ctl.key"))) return null;
+  const keyPath = roomFile(home, roomId, "ctl.key");
+  if (!existsSync(keyPath)) return null;
   if (!bindingsForRoom(home, roomId).some((b) => isProcessAlive(b.owner_pid))) return null;
+  try {
+    readCtlKey(home, roomId);
+  } catch (e) {
+    const problem = e instanceof CtlKeyError ? e.problem : "unreadable";
+    const what = problem === "corrupt" ? "is corrupt" : problem === "not_private" ? "is not private (it must be a file of yours with mode 0600)" : "can't be read";
+    return { level: "FAIL", text: `its ctl.key ${what}. Stop your agent session, delete ${keyPath}, and start the session again; it creates a new one` };
+  }
   try {
     await ctlCall(ctlTarget(home, roomId, ctlPath), null, { log: false });
     return { level: "ok", text: "the session on its control channel proves it is yours" };
@@ -152,7 +163,7 @@ async function checkCtlProof(home, roomId, ctlPath) {
     const reason = e instanceof CtlProofError ? e.reason : "malformed";
     let text = `the program on its control channel could not prove it is your pairwire session: ${PROOF_REASONS[reason]}`;
     if (reason === "refused") {
-      text += `. It answers like pairwire 0.1.x, which has no proof. If you went back to 0.1.x, delete ${roomFile(home, roomId, "ctl.key")} so its commands work again; otherwise restart your agent session`;
+      text += `. It answers like pairwire 0.1.x, which has no proof, but any program can answer this way. If you went back to 0.1.x, delete ${keyPath} so its commands work again, but only if you are sure your agent session runs pairwire 0.1.x: deleting it turns the proof off. Otherwise restart your agent session, and if this stays, another program may be listening in its place`;
     } else text += "; restart your agent session, and if this stays, another program may be listening in its place";
     return { level: "FAIL", text };
   }
