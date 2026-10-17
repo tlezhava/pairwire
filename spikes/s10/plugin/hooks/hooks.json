@@ -1,0 +1,6 @@
+{
+  "description": "pairwire spike S10",
+  "hooks": {
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/record.mjs", "ups"], "timeout": 10 }] }]
+  }
+}
