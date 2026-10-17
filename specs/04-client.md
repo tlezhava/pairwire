@@ -48,7 +48,10 @@ fails:
    owner pid is alive, a `hello` to `ctl_path` must come back with a valid proof (section 8,
    "Control-channel server proof"); otherwise `FAIL` with the reason, and when the listener
    answers like a 0.1.x server, the advice that deleting `ctl.key` is the fix after going
-   back to 0.1.x.
+   back to 0.1.x, with the warning that any program can answer that way and that the user
+   should delete it only when sure the session runs 0.1.x. When the key itself can't be
+   used (not exactly 32 bytes, unreadable, or on POSIX not private), `FAIL` with that
+   instead, and the advice to stop the agent session, delete `ctl.key` and start it again.
 
 It never prints secrets, tokens or share strings.
 
@@ -134,8 +137,11 @@ it cannot tell whether the human asked for it, so it fails closed.
   are 0700 (INV-9).
 - `ctl.key` (ADR-029) is created by the owning MCP server, with an exclusive create, when it
   creates or opens the room and before it listens on `ctl_path`, unless the file exists. It
-  is never rotated while the room lives; it is deleted with `secret` (leave, end, expiry)
-  and by `purge`. Rooms opened only by 0.1.x servers have none, and their clients talk
+  is written and fsynced under a temporary name and published with a hard link, so no
+  reader sees part of a key. It is never rotated while the room lives, except that a
+  regular file of the wrong length (no client accepts it) is replaced, with a rename. It is
+  deleted with `secret` (leave, end, expiry) and by `purge`; a room that is past its expiry
+  when a server opens it is ended before any key is created, and gets no control channel. Rooms opened only by 0.1.x servers have none, and their clients talk
   without the proof (section 8, "Control-channel server proof").
 - `project_hash` = first 16 hex chars of `SHA-256(realpath(project_dir))`.
 - **Project directory** comes from one shared function, `resolveProjectDir()`, used by the
@@ -924,6 +930,9 @@ command. `ctl continue` resets `hop_count` in `state.json` itself when no server
 running (nothing accepts the connection); `ctl say` needs the server and otherwise says
 that no session is running. A listener that accepts the connection but fails the proof is
 not "no server": both commands then print the proof failure message and change nothing.
+Nor is a server that accepts (and proves itself) but gives no reply: it may still hold
+`hop_count` in memory, so `ctl continue` prints "pairwire: your agent session did not
+answer, so the hop budget was not reset; try again." and changes nothing.
 `ctl say` removes exactly one trailing newline (the heredoc's) and refuses empty text.
 Expected failures are printed as `pairwire: …` on stdout with exit code 0, so the human
 sees them in the prompt.
@@ -972,8 +981,12 @@ room directory.
 **Key.** `rooms/<room_id>/ctl.key`, 32 random bytes, mode 0600 in the room's 0700 directory
 (section 3). The owning MCP server creates it, with an exclusive create, when it creates or
 opens the room and before it listens on `ctl_path`, unless the file exists; if it cannot,
-it does not listen and logs `ctl_listen_failed`. It is not rotated while the room lives; it
-is deleted with `secret`. It is random rather than derived from the share secret because
+it does not listen and logs `ctl_listen_failed`. The key is written and fsynced under a
+temporary name in the room directory and published with a hard link, which fails rather
+than replace a key that exists, so a crash never leaves part of a key under `ctl.key`. It
+is not rotated while the room lives, but a regular file of the wrong length (left by a
+crash of an earlier build; every client refuses it) is replaced with a rename, which never
+leaves `ctl.key` missing. It is deleted with `secret`. It is random rather than derived from the share secret because
 the peer knows the share secret, and on a shared machine the peer could then answer as our
 server.
 
@@ -1015,7 +1028,10 @@ server → client   the reply or waiter frames, unchanged
 waiter's `wait_cancel` keeps its 50 ms connect timeout and gives the whole exchange 200 ms),
 when the line is malformed or has `v` other than 1, when `mac` is wrong, when the connection
 closes, when the server answers `{"ok":false,…}` (an old server's "bad control request."),
-or when `ctl.key` exists but is not exactly 32 readable bytes. The client then closes the
+or when `ctl.key` exists but is not exactly 32 readable bytes, or, on POSIX, is a symlink
+or not a regular file owned by the user with no group or world permission bits. The
+client checks the key's privacy itself, because the hooks (the D3 waiter, `wait_cancel`)
+don't run INV-9's check and INV-10 rests on it. The client then closes the
 connection, having sent at most the `hello`, and:
 
 - `ctl say` and `ctl continue` print "pairwire: the program answering on this room's
@@ -1045,7 +1061,10 @@ connection, having sent at most the `hello`, and:
   clients send `hello`, get "bad control request." and fail closed with the message above;
   `doctor` explains that `ctl.key` exists while the owning session doesn't prove itself, and
   that deleting it is the fix after going back to 0.1.x. Only the user can delete the file,
-  so an attacker cannot force the old behavior that way.
+  so an attacker cannot force the old behavior that way. A squatter can answer `hello` the
+  way 0.1.x does, though, so `doctor` gives that advice only with the warning that any
+  program can answer this way and that the user should delete the key only when sure the
+  session runs 0.1.x.
 
 **POSIX and Windows.**
 

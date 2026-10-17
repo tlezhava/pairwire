@@ -194,17 +194,23 @@ ADR-029, INV-10.
   fixed message; `ctl continue` prints it and does not reset `hop_count` in `state.json`;
   the waiter exits 0 with no output even when the fake sends a `wake`; `wait_cancel` gives
   up; each failure logs `ctl_proof_failed` to `hook-errors.log`. A `ctl.key` of the wrong
-  length fails the same way.
+  length fails the same way, and on POSIX so does a `ctl.key` that is group- or
+  world-readable or a symlink, in the waiter too (which doesn't run INV-9's check), even
+  against a listener that holds the key. `ctl continue` against a server that proves itself
+  and then gives no reply changes nothing in `state.json`.
 - client, compatibility: a room without `ctl.key` (0.1.x-style) behaves as before; the
   first new server to open it creates the key.
 - client, key file: `ctl.key` is 32 bytes, mode 0600, created before the server listens
   and not replaced when it exists; a group-readable `ctl.key` makes the client refuse to
-  start (INV-9); leave, end and `purge` remove it.
+  start (INV-9); leave, end, expiry (a room past its expiry when a server opens it) and
+  `purge` remove it, and none comes back; a `ctl.key` of 0 or 31 bytes (a crash) is
+  replaced by the next server to open the room; creating it leaves no temporary file.
 - client, Windows listen retry: a listen failure retries with a fresh pipe name up to 3
   times, recording each, then runs without a control channel (unit-tested with fakes on
   every OS).
-- `doctor`: `ok` against a genuine server, `FAIL` against a squatter, and the deletion
-  advice when the listener answers like a 0.1.x server.
+- `doctor`: `ok` against a genuine server, `FAIL` against a squatter, the deletion advice
+  with its warning when the listener answers like a 0.1.x server, and the advice to delete
+  and recreate a `ctl.key` that can't be used.
 
 ### Structured kinds (M5)
 

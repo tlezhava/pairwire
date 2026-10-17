@@ -747,6 +747,36 @@ squatter can impersonate the client before the proof runs.*
   impersonation gap stays in residual risk 8, limited to squatters holding
   `SeImpersonatePrivilege` (service accounts, not ordinary users).
 
+### Implementation review (2026-10-17)
+
+A review of the implementation on `feat/ctl-proof` found five gaps; none changes INV-10's
+text or the protocol.
+
+- **Expiry brought the key back.** `start()` ends a room past its expiry, deleting
+  `secret` and `ctl.key`, before it returns; the server then created a new key and
+  listened. It now skips the key and the listener unless the room is still open, so the key
+  goes with `secret` on expiry as decision 2 says.
+- **A crash could brick a room.** The key was created under its final name and then
+  written, so a crash in between left a short `ctl.key` that every client refused and no
+  restart replaced. It is now written under a temporary name and published with a hard
+  link (exclusive, atomic). A regular file of the wrong length is replaced with a rename:
+  no client can have used it, so this is not a rotation, and a rename never leaves
+  `ctl.key` missing, which would let clients fall back to talking without the proof.
+  Anything else the client refuses (a symlink, a file that isn't private) is left alone
+  and fails closed; `doctor` says to delete it and restart the session.
+- **The hooks didn't check the key's privacy.** INV-10 rests on `ctl.key` being private,
+  but the waiter and `wait_cancel` never run INV-9's check. The client now refuses a key
+  that is a symlink, not a regular file, not the user's, or has group or world bits (POSIX;
+  on Windows the ACL is not checked, residual risk 8), in every client.
+- **`doctor`'s downgrade advice could be induced.** Any listener can answer `hello` the way
+  0.1.x does. Telling 0.1.x apart would need a version record 0.1.x never writes and a new
+  state file; for an advice that only a mixed install ever needs, `doctor` instead warns
+  that any program can answer this way and that the user should delete `ctl.key` only when
+  sure the session runs 0.1.x. Deleting stays the user's act.
+- **`continue` fell back on a missing reply.** A server that accepted, proved itself and
+  sent no reply led `ctl continue` to write `state.json` behind a live owner. It now falls
+  back only when nothing accepts the connection (or the owner pid is dead).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
