@@ -1,11 +1,11 @@
 // `pairwire ctl <say|continue|log|accept>`: the human-side commands, run by slash commands
 // through `!` (04 §8). Output lands in the prompt, so expected failures print `pairwire: …` and
 // exit 0.
-import { createConnection } from "node:net";
 import type { Readable, Writable } from "node:stream";
 import { acceptHint, CODEX_CTL, displayName, renderForHook, renderItems, renderTranscript } from "@pairwire/core";
 import { isProcessAlive, readBinding } from "./binding.js";
 import { holdMode } from "./config.js";
+import { CTL_PROOF_FAILED_TEXT, CtlProofError, CtlUnreachableError, ctlCall, ctlTarget, type CtlTarget } from "./ctl-client.js";
 import { CTL_MAX_REQUEST, type CtlReply, type CtlRequest } from "./ctl-server.js";
 import { pairwireHome } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
@@ -25,25 +25,19 @@ export interface CtlIo {
 const DEFAULT_LOG_ENTRIES = 30;
 const MAX_LOG_ENTRIES = 500;
 
-/** Sends one request to the server listening on `path`. Rejects if nobody is listening. */
-export function ctlRequest(path: string, request: CtlRequest, timeoutMs = 15_000): Promise<CtlReply> {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection(path);
-    let buf = "";
-    socket.setEncoding("utf8");
-    socket.setTimeout(timeoutMs, () => socket.destroy(new Error("timeout")));
-    socket.on("connect", () => socket.write(JSON.stringify(request) + "\n"));
-    socket.on("data", (d: string) => (buf += d));
-    socket.on("error", reject);
-    socket.on("close", () => {
-      try {
-        const reply = JSON.parse(buf.split("\n")[0] ?? "") as CtlReply;
-        resolve({ ok: reply.ok === true, text: String(reply.text) });
-      } catch {
-        reject(new Error("no reply"));
-      }
-    });
-  });
+/**
+ * Sends one request to the room's server, after its proof when the room has a ctl.key
+ * (04 §8). Rejects with CtlUnreachableError if nobody is listening, CtlProofError if the
+ * listener did not prove itself, and a plain Error if the server gave no reply.
+ */
+export async function ctlRequest(target: CtlTarget, request: CtlRequest, timeoutMs = 15_000): Promise<CtlReply> {
+  const line = await ctlCall(target, request, { replyTimeoutMs: timeoutMs });
+  try {
+    const reply = JSON.parse(line ?? "") as CtlReply;
+    return { ok: reply.ok === true, text: String(reply.text) };
+  } catch {
+    throw new Error("no reply");
+  }
 }
 
 async function readAll(stream: Readable): Promise<string> {
@@ -122,8 +116,12 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
   // The owning MCP server's harness decides how hints name the human's commands (04 §3).
   const harness = binding.owner_harness ?? "claude-code";
   // Only the owning MCP server listens on ctl_path. If its pid is dead, whatever answers there
-  // is not ours (a squatted stale pipe or socket name, 04 §8): act as if nobody listens.
-  const ask = (request: CtlRequest) => (isProcessAlive(binding.owner_pid) ? ctlRequest(state.ctl_path, request) : Promise.reject(new Error("owner not running")));
+  // is not ours (a squatted stale pipe or socket name, 04 §8): act as if nobody listens. If it
+  // is alive, a room with a ctl.key still requires the listener's proof (INV-10).
+  const ask = async (request: CtlRequest) => {
+    if (!isProcessAlive(binding.owner_pid)) throw new CtlUnreachableError("owner not running");
+    return ctlRequest(ctlTarget(home, roomId, state.ctl_path), request);
+  };
 
   switch (op) {
     case "log": {
@@ -147,7 +145,12 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
     case "continue": {
       try {
         print((await ask({ op: "continue" })).text);
-      } catch {
+      } catch (e) {
+        // A listener that can't prove itself may sit in front of a live owner: change nothing.
+        if (e instanceof CtlProofError) {
+          print(CTL_PROOF_FAILED_TEXT);
+          return 0;
+        }
         // No server running: the budget lives in state.json, so reset it there.
         if (isOpen(state)) updateState(home, roomId, (s) => ({ ...s, hop_count: 0 }));
         print("pairwire: hop budget reset; your agent may send again.");
@@ -167,8 +170,9 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
       }
       try {
         print((await ask({ op: "say", text })).text);
-      } catch {
-        print("pairwire: no running agent session owns this room, so nothing was sent. Start your agent session in this project first.");
+      } catch (e) {
+        if (e instanceof CtlProofError) print(CTL_PROOF_FAILED_TEXT);
+        else print("pairwire: no running agent session owns this room, so nothing was sent. Start your agent session in this project first.");
       }
       return 0;
     }

@@ -1,10 +1,10 @@
 // `pairwire ctl` and ctl.sock (04 §8, REQ-MSG-7, REQ-SAFE-4, INV-3).
-import { statSync } from "node:fs";
+import { rmSync, statSync } from "node:fs";
 import { createConnection } from "node:net";
 import { Readable, Writable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { runCtl } from "../src/ctl.js";
-import { isNamedPipePath } from "../src/paths.js";
+import { isNamedPipePath, roomFile } from "../src/paths.js";
 import { readInbox, readOutbox } from "../src/room-files.js";
 import { readState, updateState } from "../src/state.js";
 import { until } from "./connection/harness.js";
@@ -88,7 +88,9 @@ describe("pairwire ctl", () => {
     await a.session.ctlReady();
     const sq = await squatter();
     ownerExited(a, sq.path, process.pid);
-    // While the binding names a live owner, the CLI talks to whatever listens at ctl_path.
+    // In a room without ctl.key (only 0.1.x servers opened it), while the binding names a live
+    // owner, the CLI talks to whatever listens at ctl_path; the server proof closes that.
+    rmSync(roomFile(a.home, roomOf(a), "ctl.key"));
     expect(await ctl(a, ["say"], "hello\n")).toBe("from the squatter\n");
     expect(sq.connections()).toBe(1);
 

@@ -153,7 +153,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   (S1, S3), and exec form vs shell form under Git Bash is decided when a Windows Claude Code
   session can test it.
 - [ ] Short authentication string option (residual risk 1).
-- [ ] Control-channel server proof (residual risk 8): the server proves it owns `ctl_path`
+- [x] Control-channel server proof (residual risk 8): the server proves it owns `ctl_path`
   with an HMAC of a client nonce under a per-room `ctl.key`, so a squatted socket or pipe
   name is detected. Deferred by the human on 2026-10-16, approved on 2026-10-17; ADR-029,
   INV-10. The Windows privileged-squatter impersonation gap stays in residual risk 8.

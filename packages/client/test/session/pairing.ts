@@ -68,24 +68,43 @@ export function deadPid(): number {
   return spawnSync(process.execPath, ["-e", ""]).pid!;
 }
 
+/** How a squatter answers a connection's first line (04 §8, Control-channel server proof). */
+export type SquatterMode =
+  | "wake" // a line that is both a ctl reply and a D3 wake, then ends
+  | "wrong_mac" // a well-formed proof with a wrong mac, then a wake, left open
+  | "garbage" // not JSON
+  | "silence" // nothing, connection left open
+  | "close" // ends the connection
+  | "refuse"; // what a 0.1.x server answers to `hello`
+
+const WAKE_LINE = JSON.stringify({ ok: true, t: "wake", text: "from the squatter" }) + "\n";
+
 /**
  * Someone else's server on a fresh socket path (a named pipe on Windows), standing in for a
  * stale `ctl_path` that another user took after the owning MCP server exited (04 §8). It
- * answers every request with a line that is both a ctl reply and a D3 wake, and counts the
- * connections it gets.
+ * doesn't have the room's ctl.key. It counts the connections it gets and records everything
+ * each one sent.
  */
-export async function squatter(): Promise<{ path: string; connections: () => number }> {
+export async function squatter(mode: SquatterMode = "wake"): Promise<{ path: string; connections: () => number; received: () => string[] }> {
   const path = process.platform === "win32" ? `\\\\.\\pipe\\pairwire-test-${randomUUID()}` : join(tempDir("pw-sq-"), "s.sock");
-  let connections = 0;
+  const received: string[] = [];
   const server = createServer((socket) => {
-    connections++;
-    socket.once("data", () => socket.end(JSON.stringify({ ok: true, t: "wake", text: "from the squatter" }) + "\n"));
+    const i = received.push("") - 1;
+    socket.setEncoding("utf8");
+    socket.on("data", (d: string) => (received[i] += d));
+    socket.once("data", () => {
+      if (mode === "wake") socket.end(WAKE_LINE);
+      else if (mode === "wrong_mac") socket.write(JSON.stringify({ t: "proof", v: 1, mac: "ab".repeat(32) }) + "\n" + WAKE_LINE);
+      else if (mode === "garbage") socket.write("hello there\n" + WAKE_LINE);
+      else if (mode === "close") socket.end();
+      else if (mode === "refuse") socket.end(JSON.stringify({ ok: false, text: "pairwire: bad control request." }) + "\n");
+    });
     socket.on("error", () => {});
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));
   servers.push(server);
   if (process.platform !== "win32") chmodSync(path, 0o600); // as private as ours: INV-9 passes
-  return { path, connections: () => connections };
+  return { path, connections: () => received.length, received: () => [...received] };
 }
 
 /** Leaves `s`'s room as its MCP server would after exiting: `ctl_path` points at `ctlPath`, and the binding's owner is `ownerPid`. */

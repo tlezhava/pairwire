@@ -132,17 +132,28 @@ function writeBinding(path: string, binding: Binding): void {
   writeFileAtomic(path, JSON.stringify(bindingSchema.parse(binding), null, 2) + "\n");
 }
 
-/** Removes every binding that points at `roomId` (on leave, end or expiry). */
-export function removeBindingFor(home: string, roomId: string): void {
-  let names: string[];
+function bindingFiles(home: string): string[] {
   try {
-    names = readdirSync(bindingsDir(home)).filter((n) => /^[0-9a-f]{16}\.json$/.test(n));
+    return readdirSync(bindingsDir(home))
+      .filter((n) => /^[0-9a-f]{16}\.json$/.test(n))
+      .map((n) => join(bindingsDir(home), n));
   } catch (e) {
-    if (errorCode(e) === "ENOENT") return;
+    if (errorCode(e) === "ENOENT") return [];
     throw e;
   }
-  for (const name of names) {
-    const path = join(bindingsDir(home), name);
+}
+
+/** The bindings that point at `roomId` (normally at most one). */
+export function bindingsForRoom(home: string, roomId: string): Binding[] {
+  return bindingFiles(home).flatMap((path) => {
+    const b = readBindingFile(path);
+    return b?.room_id === roomId ? [b] : [];
+  });
+}
+
+/** Removes every binding that points at `roomId` (on leave, end or expiry). */
+export function removeBindingFor(home: string, roomId: string): void {
+  for (const path of bindingFiles(home)) {
     withLock(path, () => {
       if (readBindingFile(path)?.room_id === roomId) removeFile(path);
     });

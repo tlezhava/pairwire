@@ -5,8 +5,10 @@ import { dirname, join } from "node:path";
 import type { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_RELAY_HOST, displayName, parseRelayAddress, relayUrl } from "@pairwire/core";
+import { bindingsForRoom, isProcessAlive } from "./binding.js";
 import { loadConfig } from "./config.js";
-import { activeFlagPath, roomDir } from "./paths.js";
+import { CtlProofError, CtlUnreachableError, ctlCall, ctlTarget, type CtlProofFailure } from "./ctl-client.js";
+import { activeFlagPath, roomDir, roomFile } from "./paths.js";
 import { checkStatePermissions, StatePermissionError } from "./permissions.js";
 import { envValue, findDistDir, findGitBash, isInsideDir } from "./platform.js";
 import { expiresAt, isOpen, listRooms, readState, refreshActiveFlag } from "./state.js";
@@ -82,6 +84,10 @@ export async function runDoctor(o: DoctorOptions): Promise<number> {
       line(s.error && isOpen(s) ? "warn" : "ok", `room ${id.slice(0, 6)}…: ${s.status}${s.error ? ` (${s.error})` : ""}, ${peer}${until}`);
       if (isOpen(s)) relays.add(s.relay ?? DEFAULT_RELAY_HOST ?? "");
       if (isOpen(s) && now >= expiresAt(s)) line("warn", `room ${id.slice(0, 6)}… is past its expiry; it is removed the next time a session opens it.`);
+      if (isOpen(s)) {
+        const proof = await checkCtlProof(o.home, id, s.ctl_path);
+        if (proof) line(proof.level, `room ${id.slice(0, 6)}…: ${proof.text}`);
+      }
     } catch (e) {
       line("FAIL", `room ${id.slice(0, 6)}…: ${(e as Error).message}`);
     }
@@ -118,6 +124,38 @@ export async function runDoctor(o: DoctorOptions): Promise<number> {
       );
   }
   return failed ? 1 : 0;
+}
+
+const PROOF_REASONS: Record<CtlProofFailure, string> = {
+  timeout: "it sent no proof in time",
+  closed: "it closed the connection",
+  malformed: "it answered with something that isn't a proof",
+  wrong_mac: "its proof is wrong",
+  refused: "it doesn't know the proof",
+  key_unreadable: "the room's ctl.key can't be read",
+};
+
+/**
+ * Check 8 (04 §1, §8; ADR-029): a room with a ctl.key and a live owner must prove itself on
+ * `ctl_path`. Null when there is nothing to check (no key, or no live owner).
+ */
+async function checkCtlProof(home: string, roomId: string, ctlPath: string): Promise<{ level: Level; text: string } | null> {
+  if (!existsSync(roomFile(home, roomId, "ctl.key"))) return null;
+  if (!bindingsForRoom(home, roomId).some((b) => isProcessAlive(b.owner_pid))) return null;
+  try {
+    await ctlCall(ctlTarget(home, roomId, ctlPath), null, { log: false });
+    return { level: "ok", text: "the session on its control channel proves it is yours" };
+  } catch (e) {
+    if (e instanceof CtlUnreachableError) return { level: "FAIL", text: "its owning session is running, but nothing answers on its control channel; restart your agent session" };
+    const reason = e instanceof CtlProofError ? e.reason : "malformed";
+    let text = `the program on its control channel could not prove it is your pairwire session: ${PROOF_REASONS[reason]}`;
+    if (reason === "refused") {
+      text +=
+        `. It answers like pairwire 0.1.x, which has no proof. If you went back to 0.1.x, delete ${roomFile(home, roomId, "ctl.key")} ` +
+        "so its commands work again; otherwise restart your agent session";
+    } else text += "; restart your agent session, and if this stays, another program may be listening in its place";
+    return { level: "FAIL", text };
+  }
 }
 
 /** null when the relay answers `ok` at /health within 5 s, else what went wrong. */
