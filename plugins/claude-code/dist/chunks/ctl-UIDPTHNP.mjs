@@ -1,31 +1,38 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
-  CTL_MAX_REQUEST,
   appendTranscript,
   noticeLine,
   transcriptTail
-} from "./chunk-AGSKDMSE.mjs";
+} from "./chunk-BII22GGN.mjs";
 import {
   dropHeld,
   hiddenBodies,
   releaseHeld,
   renderItemsFor
-} from "./chunk-GH2BAUU7.mjs";
-import {
-  isProcessAlive,
-  readBinding,
-  resolveProjectDir
-} from "./chunk-L37HB6AK.mjs";
+} from "./chunk-2HBILADL.mjs";
 import {
   assertStatePrivate
-} from "./chunk-CGGNPNBK.mjs";
+} from "./chunk-277PW5RP.mjs";
+import {
+  CTL_PROOF_FAILED_TEXT,
+  CtlProofError,
+  CtlUnreachableError,
+  ctlCall,
+  ctlTarget
+} from "./chunk-N77BPDRS.mjs";
+import {
+  CTL_MAX_REQUEST
+} from "./chunk-HDC7T5ZK.mjs";
 import {
   holdMode,
   isOpen,
+  isProcessAlive,
+  readBinding,
   readState,
+  resolveProjectDir,
   updateState
-} from "./chunk-YNXENSKT.mjs";
+} from "./chunk-NXFQKJ6Z.mjs";
 import {
   pairwireHome
 } from "./chunk-GVGSGJLD.mjs";
@@ -36,31 +43,20 @@ import {
   renderForHook,
   renderItems,
   renderTranscript
-} from "./chunk-F4RFDSWT.mjs";
+} from "./chunk-GA7MQSBW.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/ctl.ts
-import { createConnection } from "node:net";
 var DEFAULT_LOG_ENTRIES = 30;
 var MAX_LOG_ENTRIES = 500;
-function ctlRequest(path, request, timeoutMs = 15e3) {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection(path);
-    let buf = "";
-    socket.setEncoding("utf8");
-    socket.setTimeout(timeoutMs, () => socket.destroy(new Error("timeout")));
-    socket.on("connect", () => socket.write(JSON.stringify(request) + "\n"));
-    socket.on("data", (d) => buf += d);
-    socket.on("error", reject);
-    socket.on("close", () => {
-      try {
-        const reply = JSON.parse(buf.split("\n")[0] ?? "");
-        resolve({ ok: reply.ok === true, text: String(reply.text) });
-      } catch {
-        reject(new Error("no reply"));
-      }
-    });
-  });
+async function ctlRequest(target, request, timeoutMs = 15e3) {
+  const line = await ctlCall(target, request, { replyTimeoutMs: timeoutMs });
+  try {
+    const reply = JSON.parse(line ?? "");
+    return { ok: reply.ok === true, text: String(reply.text) };
+  } catch {
+    throw new Error("no reply");
+  }
 }
 async function readAll(stream) {
   let text = "";
@@ -127,7 +123,10 @@ async function runCtl(args, io) {
   }
   const roomId = binding.room_id;
   const harness = binding.owner_harness ?? "claude-code";
-  const ask = (request) => isProcessAlive(binding.owner_pid) ? ctlRequest(state.ctl_path, request) : Promise.reject(new Error("owner not running"));
+  const ask = async (request) => {
+    if (!isProcessAlive(binding.owner_pid)) throw new CtlUnreachableError("owner not running");
+    return ctlRequest(ctlTarget(home, roomId, state.ctl_path), request);
+  };
   switch (op) {
     case "log": {
       const given = arg ?? (io.stdin.isTTY ? "" : await readAll(io.stdin));
@@ -146,7 +145,11 @@ async function runCtl(args, io) {
     case "continue": {
       try {
         print((await ask({ op: "continue" })).text);
-      } catch {
+      } catch (e) {
+        if (e instanceof CtlProofError) {
+          print(CTL_PROOF_FAILED_TEXT);
+          return 0;
+        }
         if (isOpen(state)) updateState(home, roomId, (s) => ({ ...s, hop_count: 0 }));
         print("pairwire: hop budget reset; your agent may send again.");
       }
@@ -165,8 +168,9 @@ async function runCtl(args, io) {
       }
       try {
         print((await ask({ op: "say", text })).text);
-      } catch {
-        print("pairwire: no running agent session owns this room, so nothing was sent. Start your agent session in this project first.");
+      } catch (e) {
+        if (e instanceof CtlProofError) print(CTL_PROOF_FAILED_TEXT);
+        else print("pairwire: no running agent session owns this room, so nothing was sent. Start your agent session in this project first.");
       }
       return 0;
     }
