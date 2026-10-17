@@ -154,8 +154,9 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   session can test it.
 - [ ] Short authentication string option (residual risk 1).
 - [ ] Control-channel server proof (residual risk 8): the server proves it owns `ctl_path`
-  (for example an HMAC of a client nonce under a key in the private state directory), so a
-  squatted socket or pipe name is detected. Deferred by the human on 2026-10-16.
+  with an HMAC of a client nonce under a per-room `ctl.key`, so a squatted socket or pipe
+  name is detected. Deferred by the human on 2026-10-16, approved on 2026-10-17; ADR-029,
+  INV-10. The Windows privileged-squatter impersonation gap stays in residual risk 8.
 - [x] relay-node SQLite persistence (ADR-022): `PAIRWIRE_RELAY_STATE=sqlite:<path>` on Node 22.13+.
 - [ ] External security review (`05-security.md` gate).
 - [x] Consider single-binary distribution to drop the Node requirement: not now (ADR-026).

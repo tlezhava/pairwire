@@ -179,6 +179,33 @@ From then on it fails CI.
   output; it has no timer of its own.
 - Internal error → exit 0, no output, error logged.
 
+### Control-channel server proof (M7)
+
+ADR-029, INV-10.
+
+- core (test-first): `ctlProof` reproduces the `04` §8 vector; `verifyCtlProof` accepts it
+  and refuses a flipped bit, a wrong key, room or nonce, and a MAC of the wrong length.
+- client, genuine server: `ctl say`, `ctl continue`, the waiter and `wait_cancel` work
+  through the `hello` exchange; the server answers a second `hello` and a malformed one as a
+  bad control request; a 0.1.x-style client (request as the first line) still works.
+- client, INV-10 squatter: a fake listener at `ctl_path` without the key, with the owner pid
+  alive, that answers `hello` with a wrong `mac`, garbage, silence, a closed connection or
+  "bad control request." receives nothing after the `hello` line; `ctl say` prints the
+  fixed message; `ctl continue` prints it and does not reset `hop_count` in `state.json`;
+  the waiter exits 0 with no output even when the fake sends a `wake`; `wait_cancel` gives
+  up; each failure logs `ctl_proof_failed` to `hook-errors.log`. A `ctl.key` of the wrong
+  length fails the same way.
+- client, compatibility: a room without `ctl.key` (0.1.x-style) behaves as before; the
+  first new server to open it creates the key.
+- client, key file: `ctl.key` is 32 bytes, mode 0600, created before the server listens
+  and not replaced when it exists; a group-readable `ctl.key` makes the client refuse to
+  start (INV-9); leave, end and `purge` remove it.
+- client, Windows listen retry: a listen failure retries with a fresh pipe name up to 3
+  times, recording each, then runs without a control channel (unit-tested with fakes on
+  every OS).
+- `doctor`: `ok` against a genuine server, `FAIL` against a squatter, and the deletion
+  advice when the listener answers like a 0.1.x server.
+
 ### Structured kinds (M5)
 
 ADR-027.

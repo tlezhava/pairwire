@@ -4,5 +4,7 @@
     "REQ-MSG-4": 4,
     "REQ-INST-3": 8
   },
-  "deferred": {}
+  "deferred": {
+    "INV-10": "M7"
+  }
 }
