@@ -53,6 +53,11 @@ Each invariant has tests named with its id (`07-testing.md`).
   `ctl.sock` are 0600. The client refuses to start if they are group- or world-readable
   and tells the user how to fix it. On native Windows the check is not run; see residual
   risk 8.
+- **INV-10 Proven control channel.** For a room that has a `ctl.key`, a control client
+  (`ctl say`, `ctl continue`, the D3 waiter and `wait_cancel`) writes nothing but the
+  `hello` line to `ctl_path`, and acts on nothing it reads from it, until the listener has
+  proven knowledge of that key for a fresh nonce (`04-client.md` section 8,
+  "Control-channel server proof"; ADR-029).
 
 ## Prompt injection: what we can and cannot promise
 
@@ -159,9 +164,16 @@ New risks and their mitigations:
    the agent not to read or release held messages.
 8. **Native Windows state privacy.** Windows has no mode bits, so the client does not run
    the INV-9 check there. The state directory relies on the access control it inherits from
-   the user profile. The control pipe accepts only the user, but while the owning session is
-   down, another local user could create a pipe with the same name. Clients don't connect
-   when the owner's process isn't running, which narrows this (`04` §8, ADR-024).
+   the user profile. The control pipe accepts only the user. While the owning session is
+   down, another local user could create a pipe with the old name; clients don't connect
+   when the owner's process isn't running (ADR-024), and if that pid was reused, the server
+   proof (INV-10, ADR-029) detects the squatter, as long as `ctl.key` is private. That
+   privacy rests on the same inherited ACL as the rest of the state directory. A squatter
+   cannot take the next pipe name, which is random per server start. What stays open: a
+   squatting pipe server holding `SeImpersonatePrivilege` (service accounts, not ordinary
+   users) could impersonate the connecting user at connect time, before the proof runs,
+   because Node opens pipes without an impersonation limit (unverified). Closing it needs a
+   native add-on, a new runtime dependency the human has not approved (`04` §8).
 9. **(M5) Claims are advisory.** A peer can claim up to 16 rooted patterns (such
    as `src/**`) for up to 24 h. pairwire blocks nothing either way, so a claim slows the
    other agent only as far as its user lets it, and an agent may ignore a claim its user

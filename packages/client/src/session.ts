@@ -39,7 +39,8 @@ import { CollabSendError, planStructured, type CollabPlan } from "./collab-send.
 import { coordFooter, coordStatusLines, loadView, renderItemsFor } from "./coord.js";
 import { transcriptEvents } from "./transcript.js";
 import { CLIENT_VERSION } from "./version.js";
-import { listenCtl, type CtlReply, type CtlRequest, type CtlServer, type WaitFrame } from "./ctl-server.js";
+import { ensureCtlKey, readCtlKey } from "./ctl-key.js";
+import { CTL_LISTEN_RETRIES, listenCtl, listenFresh, type CtlReply, type CtlRequest, type CtlServer, type WaitFrame } from "./ctl-server.js";
 import type { Socket } from "node:net";
 
 export interface ToolResult {
@@ -576,16 +577,41 @@ export class ClientSession {
     });
     this.#conn.start();
     this.#closeCtl();
-    let ctlPath = state.ctl_path;
-    if (process.platform === "win32") {
-      // A fresh pipe name on every open, so a name seen while an earlier server ran is useless (04 §8).
-      ctlPath = chooseCtlPath(this.#o.home, roomId, this.#o.env);
-      updateState(this.#o.home, roomId, (s) => ({ ...s, ctl_path: ctlPath }));
-    }
-    this.#ctl = listenCtl(ctlPath,(req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e: unknown) => {
+    // start() ends a room that is past its expiry before it returns, deleting secret and
+    // ctl.key: no key and no control channel for it then (ADR-029).
+    const after = readState(this.#o.home, roomId);
+    if (!after || !isOpen(after)) return;
+    this.#ctl = this.#listenCtl(roomId, state.ctl_path, keys.roomIdBytes).catch((e: unknown) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });
+  }
+
+  /**
+   * The room's control channel (04 §8): ctl.key first (ADR-029), so a client never finds a
+   * listener of ours without one, then the listener, which proves itself with that key.
+   */
+  async #listenCtl(roomId: string, ctlPath: string, roomIdBytes: Uint8Array): Promise<CtlServer> {
+    ensureCtlKey(this.#o.home, roomId);
+    const key = readCtlKey(this.#o.home, roomId);
+    if (!key) throw new Error("ctl.key vanished");
+    // Windows: a fresh pipe name on every open, so a name seen while an earlier server ran is
+    // useless, and again for each retry when listening fails (04 §8).
+    const fresh =
+      process.platform === "win32"
+        ? () => {
+            const path = chooseCtlPath(this.#o.home, roomId, this.#o.env);
+            updateState(this.#o.home, roomId, (s) => ({ ...s, ctl_path: path }));
+            return path;
+          }
+        : null;
+    return listenFresh(
+      fresh ? fresh() : ctlPath,
+      fresh,
+      (path) => listenCtl(path, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket), { key, roomIdBytes }),
+      CTL_LISTEN_RETRIES,
+      (e) => this.#o.log.warn("ctl_listen_retry", { error_message: (e as Error).message }),
+    );
   }
 
   #roomState(): (RoomState & { roomId: string }) | null {

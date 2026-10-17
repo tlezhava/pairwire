@@ -453,7 +453,7 @@ Decisions:
    owner's pid being reused by an unrelated live process before the next session takes the
    room over; closing that needs the server to prove itself to the client (for example an
    HMAC of a client nonce under a key in the private state directory), which changes the ctl
-   protocol and needs the human's decision, so it is not done here.
+   protocol and needs the human's decision, so it is not done here. (Done later: ADR-029.)
 
 Not covered: Codex on native Windows (its hook command is `sh "<path>" <event>` and needs
 Codex to run hooks through a POSIX shell; unverified), and project-directory case or 8.3
@@ -669,6 +669,113 @@ The M5 implementation review found four gaps in ADR-027 as specified:
 
 Also clarified: REQ-COLLAB-6's "send anything" and the INV-6 analysis in `05` exclude the
 protocol's ack, which every accepted message gets (`02` §6.1).
+
+## ADR-029 Control-channel server proof: HMAC challenge under a per-room key (M7)
+
+Status: accepted (2026-10-17, approved by the human). Proposed on 2026-10-16 as "ADR-026" on
+the `wf/m7-security-proposals` branch and revised there after an adversarial review (below);
+it is renumbered here because main had taken ADR-026 to ADR-028 meanwhile. The short
+authentication string proposal on that branch was not approved and is not part of this ADR.
+Spec text: `04-client.md` section 3 and section 8 ("Control-channel server proof"),
+`05-security.md` INV-10 and residual risk 8, `07-testing.md`.
+
+Context. ADR-024's owner check (decision 6) refuses to connect when the binding's owner pid
+is dead, but not when that pid was reused by another live process while someone else holds
+the stale `ctl_path` (a pipe name on Windows; on POSIX a socket in a fallback directory
+another user created first). Such a listener could read `ctl say` text and send a forged
+`wake` that reaches the agent through the D3 waiter, or a forged reply that lands in the
+prompt. ADR-024 left closing this to the human, who approved this design.
+
+Decisions and why:
+
+1. **Challenge-response before the request.** The client sends
+   `{"op":"hello","v":1,"nonce":…}` and requires
+   `HMAC-SHA256(ctl_key, "pairwire/v1/ctl-proof" || room_id_bytes || nonce)` back before it
+   writes its request or trusts any reply. One local round trip; the rest of the JSON-line
+   protocol is unchanged. Replies carry no MAC: after the proof, the connection's other end
+   is the proven process. The proof cannot be relayed: a squatter would need write access
+   to the real server's socket (0600) or pipe (default descriptor: write for the user,
+   SYSTEM and Administrators only), and an account with that access can read `ctl.key`
+   anyway.
+2. **A random per-room key in `rooms/<room_id>/ctl.key`**, created by the owning server
+   before it listens, kept for the room's life, deleted with `secret`. Not derived from the
+   share secret, which the peer knows (both members can run on one machine). Not rotated per
+   server start: the attacker it addresses cannot read the file anyway, and rotation would
+   add a race with clients that read the key just before a restart.
+3. **The key file's presence is the switch.** Rooms without `ctl.key` (0.1.x servers) keep
+   today's behavior; a binding or `state.json` flag would break 0.1.x readers, whose schemas
+   are strict. New servers keep accepting unproven 0.1.x clients, because server-side trust
+   does not change.
+4. **Fail closed.** On any proof failure, nothing but the `hello` was sent: `say` and
+   `continue` print a fixed message (and `continue` does not fall back to `state.json`), the
+   waiter exits 0 without waking, `wait_cancel` gives up. A `ctl.key` that exists but can't
+   be read as 32 bytes fails the same way. Going back to 0.1.x after a newer server created
+   the key fails closed the same way until the user deletes `ctl.key`; `doctor` says so.
+5. **No client proof.** It would not change residual risk 2 (an agent that can run
+   `pairwire ctl` can read `ctl.key`), and the server's trust in same-user clients is
+   unchanged.
+6. **Windows listen retry.** If listening fails (`EADDRINUSE` or any other error), the
+   server picks a fresh pipe nonce, records it and retries, up to 3 times, then runs without
+   a control channel and logs `ctl_listen_failed`. The spec defined no behavior for that
+   failure before.
+
+Consequences. A small core function (`ctlProof`, `@noble/hashes` HMAC) and a vector; ctl
+clients read one more file; `doctor` gains a check; INV-10 joins the invariants. INV-9's
+text is unchanged; its check already covers every file in a room directory, `ctl.key`
+included. On Windows the proof is only as strong as the state
+directory's ACL (residual risk 8), and it does not address a privileged pipe squatter
+impersonating the client's token at connect time (unverified). Closing that needs native
+code, a new runtime dependency the human has not approved.
+
+### Adversarial review (2026-10-16)
+
+One finding of the review concerned this proposal: *a squatter that creates the pipe name
+before the owning server restarts makes the real server's listen fail, and a privileged
+squatter can impersonate the client before the proof runs.*
+
+- **Premise rejected for the restart case.** The Windows pipe name already ends in a
+  128-bit random nonce chosen anew each time a server opens the room, recorded in the
+  private state directory before listening (`04` section 3, ADR-024), so a squatter cannot
+  create the next name in advance; it can only hold an old one, which the proof covers.
+- **Accepted as hardening:** the listen retry with a fresh nonce (decision 6).
+- **Accepted as a correction:** the "cannot be relayed" claim states the access it
+  depends on (write access to the real pipe or socket) and why the accounts that have it
+  are out of scope (they can read `ctl.key`).
+- **Rejected for now: opening the pipe with `SECURITY_SQOS_PRESENT |
+  SECURITY_IDENTIFICATION`.** Node exposes no way to pass those flags, so it needs a native
+  shim, which is a new runtime dependency and needs the human's approval (CLAUDE.md). The
+  impersonation gap stays in residual risk 8, limited to squatters holding
+  `SeImpersonatePrivilege` (service accounts, not ordinary users).
+
+### Implementation review (2026-10-17)
+
+A review of the implementation on `feat/ctl-proof` found five gaps; none changes INV-10's
+text or the protocol.
+
+- **Expiry brought the key back.** `start()` ends a room past its expiry, deleting
+  `secret` and `ctl.key`, before it returns; the server then created a new key and
+  listened. It now skips the key and the listener unless the room is still open, so the key
+  goes with `secret` on expiry as decision 2 says.
+- **A crash could brick a room.** The key was created under its final name and then
+  written, so a crash in between left a short `ctl.key` that every client refused and no
+  restart replaced. It is now written under a temporary name and published with a hard
+  link (exclusive, atomic). A regular file of the wrong length is replaced with a rename:
+  no client can have used it, so this is not a rotation, and a rename never leaves
+  `ctl.key` missing, which would let clients fall back to talking without the proof.
+  Anything else the client refuses (a symlink, a file that isn't private) is left alone
+  and fails closed; `doctor` says to delete it and restart the session.
+- **The hooks didn't check the key's privacy.** INV-10 rests on `ctl.key` being private,
+  but the waiter and `wait_cancel` never run INV-9's check. The client now refuses a key
+  that is a symlink, not a regular file, not the user's, or has group or world bits (POSIX;
+  on Windows the ACL is not checked, residual risk 8), in every client.
+- **`doctor`'s downgrade advice could be induced.** Any listener can answer `hello` the way
+  0.1.x does. Telling 0.1.x apart would need a version record 0.1.x never writes and a new
+  state file; for an advice that only a mixed install ever needs, `doctor` instead warns
+  that any program can answer this way and that the user should delete `ctl.key` only when
+  sure the session runs 0.1.x. Deleting stays the user's act.
+- **`continue` fell back on a missing reply.** A server that accepted, proved itself and
+  sent no reply led `ctl continue` to write `state.json` behind a live owner. It now falls
+  back only when nothing accepts the connection (or the owner pid is dead).
 
 ## Spike findings
 

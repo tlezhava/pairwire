@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { join } from "node:path";
+import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
+import { ctlProof } from "@pairwire/core";
 import { afterEach } from "vitest";
 import { bindingPath, readBinding } from "../../src/binding.js";
 import { createLogger } from "../../src/log.js";
@@ -68,24 +70,58 @@ export function deadPid(): number {
   return spawnSync(process.execPath, ["-e", ""]).pid!;
 }
 
+/** How a squatter answers a connection's first line (04 §8, Control-channel server proof). */
+export type SquatterMode =
+  | "wake" // a line that is both a ctl reply and a D3 wake, then ends
+  | "wrong_mac" // a well-formed proof with a wrong mac, then a wake, left open
+  | "garbage" // not JSON
+  | "silence" // nothing, connection left open
+  | "close" // ends the connection
+  | "refuse" // what a 0.1.x server answers to `hello`
+  | "proven_wake" // holds the key: a valid proof, then a wake after the request
+  | "proven_close"; // holds the key: a valid proof, then ends the connection without a reply
+
+/** The key and room a squatter that holds the key proves itself with. */
+export interface SquatterKey {
+  key: Uint8Array;
+  roomIdBytes: Uint8Array;
+}
+
+const WAKE_LINE = JSON.stringify({ ok: true, t: "wake", text: "from the squatter" }) + "\n";
+
 /**
  * Someone else's server on a fresh socket path (a named pipe on Windows), standing in for a
  * stale `ctl_path` that another user took after the owning MCP server exited (04 §8). It
- * answers every request with a line that is both a ctl reply and a D3 wake, and counts the
- * connections it gets.
+ * doesn't have the room's ctl.key unless the test hands it one (`held`, for the `proven_*`
+ * modes: a key that leaked, or the owning server itself misbehaving). It counts the
+ * connections it gets and records everything each one sent.
  */
-export async function squatter(): Promise<{ path: string; connections: () => number }> {
+export async function squatter(mode: SquatterMode = "wake", held?: SquatterKey): Promise<{ path: string; connections: () => number; received: () => string[] }> {
   const path = process.platform === "win32" ? `\\\\.\\pipe\\pairwire-test-${randomUUID()}` : join(tempDir("pw-sq-"), "s.sock");
-  let connections = 0;
+  const received: string[] = [];
   const server = createServer((socket) => {
-    connections++;
-    socket.once("data", () => socket.end(JSON.stringify({ ok: true, t: "wake", text: "from the squatter" }) + "\n"));
+    const i = received.push("") - 1;
+    socket.setEncoding("utf8");
+    socket.on("data", (d: string) => (received[i] += d));
+    socket.once("data", () => {
+      if (mode === "wake") socket.end(WAKE_LINE);
+      else if (mode === "wrong_mac") socket.write(JSON.stringify({ t: "proof", v: 1, mac: "ab".repeat(32) }) + "\n" + WAKE_LINE);
+      else if (mode === "garbage") socket.write("hello there\n" + WAKE_LINE);
+      else if (mode === "close") socket.end();
+      else if (mode === "refuse") socket.end(JSON.stringify({ ok: false, text: "pairwire: bad control request." }) + "\n");
+      else if (mode === "proven_wake" || mode === "proven_close") {
+        const nonce = hexToBytes((JSON.parse(received[i]!.split("\n")[0]!) as { nonce: string }).nonce);
+        socket.write(JSON.stringify({ t: "proof", v: 1, mac: bytesToHex(ctlProof(held!.key, held!.roomIdBytes, nonce)) }) + "\n");
+        // Then answer the request line: a wake, or nothing at all.
+        socket.once("data", () => (mode === "proven_wake" ? socket.end(WAKE_LINE) : socket.end()));
+      }
+    });
     socket.on("error", () => {});
   });
   await new Promise<void>((resolve) => server.listen(path, resolve));
   servers.push(server);
   if (process.platform !== "win32") chmodSync(path, 0o600); // as private as ours: INV-9 passes
-  return { path, connections: () => connections };
+  return { path, connections: () => received.length, received: () => [...received] };
 }
 
 /** Leaves `s`'s room as its MCP server would after exiting: `ctl_path` points at `ctlPath`, and the binding's owner is `ownerPid`. */

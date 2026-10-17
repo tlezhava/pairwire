@@ -1,9 +1,8 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
-  listenCtl,
   transcriptEvents
-} from "./chunk-AGSKDMSE.mjs";
+} from "./chunk-BII22GGN.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -19,34 +18,39 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-GH2BAUU7.mjs";
+} from "./chunk-2HBILADL.mjs";
+import {
+  assertStatePrivate
+} from "./chunk-277PW5RP.mjs";
+import {
+  CTL_LISTEN_RETRIES,
+  ensureCtlKey,
+  listenCtl,
+  listenFresh,
+  readCtlKey
+} from "./chunk-MTXTLJYG.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
   bindProject,
   claimProject,
   createLogger,
-  isProcessAlive,
-  removeBindingFor,
-  resolveProjectDir
-} from "./chunk-L37HB6AK.mjs";
-import {
-  assertStatePrivate
-} from "./chunk-CGGNPNBK.mjs";
-import {
   createRoom,
   expiresAt,
   holdMode,
   isOpen,
+  isProcessAlive,
   loadConfig,
   readSecret,
   readSessionCaps,
   readState,
+  removeBindingFor,
   removeFile,
   resolveDisplayName,
+  resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-YNXENSKT.mjs";
+} from "./chunk-NXFQKJ6Z.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -131,7 +135,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-F4RFDSWT.mjs";
+} from "./chunk-GA7MQSBW.mjs";
 import {
   __commonJS,
   __require,
@@ -26500,6 +26504,7 @@ var import_websocket_server = __toESM(require_websocket_server(), 1);
 // packages/client/src/lifecycle.ts
 function closeRoomLocally(home, roomId, status, error = null) {
   removeFile(roomFile(home, roomId, "secret"));
+  removeFile(roomFile(home, roomId, "ctl.key"));
   const state = updateState(home, roomId, (s) => ({
     ...s,
     status,
@@ -27654,15 +27659,33 @@ ${this.footer()}` };
     });
     this.#conn.start();
     this.#closeCtl();
-    let ctlPath = state.ctl_path;
-    if (process.platform === "win32") {
-      ctlPath = chooseCtlPath(this.#o.home, roomId, this.#o.env);
-      updateState(this.#o.home, roomId, (s) => ({ ...s, ctl_path: ctlPath }));
-    }
-    this.#ctl = listenCtl(ctlPath, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket)).catch((e) => {
+    const after = readState(this.#o.home, roomId);
+    if (!after || !isOpen(after)) return;
+    this.#ctl = this.#listenCtl(roomId, state.ctl_path, keys.roomIdBytes).catch((e) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });
+  }
+  /**
+   * The room's control channel (04 §8): ctl.key first (ADR-029), so a client never finds a
+   * listener of ours without one, then the listener, which proves itself with that key.
+   */
+  async #listenCtl(roomId, ctlPath, roomIdBytes) {
+    ensureCtlKey(this.#o.home, roomId);
+    const key = readCtlKey(this.#o.home, roomId);
+    if (!key) throw new Error("ctl.key vanished");
+    const fresh = process.platform === "win32" ? () => {
+      const path = chooseCtlPath(this.#o.home, roomId, this.#o.env);
+      updateState(this.#o.home, roomId, (s) => ({ ...s, ctl_path: path }));
+      return path;
+    } : null;
+    return listenFresh(
+      fresh ? fresh() : ctlPath,
+      fresh,
+      (path) => listenCtl(path, (req) => this.ctl(req), this.#o.log, (req, socket) => this.#onWait(req.session, socket), { key, roomIdBytes }),
+      CTL_LISTEN_RETRIES,
+      (e) => this.#o.log.warn("ctl_listen_retry", { error_message: e.message })
+    );
   }
   #roomState() {
     if (!this.#roomId) return null;

@@ -3,18 +3,31 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   StatePermissionError,
   checkStatePermissions
-} from "./chunk-CGGNPNBK.mjs";
+} from "./chunk-277PW5RP.mjs";
 import {
+  CtlProofError,
+  CtlUnreachableError,
+  ctlCall,
+  ctlTarget
+} from "./chunk-75XVYTUS.mjs";
+import {
+  CtlKeyError,
+  readCtlKey
+} from "./chunk-MTXTLJYG.mjs";
+import {
+  bindingsForRoom,
   expiresAt,
   isOpen,
+  isProcessAlive,
   listRooms,
   loadConfig,
   readState,
   refreshActiveFlag
-} from "./chunk-YNXENSKT.mjs";
+} from "./chunk-NXFQKJ6Z.mjs";
 import {
   activeFlagPath,
-  roomDir
+  roomDir,
+  roomFile
 } from "./chunk-GVGSGJLD.mjs";
 import {
   envValue,
@@ -27,7 +40,7 @@ import {
   displayName,
   parseRelayAddress,
   relayUrl
-} from "./chunk-F4RFDSWT.mjs";
+} from "./chunk-GA7MQSBW.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/doctor.ts
@@ -85,6 +98,10 @@ async function runDoctor(o) {
       line(s.error && isOpen(s) ? "warn" : "ok", `room ${id.slice(0, 6)}\u2026: ${s.status}${s.error ? ` (${s.error})` : ""}, ${peer}${until}`);
       if (isOpen(s)) relays.add(s.relay ?? DEFAULT_RELAY_HOST ?? "");
       if (isOpen(s) && now >= expiresAt(s)) line("warn", `room ${id.slice(0, 6)}\u2026 is past its expiry; it is removed the next time a session opens it.`);
+      if (isOpen(s)) {
+        const proof = await checkCtlProof(o.home, id, s.ctl_path);
+        if (proof) line(proof.level, `room ${id.slice(0, 6)}\u2026: ${proof.text}`);
+      }
     } catch (e) {
       line("FAIL", `room ${id.slice(0, 6)}\u2026: ${e.message}`);
     }
@@ -118,6 +135,38 @@ async function runDoctor(o) {
       );
   }
   return failed ? 1 : 0;
+}
+var PROOF_REASONS = {
+  timeout: "it sent no proof in time",
+  closed: "it closed the connection",
+  malformed: "it answered with something that isn't a proof",
+  wrong_mac: "its proof is wrong",
+  refused: "it doesn't know the proof",
+  key_unreadable: "the room's ctl.key can't be read"
+};
+async function checkCtlProof(home, roomId, ctlPath) {
+  const keyPath = roomFile(home, roomId, "ctl.key");
+  if (!existsSync(keyPath)) return null;
+  if (!bindingsForRoom(home, roomId).some((b) => isProcessAlive(b.owner_pid))) return null;
+  try {
+    readCtlKey(home, roomId);
+  } catch (e) {
+    const problem = e instanceof CtlKeyError ? e.problem : "unreadable";
+    const what = problem === "corrupt" ? "is corrupt" : problem === "not_private" ? "is not private (it must be a file of yours with mode 0600)" : "can't be read";
+    return { level: "FAIL", text: `its ctl.key ${what}. Stop your agent session, delete ${keyPath}, and start the session again; it creates a new one` };
+  }
+  try {
+    await ctlCall(ctlTarget(home, roomId, ctlPath), null, { log: false });
+    return { level: "ok", text: "the session on its control channel proves it is yours" };
+  } catch (e) {
+    if (e instanceof CtlUnreachableError) return { level: "FAIL", text: "its owning session is running, but nothing answers on its control channel; restart your agent session" };
+    const reason = e instanceof CtlProofError ? e.reason : "malformed";
+    let text = `the program on its control channel could not prove it is your pairwire session: ${PROOF_REASONS[reason]}`;
+    if (reason === "refused") {
+      text += `. It answers like pairwire 0.1.x, which has no proof, but any program can answer this way. If you went back to 0.1.x, delete ${keyPath} so its commands work again, but only if you are sure your agent session runs pairwire 0.1.x: deleting it turns the proof off. Otherwise restart your agent session, and if this stays, another program may be listening in its place`;
+    } else text += "; restart your agent session, and if this stays, another program may be listening in its place";
+    return { level: "FAIL", text };
+  }
 }
 async function checkRelay(host, fetcher) {
   let url;

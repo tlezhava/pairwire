@@ -5,11 +5,12 @@ import { roomFile } from "./paths.js";
 import { type RoomState, updateState } from "./state.js";
 
 /**
- * Removes a room locally: status `left` or `ended`, secret, session keys and member token
- * deleted, binding removed. `transcript.md` and `inbox.jsonl` stay until `pairwire purge`.
+ * Removes a room locally: status `left` or `ended`, secret, ctl.key, session keys and member
+ * token deleted, binding removed. `transcript.md` and `inbox.jsonl` stay until `pairwire purge`.
  */
 export function closeRoomLocally(home: string, roomId: string, status: "left" | "ended", error: string | null = null): RoomState {
   removeFile(roomFile(home, roomId, "secret"));
+  removeFile(roomFile(home, roomId, "ctl.key")); // deleted with the secret (ADR-029)
   const state = updateState(home, roomId, (s) => ({
     ...s,
     status,

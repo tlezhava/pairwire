@@ -1,9 +1,10 @@
 // D3 waiter (04 §6, 07-testing.md hooks): `pairwire hook stop-wait` against a real session.
 import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { roomFile } from "../../src/paths.js";
 import { readInbox } from "../../src/room-files.js";
 import { WAKE_LEAD } from "../../src/session.js";
 import { cancelWaiter, runStopWait } from "../../src/waiter.js";
@@ -99,7 +100,9 @@ describe("D3 waiter (stop-wait)", () => {
     const { a } = await idleA();
     const sq = await squatter();
     ownerExited(a, sq.path, process.pid);
-    // While the binding names a live owner, the waiter believes whatever listens at ctl_path.
+    // In a room without ctl.key (only 0.1.x servers opened it), while the binding names a live
+    // owner, the waiter believes whatever listens at ctl_path; the server proof closes that.
+    rmSync(roomFile(a.home, roomOf(a), "ctl.key"));
     const fooled = waiter(a);
     expect(await fooled.done).toBe(2);
     expect(fooled.stderr()).toBe("from the squatter\n");

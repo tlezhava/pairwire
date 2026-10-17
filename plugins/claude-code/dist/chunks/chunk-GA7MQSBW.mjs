@@ -22988,6 +22988,27 @@ function fallbackEnvelope(env, body) {
   return { v: 1, id: env.id, seq: env.seq, ts: env.ts, author: env.author, kind: "chat", reply_to: env.reply_to, body, acks: null };
 }
 
+// packages/core/src/ctl-proof.ts
+var CTL_KEY_BYTES = 32;
+var CTL_NONCE_BYTES = 32;
+var ROOM_ID_BYTES = 16;
+var LABEL = utf8ToBytes("pairwire/v1/ctl-proof");
+function ctlProof(key2, roomIdBytes, nonce) {
+  if (key2.length !== CTL_KEY_BYTES) throw new Error(`ctl key must be ${CTL_KEY_BYTES} bytes`);
+  if (roomIdBytes.length !== ROOM_ID_BYTES) throw new Error(`room_id_bytes must be ${ROOM_ID_BYTES} bytes`);
+  if (nonce.length !== CTL_NONCE_BYTES) throw new Error(`ctl nonce must be ${CTL_NONCE_BYTES} bytes`);
+  return hmac(sha256, key2, concatBytes(LABEL, roomIdBytes, nonce));
+}
+function verifyCtlProof(key2, roomIdBytes, nonce, mac3) {
+  let expected;
+  try {
+    expected = ctlProof(key2, roomIdBytes, nonce);
+  } catch {
+    return false;
+  }
+  return mac3.length === expected.length && equalBytes(expected, mac3);
+}
+
 // packages/core/src/keys.ts
 var SALT = utf8ToBytes("pairwire/v1");
 function deriveRoomKeys(secret) {
@@ -23184,6 +23205,7 @@ export {
   iso_exports,
   external_exports,
   base32Encode,
+  base32Decode,
   ANONYMOUS,
   sanitizeText,
   sanitizeAttr,
@@ -23215,6 +23237,10 @@ export {
   HELLO_TYPE,
   HARNESSES,
   Handshake,
+  CTL_KEY_BYTES,
+  CTL_NONCE_BYTES,
+  ctlProof,
+  verifyCtlProof,
   SECRET_BYTES,
   DEFAULT_RELAY_HOST,
   deriveRoomKeys,

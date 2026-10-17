@@ -44,6 +44,14 @@ fails:
    (`<Git>\cmd\git.exe` or `<Git>\mingw64\bin\git.exe`), else `Git\bin\bash.exe` under
    `%ProgramFiles%`, `%ProgramFiles(x86)%` or `%LOCALAPPDATA%\Programs`. Not found is a
    warning: messages then arrive only through D1.
+8. Control channel (ADR-029): for each open room that has a `ctl.key` and whose binding's
+   owner pid is alive, a `hello` to `ctl_path` must come back with a valid proof (section 8,
+   "Control-channel server proof"); otherwise `FAIL` with the reason, and when the listener
+   answers like a 0.1.x server, the advice that deleting `ctl.key` is the fix after going
+   back to 0.1.x, with the warning that any program can answer that way and that the user
+   should delete it only when sure the session runs 0.1.x. When the key itself can't be
+   used (not exactly 32 bytes, unreadable, or on POSIX not private), `FAIL` with that
+   instead, and the advice to stop the agent session, delete `ctl.key` and start it again.
 
 It never prints secrets, tokens or share strings.
 
@@ -105,6 +113,8 @@ it cannot tell whether the human asked for it, so it fails closed.
 │                                          owner_harness?, updated_at}
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
+    ├── ctl.key                           32 random bytes, the control channel's proof key
+    │                                     (section 8, ADR-029); deleted with secret
     ├── state.json                        relay (host[:port] or null for the default),
     │                                     instance (our HELLO instance id for this room),
     │                                     name (our display name for this room),
@@ -125,6 +135,14 @@ it cannot tell whether the human asked for it, so it fails closed.
 
 - Every file under `rooms/` is mode 0600 (they hold secrets or plaintext); directories
   are 0700 (INV-9).
+- `ctl.key` (ADR-029) is created by the owning MCP server, with an exclusive create, when it
+  creates or opens the room and before it listens on `ctl_path`, unless the file exists. It
+  is written and fsynced under a temporary name and published with a hard link, so no
+  reader sees part of a key. It is never rotated while the room lives, except that a
+  regular file of the wrong length (no client accepts it) is replaced, with a rename. It is
+  deleted with `secret` (leave, end, expiry) and by `purge`; a room that is past its expiry
+  when a server opens it is ended before any key is created, and gets no control channel. Rooms opened only by 0.1.x servers have none, and their clients talk
+  without the proof (section 8, "Control-channel server proof").
 - `project_hash` = first 16 hex chars of `SHA-256(realpath(project_dir))`.
 - **Project directory** comes from one shared function, `resolveProjectDir()`, used by the
   MCP server and every hook: `PAIRWIRE_PROJECT_DIR`, else `CLAUDE_PROJECT_DIR`, else the
@@ -230,7 +248,7 @@ it cannot tell whether the human asked for it, so it fails closed.
 - Local notice `peer_joined` is queued when the room's **first** handshake completes
   (REQ-ROOM-3). Later handshakes after reconnects queue nothing unless the peer's
   `instance` or name changed (`peer_changed`).
-- Leaving deletes `secret` and the session keys in `state.json`, sets `status: "left"`,
+- Leaving deletes `secret`, `ctl.key` and the session keys in `state.json`, sets `status: "left"`,
   removes the binding, and keeps `transcript.md` and `inbox.jsonl` until `pairwire purge`.
 - **Peer identity.** The peer's `instance`, `name` and `harness` from the first accepted
   HELLO are stored. If a later HELLO carries a different `instance` (or name), the client
@@ -895,7 +913,9 @@ Display-only commands, which the model may run too:
 
 **`ctl.sock` protocol.** The owning MCP server listens on the room's `ctl_path` (mode 0600,
 in a 0700 directory) and accepts one request per connection: a single JSON line, at most
-64 KiB, answered by one JSON line `{"ok": bool, "text": string}`.
+64 KiB, answered by one JSON line `{"ok": bool, "text": string}`. In a room that has a
+`ctl.key`, the client first runs the `hello` exchange below ("Control-channel server
+proof") and writes its request only after the server has proven itself.
 
 | Request | Effect |
 |---|---|
@@ -903,10 +923,16 @@ in a 0700 directory) and accepts one request per connection: a single JSON line,
 | `{"op":"continue"}` | Resets `hop_count`. |
 | `{"op":"resume"}` | Clears a `wrong_key` halt and reconnects (`02` §4.2). |
 | `{"op":"wait"…}`, `{"op":"wait_cancel"…}` | D3 waiter (section 6). |
+| `{"op":"hello","v":1,"nonce":…}` | Only as a connection's first line: the server proof (below). |
 
 `say` and `continue` also clear a `wrong_key` halt: they are the human running a pairwire
 command. `ctl continue` resets `hop_count` in `state.json` itself when no server is
-running; `ctl say` needs the server and otherwise says that no session is running.
+running (nothing accepts the connection); `ctl say` needs the server and otherwise says
+that no session is running. A listener that accepts the connection but fails the proof is
+not "no server": both commands then print the proof failure message and change nothing.
+Nor is a server that accepts (and proves itself) but gives no reply: it may still hold
+`hop_count` in memory, so `ctl continue` prints "pairwire: your agent session did not
+answer, so the hop budget was not reset; try again." and changes nothing.
 `ctl say` removes exactly one trailing newline (the heredoc's) and refuses empty text.
 Expected failures are printed as `pairwire: …` on stdout with exit code 0, so the human
 sees them in the prompt.
@@ -928,7 +954,8 @@ reading the old `ctl_path` would then talk to that user. The fresh nonce on ever
 (section 3) makes the old name useless once the server restarts, and libuv opens the first
 instance with `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a server never shares a name someone else
 holds. What remains is the time between an owning server's exit and its restart; the
-owner check below covers it as long as the owner's pid is not reused.
+owner check below covers it as long as the owner's pid is not reused, and the server proof
+below covers it when the pid is reused.
 
 **Owner check (all platforms).** Only the owning MCP server listens on `ctl_path`, and the
 binding records its pid (`owner_pid`, section 3). Before connecting to `ctl_path`, every ctl
@@ -938,12 +965,145 @@ if it is not, does not connect: `ctl say` prints its "no running agent session" 
 `wait_cancel` exit 0. This is the mitigation for a squatted stale pipe or socket name: once
 the owner has exited, whatever answers at its old `ctl_path` is not pairwire, so neither
 `say` text nor a forged `wake` crosses it. It does not help if the dead owner's pid has been
-reused by another live process before the next session takes the room over; closing that
-needs the server to prove itself to the client (ADR-024), which is not done.
+reused by another live process before the next session takes the room over; the server
+proof below closes that (ADR-029).
 
 Residual risk, stated in `05-security.md`: an agent with unrestricted Bash permission
 could invoke `pairwire ctl` itself. The protections assume the harness's normal permission
 prompts are on.
+
+### Control-channel server proof
+
+ADR-029. Closes the gap the owner check above leaves (a dead owner's pid reused while
+someone holds the stale `ctl_path`), and protects clients on POSIX socket paths outside the
+room directory.
+
+**Key.** `rooms/<room_id>/ctl.key`, 32 random bytes, mode 0600 in the room's 0700 directory
+(section 3). The owning MCP server creates it, with an exclusive create, when it creates or
+opens the room and before it listens on `ctl_path`, unless the file exists; if it cannot,
+it does not listen and logs `ctl_listen_failed`. The key is written and fsynced under a
+temporary name in the room directory and published with a hard link, which fails rather
+than replace a key that exists, so a crash never leaves part of a key under `ctl.key`. It
+is not rotated while the room lives, but a regular file of the wrong length (left by a
+crash of an earlier build; every client refuses it) is replaced with a rename, which never
+leaves `ctl.key` missing. It is deleted with `secret`. It is random rather than derived from the share secret because
+the peer knows the share secret, and on a shared machine the peer could then answer as our
+server.
+
+**Exchange.** A client that finds `ctl.key` (and passed the owner check) reads the key and
+`room_id_bytes` (the base32-decoded `room_id` of the binding), connects, and writes a
+`hello` line instead of its request:
+
+```
+client → server   {"op":"hello","v":1,"nonce":"<64 lowercase hex: 32 random bytes, new per connection>"}
+server → client   {"t":"proof","v":1,"mac":"<64 lowercase hex>"}
+                  mac = HMAC-SHA256(key = ctl_key,
+                                    msg = utf8("pairwire/v1/ctl-proof") || room_id_bytes || nonce)
+client → server   the request line, unchanged ({"op":"say",…}, continue, resume, wait, wait_cancel)
+server → client   the reply or waiter frames, unchanged
+```
+
+- The client checks `mac` with a constant-time compare before it writes anything else and
+  before it acts on anything else it reads. After a valid proof, everything else on the
+  connection comes from the proven server (no other process can write into an established
+  local stream connection), so replies need no MAC of their own.
+- The server answers `hello` only as the first line of a connection; a second `hello`, or a
+  `hello` with `v` other than 1 or a malformed `nonce`, is a bad control request. The line
+  after the proof is handled exactly as a first line is otherwise. The 10 s timeout and the
+  64 KiB cap apply to each line. The server still writes nothing before it has read a line
+  (which matters for the Windows pipe, above).
+- The proof cannot be relayed: a squatter at a stale `ctl_path` would have to pass the
+  `hello` to the real server and send back its answer, which needs write access to the real
+  server's socket (mode 0600) or pipe (the default security descriptor gives write access
+  to the user, SYSTEM and Administrators only, above). A squatter running as SYSTEM or an
+  administrator could relay it, but such an account can read `ctl.key` as well; that is
+  local compromise (residual risk 6).
+- The client does not prove itself. The server's trust in clients is unchanged (same OS
+  user, by socket mode or pipe ACL), and a client proof would not help with residual risk 2:
+  an agent that can run `pairwire ctl` can also read `ctl.key`.
+- The function is in core: `ctlProof(key, roomIdBytes, nonce)` with `hmac` and `sha256`
+  from `@noble/hashes`, and `verifyCtlProof()` for the constant-time check.
+
+**Failure.** The proof fails when, after connecting, no `proof` line arrives within 2 s (the
+waiter's `wait_cancel` keeps its 50 ms connect timeout and gives the whole exchange 200 ms),
+when the line is malformed or has `v` other than 1, when `mac` is wrong, when the connection
+closes, when the server answers `{"ok":false,…}` (an old server's "bad control request."),
+or when `ctl.key` exists but is not exactly 32 readable bytes, or, on POSIX, is a symlink
+or not a regular file owned by the user with no group or world permission bits. The
+client checks the key's privacy itself, because the hooks (the D3 waiter, `wait_cancel`)
+don't run INV-9's check and INV-10 rests on it. The client then closes the
+connection, having sent at most the `hello`, and:
+
+- `ctl say` and `ctl continue` print "pairwire: the program answering on this room's
+  control channel could not prove it is your pairwire session, so nothing was sent. If you
+  just restarted or updated your agent session, try again; if it keeps happening, run
+  `pairwire doctor`." and exit 0. `continue` does **not** fall back to resetting
+  `state.json`, because a live owner may still be running.
+- The D3 waiter (`hook stop-wait`) exits 0 with no output, so an unproven listener can never
+  wake the session; `wait_cancel` gives up silently.
+- Each failure appends a `ctl_proof_failed` warning (room tag and reason only) to
+  `hook-errors.log`.
+- `pairwire doctor` gains a check, run for each open room whose binding's owner pid is alive
+  and which has a `ctl.key`: it performs a `hello` and reports `ok`, or `FAIL` with the
+  reason.
+
+**Compatibility with older binaries.**
+
+- New server, 0.1.x client: the old client writes its request as the first line; the server
+  handles any first line other than `hello` as before. This stays accepted: the proof
+  protects clients, and the server's trust in clients does not change.
+- New client, 0.1.x server: an old server never creates `ctl.key`, so the client finds none
+  and talks as before, with the owner check only. The first new server to open a room
+  creates the key, and from then on clients require the proof. The switch is the key file's
+  presence rather than a binding or `state.json` field because 0.1.x parses both with strict
+  schemas and would reject a file carrying a new field (section 3).
+- Downgrade: if a 0.1.x server takes over a room whose `ctl.key` a newer server created,
+  clients send `hello`, get "bad control request." and fail closed with the message above;
+  `doctor` explains that `ctl.key` exists while the owning session doesn't prove itself, and
+  that deleting it is the fix after going back to 0.1.x. Only the user can delete the file,
+  so an attacker cannot force the old behavior that way. A squatter can answer `hello` the
+  way 0.1.x does, though, so `doctor` gives that advice only with the warning that any
+  program can answer this way and that the user should delete the key only when sure the
+  session runs 0.1.x.
+
+**POSIX and Windows.**
+
+- POSIX: when `ctl_path` is in the room directory, only the user can create a socket there,
+  and the proof is defense in depth against pid reuse. It matters for the fallback paths:
+  `$XDG_RUNTIME_DIR` is per user, but `/tmp/pairwire-<uid>/` can be created by another
+  user first; the server refuses to listen in a directory it doesn't own, but clients don't
+  check it. The key's privacy is INV-9's (0600 in a 0700 directory).
+- Windows: this is the main case. Pipe names are machine-wide, so after the owner exits
+  another user can create a pipe of the old name; with the proof, a client that reached it
+  (the owner's pid reused by a live process) sends nothing but a `hello` and trusts nothing
+  it gets. A squatter cannot take the **next** name: the server picks a new 128-bit random
+  `<nonce>` for the pipe name every time it opens the room and records it in `ctl_path`
+  (section 3) before listening, and `ctl_path` lives in the private state directory. If
+  listening still fails with `EADDRINUSE` (or any other error), the server picks a fresh
+  nonce, records it and tries again, up to 3 times, and then runs without a control channel
+  (`say` then reports that no session answers) and logs `ctl_listen_failed`. The key's
+  privacy rests on the state directory's inherited ACL (residual risk 8): where `doctor`
+  warns that the state directory is outside the profile, the proof may give no protection.
+  Not addressed: Node's pipe client opens the pipe without
+  `SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION` (libuv passes no such flags and Node
+  exposes none), so a squatting pipe server holding `SeImpersonatePrivilege` (services such
+  as `LOCAL SERVICE` and `NETWORK SERVICE`, not ordinary users) could impersonate the
+  connecting user's token as soon as it connects, before any byte is exchanged. Closing it
+  needs native code that opens the pipe with those flags, which is a new runtime dependency
+  and so the human's decision (CLAUDE.md); until then it is part of residual risk 8. The
+  owner check, which runs before connecting, still applies.
+
+Test vector (`room_id_bytes` from `02-protocol.md` §7):
+
+```
+ctl_key = 404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f
+nonce   = 606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f
+mac     = 053e28b6b8107561bec09bdee867de359bcc1e426dd096daa3373d814abc6e2d
+hello   = {"op":"hello","v":1,"nonce":"606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f"}
+proof   = {"t":"proof","v":1,"mac":"053e28b6b8107561bec09bdee867de359bcc1e426dd096daa3373d814abc6e2d"}
+```
+
+Computed with Node's `crypto.createHmac("sha256", …)` and cross-checked with `@noble/hashes`.
 
 ## 9. Claude Code plugin
 

@@ -160,6 +160,11 @@ export function person(name: string, relayHost: string, harness = "claude-code",
   return p;
 }
 
+/** Runs `pairwire <args>` from the sources as `p` would in a shell in their project, with `input` on stdin. */
+export function runCli(p: Pick<Person, "env" | "project">, args: string[], input = ""): string {
+  return execFileSync(process.execPath, ["--conditions=source", "--import", TSX, MAIN, ...args], { env: p.env, cwd: p.project, input, encoding: "utf8" });
+}
+
 export async function until(cond: () => boolean | Promise<boolean>, ms = 10_000, what = "condition"): Promise<void> {
   const deadline = Date.now() + ms;
   while (!(await cond())) {

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { manualClock, onWindows, person, SHARE, startRelay, until, type Person } from "./harness.js";
+import { manualClock, onWindows, person, runCli, SHARE, startRelay, until, type Person } from "./harness.js";
 
 const ID = /\(id ([0-9A-Z]{26})\)/;
 
@@ -92,12 +92,26 @@ describe("e2e: pairing", () => {
 
   it("REQ-ROOM-5 leaving ends the room for both and deletes the secrets", async () => {
     const { a, b } = await pair();
+    expect(filesUnder(a.home).some((f) => basename(f) === "ctl.key")).toBe(true);
     await a.call("leave", { message: "Done for today." });
-    expect(filesUnder(a.home).some((f) => basename(f) === "secret")).toBe(false);
+    expect(filesUnder(a.home).some((f) => basename(f) === "secret" || basename(f) === "ctl.key")).toBe(false);
     await until(async () => (await b.call("status")).includes("Room: ended"), 10_000, "B ended");
+    expect(filesUnder(b.home).some((f) => basename(f) === "secret" || basename(f) === "ctl.key")).toBe(false);
     const inbox = await b.call("inbox");
     expect(inbox).toContain("Done for today.");
     expect(inbox).toContain("Tazo ended the room.");
+  });
+
+  it("INV-10 ctl say reaches the owning server through the proven control channel", async () => {
+    const { a, b } = await pair();
+    const key = filesUnder(a.home).find((f) => basename(f) === "ctl.key")!;
+    expect(readFileSync(key)).toHaveLength(32);
+    // The MCP server listens a moment after start returns; retry until it answers.
+    let out = "";
+    await until(() => (out = runCli(a, ["ctl", "say"], "from the human, through the proof\n")).includes("sent your message"), 10_000, "ctl say");
+    expect(out).toMatch(/^pairwire: sent your message to Nika as you \(id [0-9A-Z]{26}\)/);
+    await until(async () => (await b.call("inbox")).includes("from the human, through the proof"), 10_000, "B got it");
+    expect(a.logs.join("")).not.toContain("ctl_listen_failed");
   });
 
   it("REQ-ROOM-7 an idle room expires after 72 h with nobody connected", async () => {

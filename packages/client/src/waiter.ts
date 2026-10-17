@@ -2,9 +2,9 @@
 // It waits on ctl.sock until the MCP server hands it new items, then prints them on stderr and
 // exits 2, which makes Claude Code start a turn in the idle session. Every other outcome exits 0
 // quietly. It has no timer of its own: a waiter that exits 0 is not replaced until a turn ends.
-import { createConnection } from "node:net";
 import { isProcessAlive, readBinding, sessionOwnsBinding } from "./binding.js";
 import { loadConfig } from "./config.js";
+import { ctlCall, ctlTarget, type CtlTarget } from "./ctl-client.js";
 import type { WaitFrame } from "./ctl-server.js";
 import { hookErrorLogger } from "./log.js";
 import { resolveProjectDir } from "./project.js";
@@ -18,14 +18,15 @@ export interface WaiterOptions {
 }
 
 interface Located {
-  ctlPath: string;
+  target: CtlTarget;
   session: string;
 }
 
 /**
  * The owning session's control socket, or null when this session must not wait. Null too when
  * the binding's owner pid is dead: whatever listens on `ctl_path` then is not our server (a
- * squatted stale pipe or socket name, 04 §8), so nothing connects to it.
+ * squatted stale pipe or socket name, 04 §8), so nothing connects to it. Throws when the
+ * room's ctl.key can't be read (the caller gives up: INV-10).
  */
 function locate(stdin: string, o: Pick<WaiterOptions, "home" | "env" | "cwd">, forWaiting: boolean): Located | null {
   let input: { session_id?: string; cwd?: string } = {};
@@ -43,7 +44,7 @@ function locate(stdin: string, o: Pick<WaiterOptions, "home" | "env" | "cwd">, f
     const { config } = loadConfig(o.home, o.env);
     if (config.delivery !== "auto" || !config.autoContinue) return null;
   }
-  return { ctlPath: state.ctl_path, session: input.session_id! };
+  return { target: ctlTarget(o.home, binding!.room_id, state.ctl_path), session: input.session_id! };
 }
 
 /** Exit code: 2 after a wake (stderr carries the messages), else 0. */
@@ -56,54 +57,37 @@ export async function runStopWait(stdin: string, o: WaiterOptions): Promise<numb
     return 0;
   }
   if (!where) return 0;
-  return new Promise<number>((resolve) => {
-    const socket = createConnection(where.ctlPath);
-    let buf = "";
-    let code = 0;
-    socket.setEncoding("utf8");
-    socket.on("connect", () => socket.write(JSON.stringify({ op: "wait", session: where.session }) + "\n"));
-    socket.on("data", (d: string) => {
-      buf += d;
-      const nl = buf.indexOf("\n");
-      if (nl < 0) return;
-      try {
-        const frame = JSON.parse(buf.slice(0, nl)) as WaitFrame;
-        if (frame.t === "wake" && typeof frame.text === "string" && frame.text !== "") {
-          o.stderr.write(frame.text.endsWith("\n") ? frame.text : `${frame.text}\n`);
-          code = 2;
-        }
-      } catch {
-        // malformed: exit 0
-      }
-      socket.destroy();
-    });
-    socket.on("error", () => {}); // no server: exit 0 on close
-    socket.on("close", () => resolve(code));
-  });
+  let line: string | null;
+  try {
+    // No reply timeout: the waiter waits until it is woken, superseded or cancelled (04 §6).
+    // A listener that can't prove itself gets only the hello and never wakes the session.
+    line = await ctlCall(where.target, { op: "wait", session: where.session });
+  } catch {
+    return 0; // no server, or no proof (logged as ctl_proof_failed)
+  }
+  try {
+    const frame = JSON.parse(line ?? "") as WaitFrame;
+    if (frame.t === "wake" && typeof frame.text === "string" && frame.text !== "") {
+      o.stderr.write(frame.text.endsWith("\n") ? frame.text : `${frame.text}\n`);
+      return 2;
+    }
+  } catch {
+    // malformed or none: exit 0
+  }
+  return 0;
 }
 
-/** Tells the MCP server the session is busy, ending a pending waiter (04 §6 step 5). Never throws. */
+/**
+ * Tells the MCP server the session is busy, ending a pending waiter (04 §6 step 5). Never
+ * throws. 50 ms to connect, then 200 ms for the proof and the request; on any failure it gives
+ * up silently.
+ */
 export async function cancelWaiter(stdin: string, o: Pick<WaiterOptions, "home" | "env" | "cwd">, connectTimeoutMs = 50): Promise<void> {
-  let where: Located | null;
   try {
-    where = locate(stdin, o, false);
+    const where = locate(stdin, o, false);
+    if (!where) return;
+    await ctlCall(where.target, { op: "wait_cancel", session: where.session }, { connectTimeoutMs, deadlineMs: 4 * connectTimeoutMs, noReply: true });
   } catch {
-    return;
+    // fire-and-forget
   }
-  if (!where) return;
-  const { ctlPath, session } = where;
-  await new Promise<void>((resolve) => {
-    const socket = createConnection(ctlPath);
-    let timer = setTimeout(() => socket.destroy(), connectTimeoutMs);
-    socket.on("connect", () => {
-      clearTimeout(timer);
-      timer = setTimeout(() => socket.destroy(), 4 * connectTimeoutMs);
-      socket.end(JSON.stringify({ op: "wait_cancel", session }) + "\n");
-    });
-    socket.on("error", () => {});
-    socket.on("close", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
 }
