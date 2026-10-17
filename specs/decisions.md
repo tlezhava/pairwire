@@ -956,3 +956,39 @@ D1 and D2 delivery, no D3 yet. Tool annotations make `send` always prompt in Cod
 to confirm hands-on (Codex manual acceptance): that hook `session_id` equals
 `_meta.sessionId`, that PostToolUse context on MCP tools reaches the model, the approval
 prompt UX, and the `hooks.json` timeout key.
+
+### S10 Human presence for slash commands, hidden codes, terminal detection (2026-10-18)
+
+Question: for the short authentication string proposal (M7, residual risk 1), can a plugin
+command learn that a human typed it, can a code be shown to the human without the model
+seeing it, and can a command tell a human's terminal from the agent's Bash? Method: a
+throwaway plugin (`spikes/s10/`) with a `UserPromptSubmit` hook that writes a grant file and
+returns a code in `systemMessage` when the prompt is `/s10:verify`, and a command whose `!`
+line reads the grant and reports its TTY flags. The human ran it in Claude Code 2.1.302
+(default mode), had the agent run the recorder with Bash, then ran it in a plain terminal.
+
+Answer:
+- `UserPromptSubmit` runs before a plugin command's `!` line: the `!` line found the grant
+  297 ms after the hook wrote it. A hook can hand a one-shot human-presence grant to the
+  command the human typed. The agent cannot submit a prompt, and
+  `disable-model-invocation: true` keeps it from invoking the command.
+- A code in that hook's `systemMessage` reaches the human ("UserPromptSubmit says: …") and
+  not the model; asked directly, the agent found no code in its context.
+- The `!` line and the agent's Bash both run with stdin, stdout and stderr not a TTY; a plain
+  terminal has all three. A TTY check separates a human's terminal from an unmodified agent
+  command, but an agent can allocate a pseudo-terminal (`script`, a pty module), so it is a
+  speed bump, not proof of presence; in default mode the human still sees that command in
+  the Bash approval prompt.
+- Caveat for any grant: D3 wakes arrive as `<task-notification>` prompts whose text holds
+  rendered peer messages (`waiter.ts`), so a peer can place `/pairwire:verify …` inside a
+  prompt. A grant must require the prompt to start with the command and must ignore
+  `<task-notification>` prompts, as `hooks.ts` already does for the hop reset.
+
+Evidence: `spikes/s10/out/events.jsonl` (local, gitignored; the code is not recorded
+elsewhere) and the outputs pasted by the human.
+
+Decision: the short authentication string proposal is buildable as designed, with two
+changes from S10 (the grant ignores `<task-notification>` prompts and must match the prompt's
+start; a terminal counts as presence only as a speed bump, stated as residual risk). The
+human deferred it on 2026-10-18 until after the external security review: it defends only
+against an attacker holding both the share string and the relay, and it is a large change.
