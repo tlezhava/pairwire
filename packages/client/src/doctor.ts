@@ -8,6 +8,7 @@ import { DEFAULT_RELAY_HOST, displayName, parseRelayAddress, relayUrl } from "@p
 import { bindingsForRoom, isProcessAlive } from "./binding.js";
 import { loadConfig } from "./config.js";
 import { CtlProofError, CtlUnreachableError, ctlCall, ctlTarget, type CtlProofFailure } from "./ctl-client.js";
+import { CtlKeyError, readCtlKey } from "./ctl-key.js";
 import { activeFlagPath, roomDir, roomFile } from "./paths.js";
 import { checkStatePermissions, StatePermissionError } from "./permissions.js";
 import { envValue, findDistDir, findGitBash, isInsideDir } from "./platform.js";
@@ -140,8 +141,17 @@ const PROOF_REASONS: Record<CtlProofFailure, string> = {
  * `ctl_path`. Null when there is nothing to check (no key, or no live owner).
  */
 async function checkCtlProof(home: string, roomId: string, ctlPath: string): Promise<{ level: Level; text: string } | null> {
-  if (!existsSync(roomFile(home, roomId, "ctl.key"))) return null;
+  const keyPath = roomFile(home, roomId, "ctl.key");
+  if (!existsSync(keyPath)) return null;
   if (!bindingsForRoom(home, roomId).some((b) => isProcessAlive(b.owner_pid))) return null;
+  try {
+    readCtlKey(home, roomId);
+  } catch (e) {
+    // Every client refuses this key, so the advice is about the file, not the listener.
+    const problem = e instanceof CtlKeyError ? e.problem : "unreadable";
+    const what = problem === "corrupt" ? "is corrupt" : problem === "not_private" ? "is not private (it must be a file of yours with mode 0600)" : "can't be read";
+    return { level: "FAIL", text: `its ctl.key ${what}. Stop your agent session, delete ${keyPath}, and start the session again; it creates a new one` };
+  }
   try {
     await ctlCall(ctlTarget(home, roomId, ctlPath), null, { log: false });
     return { level: "ok", text: "the session on its control channel proves it is yours" };
@@ -150,9 +160,12 @@ async function checkCtlProof(home: string, roomId: string, ctlPath: string): Pro
     const reason = e instanceof CtlProofError ? e.reason : "malformed";
     let text = `the program on its control channel could not prove it is your pairwire session: ${PROOF_REASONS[reason]}`;
     if (reason === "refused") {
+      // Anyone can send this answer, and deleting ctl.key turns the proof off (ADR-029): the
+      // advice is the user's to act on only when they know the session runs 0.1.x.
       text +=
-        `. It answers like pairwire 0.1.x, which has no proof. If you went back to 0.1.x, delete ${roomFile(home, roomId, "ctl.key")} ` +
-        "so its commands work again; otherwise restart your agent session";
+        ". It answers like pairwire 0.1.x, which has no proof, but any program can answer this way. " +
+        `If you went back to 0.1.x, delete ${keyPath} so its commands work again, but only if you are sure your agent session runs pairwire 0.1.x: ` +
+        "deleting it turns the proof off. Otherwise restart your agent session, and if this stays, another program may be listening in its place";
     } else text += "; restart your agent session, and if this stays, another program may be listening in its place";
     return { level: "FAIL", text };
   }

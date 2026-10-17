@@ -577,6 +577,10 @@ export class ClientSession {
     });
     this.#conn.start();
     this.#closeCtl();
+    // start() ends a room that is past its expiry before it returns, deleting secret and
+    // ctl.key: no key and no control channel for it then (ADR-029).
+    const after = readState(this.#o.home, roomId);
+    if (!after || !isOpen(after)) return;
     this.#ctl = this.#listenCtl(roomId, state.ctl_path, keys.roomIdBytes).catch((e: unknown) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;

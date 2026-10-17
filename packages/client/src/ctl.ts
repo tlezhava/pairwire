@@ -151,6 +151,12 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
           print(CTL_PROOF_FAILED_TEXT);
           return 0;
         }
+        // A server that accepted the connection but gave no reply may still be running and
+        // holds hop_count in memory: writing state.json could race it, so change nothing.
+        if (!(e instanceof CtlUnreachableError)) {
+          print("pairwire: your agent session did not answer, so the hop budget was not reset; try again.");
+          return 0;
+        }
         // No server running: the budget lives in state.json, so reset it there.
         if (isOpen(state)) updateState(home, roomId, (s) => ({ ...s, hop_count: 0 }));
         print("pairwire: hop budget reset; your agent may send again.");

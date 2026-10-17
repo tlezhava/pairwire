@@ -1,7 +1,8 @@
 // Control-channel server proof (04 §8, ADR-029, INV-10): the owning server proves it holds
 // the room's ctl.key before any ctl client writes its request or acts on a reply.
-import { chmodSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { hexToBytes } from "@noble/hashes/utils.js";
 import { base32Decode, verifyCtlProof } from "@pairwire/core";
@@ -14,10 +15,11 @@ import { runDoctor, runPurge } from "../src/doctor.js";
 import { hookErrorsPath, roomDir, roomFile } from "../src/paths.js";
 import { checkStatePermissions } from "../src/permissions.js";
 import { readInbox } from "../src/room-files.js";
-import { readState, updateState } from "../src/state.js";
+import { readSecret, readState, updateState } from "../src/state.js";
 import { cancelWaiter, runStopWait } from "../src/waiter.js";
 import { until } from "./connection/harness.js";
-import { deadPid, ownerExited, paired, roomOf, setOwnerPid, side, squatter, type Side, type SquatterMode } from "./session/pairing.js";
+import { tempDir } from "./state/helpers.js";
+import { deadPid, ownerExited, paired, roomOf, setOwnerPid, side, squatter, type Side, type SquatterKey, type SquatterMode } from "./session/pairing.js";
 
 const HELLO_LINE = /^\{"op":"hello","v":1,"nonce":"[0-9a-f]{64}"\}\n$/;
 const onWindows = process.platform === "win32";
@@ -67,6 +69,7 @@ const sink = () => {
   };
 };
 const okFetch = (async () => new Response("ok", { status: 200 })) as unknown as typeof fetch;
+const heldKey = (s: Side): SquatterKey => ({ key: readCtlKey(s.home, roomOf(s))!, roomIdBytes: base32Decode(roomOf(s)) });
 
 describe("control-channel server proof (04 §8)", () => {
   it("INV-10 a genuine server proves itself before reading the request, and still serves a 0.1.x client", async () => {
@@ -210,6 +213,87 @@ describe("control-channel server proof (04 §8)", () => {
     expect(existsSync(dir)).toBe(false);
   });
 
+  it("INV-10 continue changes nothing when a proven server gives no reply", async () => {
+    const { a } = await paired();
+    await a.session.ctlReady();
+    const roomId = roomOf(a);
+    const sq = await squatter("proven_close", heldKey(a));
+    ownerExited(a, sq.path, process.pid);
+    updateState(a.home, roomId, (s) => ({ ...s, hop_count: 5 }));
+    // The owner is alive and proved itself, so state.json is its to change, not ours (04 §8).
+    expect(await ctl(a, ["continue"])).toBe("pairwire: your agent session did not answer, so the hop budget was not reset; try again.\n");
+    expect(readState(a.home, roomId)!.hop_count).toBe(5);
+    expect(sq.connections()).toBe(1);
+  });
+
+  it("INV-10 ADR-029 a room past its expiry ends without a ctl.key when a session opens it", async () => {
+    const { a, port } = await paired();
+    await a.session.ctlReady();
+    const roomId = roomOf(a);
+    const keyPath = roomFile(a.home, roomId, "ctl.key");
+    expect(existsSync(keyPath)).toBe(true);
+    a.session.shutdown();
+    setOwnerPid(a, deadPid());
+    updateState(a.home, roomId, (s) => ({ ...s, expires_at: Date.now() - 1000 }));
+    const again = side(port, "Tazo", { home: a.home, project: a.project });
+    await again.session.ctlReady();
+    expect(readState(a.home, roomId)!.status).toBe("ended");
+    expect(readSecret(a.home, roomId)).toBeNull();
+    expect(existsSync(keyPath)).toBe(false);
+  });
+
+  it("ADR-029 a ctl.key cut short by a crash is replaced on the next open, and creation leaves no temp file", async () => {
+    const { a, port } = await paired();
+    await a.session.ctlReady();
+    const roomId = roomOf(a);
+    const keyPath = roomFile(a.home, roomId, "ctl.key");
+    for (const short of [0, 31]) {
+      const oldPath = readState(a.home, roomId)!.ctl_path;
+      a.session.shutdown();
+      // The old listener removes its socket file as it closes: let it, before the next listens.
+      if (!onWindows) await until(() => !existsSync(oldPath), 2000, "old socket removed");
+      setOwnerPid(a, deadPid());
+      writeFileSync(keyPath, new Uint8Array(short), { mode: 0o600 });
+      const again = side(port, "Tazo", { home: a.home, project: a.project });
+      a.session = again.session;
+      await again.session.ctlReady();
+      expect(readCtlKey(a.home, roomId), `${short} bytes`).toHaveLength(32);
+      expect(await ctl(a, ["say"], "back\n")).toMatch(/^pairwire: sent your message to Nika as you/);
+    }
+    rmSync(keyPath);
+    ensureCtlKey(a.home, roomId);
+    expect(readCtlKey(a.home, roomId)).toHaveLength(32);
+    expect(readdirSync(roomDir(a.home, roomId)).filter((f) => f.startsWith("ctl.key"))).toEqual(["ctl.key"]);
+  }, 20_000);
+
+  it.skipIf(onWindows)("INV-10 a ctl.key that isn't private or is a symlink fails closed in every client, hooks included", async () => {
+    // Mode bits and symlinks: POSIX only (07-testing.md, Layers). The hooks don't run INV-9's check.
+    const { a } = await paired();
+    await a.session.ctlReady();
+    const roomId = roomOf(a);
+    const keyPath = roomFile(a.home, roomId, "ctl.key");
+    const sq = await squatter("proven_wake", heldKey(a));
+    ownerExited(a, sq.path, process.pid);
+    // It holds the key: with a private key the waiter trusts it, so the cases below discriminate.
+    expect((await waiter(a)).code).toBe(2);
+    expect(sq.connections()).toBe(1);
+
+    chmodSync(keyPath, 0o644);
+    const w = await waiter(a);
+    expect([w.code, w.stderr]).toEqual([0, ""]);
+    await cancelWaiter(w.input, { home: a.home, env: {}, cwd: a.project });
+
+    const real = join(tempDir("pw-key-"), "ctl.key");
+    writeFileSync(real, readFileSync(keyPath), { mode: 0o600 });
+    rmSync(keyPath);
+    symlinkSync(real, keyPath);
+    expect((await waiter(a)).code).toBe(0);
+    expect(() => readCtlKey(a.home, roomId)).toThrow();
+
+    expect(sq.connections()).toBe(1);
+    expect(readFileSync(hookErrorsPath(a.home), "utf8")).toContain('"reason":"key_unreadable"');
+  });
+
   it("Windows listen retry: a fresh, recorded path for each of up to 3 retries", async () => {
     const tried: string[] = [];
     let n = 0;
@@ -250,6 +334,16 @@ describe("control-channel server proof (04 §8)", () => {
     const text = await run();
     expect(text).toContain("It answers like pairwire 0.1.x");
     expect(text).toContain(`delete ${roomFile(a.home, roomId, "ctl.key")}`);
+    // Anyone can answer that way, so the advice comes with the warning and the condition.
+    expect(text).toContain("any program can answer this way");
+    expect(text).toContain("only if you are sure your agent session runs pairwire 0.1.x");
+
+    // A key that can't be used gets its own advice, not the squatter's.
+    writeFileSync(roomFile(a.home, roomId, "ctl.key"), new Uint8Array(16), { mode: 0o600 });
+    const corrupt = await run();
+    expect(corrupt).toContain(`FAIL  room ${roomId.slice(0, 6)}…: its ctl.key is corrupt`);
+    expect(corrupt).toContain(`delete ${roomFile(a.home, roomId, "ctl.key")}`);
+    expect(corrupt).not.toContain("another program");
     // No live owner: nothing to check.
     setOwnerPid(a, deadPid());
     expect(await run()).not.toContain("control channel");
