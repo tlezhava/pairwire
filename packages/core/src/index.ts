@@ -74,6 +74,7 @@ export {
   type OpenHelloResult,
   type Session,
 } from "./handshake.js";
+export { CTL_KEY_BYTES, CTL_NONCE_BYTES, ctlProof, verifyCtlProof } from "./ctl-proof.js";
 export { SALT, deriveRoomKeys, type RoomKeys } from "./keys.js";
 export { CLIENT_LIMITS, RELAY_LIMITS, SUPPORTED_PROTOCOLS, relayInfo } from "./limits.js";
 export {
