@@ -111,6 +111,8 @@ it cannot tell whether the human asked for it, so it fails closed.
 │                                         is "waiting" or "active" (hook fast path, section 6)
 ├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_session,
 │                                          owner_harness?, updated_at}
+├── bindings/<project_hash>.harness-pid   {owner_pid, harness_pid}: the owning server's parent,
+│                                         while owner_session is null (section 10, ADR-033)
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
     ├── ctl.key                           32 random bytes, the control channel's proof key
@@ -130,6 +132,8 @@ it cannot tell whether the human asked for it, so it fails closed.
     │                                     released and dropped ids
     ├── outbox.jsonl                      sent-but-unacked and not-yet-sent envelopes (02 §6.2)
     ├── coord-sent.jsonl                  our structured sends (M5; Coordination state)
+    ├── wake-prompted.json                {ids}: items a fixed-text wake already announced
+    │                                     (section 10, ADR-033)
     └── transcript.md                     human-readable log of both directions
 ```
 
@@ -186,8 +190,10 @@ it cannot tell whether the human asked for it, so it fails closed.
     reconnect (REQ-ROOM-6).
 - Hooks deliver only for the owning session: a hook acts only if its input's `session_id`
   equals the binding's `owner_session`; otherwise it exits 0 with no output, so a passive
-  session never consumes the owner's messages. With `owner_session: null`, hooks never
-  deliver and the room relies on D1 (pull). S2 showed each session has its own id, shared
+  session never consumes the owner's messages. With `owner_session: null`, hooks deliver
+  only through the harness-pid rule (section 10, "Finding the session without a session
+  id"), which then records the hook's session as `owner_session`; when it does not match,
+  the room relies on D1 (pull). S2 showed each session has its own id, shared
   by its MCP server and its hooks only, so no process-tree walk is needed.
 - A room is removed locally (status `ended`, secret and keys deleted, binding removed)
   when the relay closes with 4003 or 4002, when the peer leaves, or at the `expires_at`
@@ -1429,6 +1435,43 @@ bindings with a strict schema; `run.sh` passes its own parent as `PAIRWIRE_HOOK_
 session id as `owner_session`, exactly as `_meta` does for Codex. If the harness starts
 hooks and MCP servers from different processes [S11], the room stays on D1 there.
 
+Details (implementation, ADR-033 notes):
+
+- The sidecar is `{"owner_pid": <server pid>, "harness_pid": <server's process.ppid>}`,
+  mode 0600, written atomically. The server writes it whenever it writes the binding with
+  `owner_session: null` (`start`, `join`, taking over a dead owner's binding) and removes it
+  whenever it writes the binding with an `owner_session` or removes the binding. A hook
+  ignores a sidecar whose `owner_pid` is not the binding's `owner_pid`: a 0.1.x or 0.2.x
+  server that takes the binding over does not know the file, so it may be stale.
+- A hook matches when `harness_pid` equals `PAIRWIRE_HOOK_PPID` or the hook process's own
+  parent (`run.sh` ends in `exec`, so both are normally the harness). Only when neither
+  matches, and only on macOS and Linux, it lists processes once with `ps -A -o pid= -o ppid=`
+  (1 s limit, any failure means no match) and matches when `harness_pid` is among its
+  first 4 ancestors, for harnesses that start hooks through a shell. Windows never runs
+  `ps`; there the direct comparison is the only rule. A hook whose input has no session id
+  may still act on a match; it then records nothing.
+- When a match records `owner_session`, the sidecar is removed with that write, and every
+  later hook takes the session-id path.
+
+**Hook dialects.** `PAIRWIRE_HOOK_DIALECT` (`claude`, the default; `gemini`; `cursor`), set
+in the harness's hook command, maps the harness's hook input and output; the hook logic in
+section 6 is shared. Any other value is `claude`. Claude Code output is unchanged.
+
+| | `claude` | `gemini` | `cursor` |
+|---|---|---|---|
+| session id, cwd | `session_id`, `cwd` | `session_id`, `cwd` | `conversation_id`; `workspace_roots[0]`, else `cwd`, else the process cwd |
+| context | `hookSpecificOutput` (Claude event names) | `hookSpecificOutput` with `hookEventName` `SessionStart`, `BeforeAgent`, `AfterTool` [S11: whether the name is needed] | `{"additional_context": …}` from `session-start` and `post-tool-use` |
+| `user-prompt-submit` | hop reset, context | hop reset, context | hop reset only; always answers `{"continue": true}` (also when it does nothing) and never marks an item delivered, since nothing can be shown |
+| `stop` with undelivered items | `decision: "block"`, rendered items, marked delivered | `decision: "block"`, `reason` = `WAKE_PROMPT` | `{"followup_message": WAKE_PROMPT}` |
+| REQ-SAFE-5 warning | `systemMessage` | `systemMessage` | none in hooks; `status` carries it |
+
+A wake-text `stop` (gemini, cursor) marks nothing delivered: the items stay unread for
+`inbox`, the next turn's `BeforeAgent` context (Gemini) or a `postToolUse` context. So that it
+cannot loop on its own, it wakes only when some undelivered item is not yet in
+`rooms/<room_id>/wake-prompted.json` (`{"ids": [...]}`, 0600, under its own lock), and then
+records the undelivered ids there. The cursor dialect never records a session in
+`bypass_warned_sessions`, since it shows no warning.
+
 #### Gemini CLI
 
 `pairwire install --gemini` writes a Gemini extension to `~/.pairwire/bin/gemini/` and
@@ -1476,7 +1519,10 @@ and installs the guide [S11: Cursor's user-level skills or rules location].
 - Approval: Cursor asks before running an MCP tool by default (INV-4). Its auto-run modes
   and allowlists remove the prompt, and hooks cannot see them [S11]; the README says so.
   REQ-SAFE-5's human-only warning has no channel in Cursor hooks (no `systemMessage`), so
-  `status` carries it instead.
+  `status` carries it instead: in a server whose `PAIRWIRE_HARNESS` is `cursor`, `status` with
+  an open room adds the line "Approval: Cursor asks you before each message your agent sends,
+  unless auto-run or an MCP allowlist covers the pairwire send tool; then messages go out
+  without asking you first. pairwire cannot see that setting."
 - Human-only commands: none in Cursor; the human uses `pairwire ctl` in a terminal, as in
   Codex.
 

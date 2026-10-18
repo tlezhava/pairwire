@@ -1066,6 +1066,23 @@ an optional Codex wake, e2e tests like `tests/e2e/codex.test.ts` for each new ha
 hands-on session per harness (S11), which needs Gemini CLI and Cursor installed and signed
 in.
 
+Implementation notes (foundation, 2026-10-19; `04` §3 and §10 amended):
+
+- The sidecar holds `{owner_pid, harness_pid}`, not the bare pid: a 0.1.x or 0.2.x server
+  that takes the binding over leaves an earlier owner's sidecar behind, and the `owner_pid`
+  lets hooks ignore it.
+- `run.sh` ends in `exec node`, so the hook's own parent equals `PAIRWIRE_HOOK_PPID` in the
+  normal case; the variable covers harnesses that wrap the command. A `ps` walk (4 levels,
+  POSIX only, one `ps -A` call) runs only when both comparisons fail, so it costs nothing
+  once a session is recorded. It can match a nested harness (a second session started from
+  the first one's shell tool); that session then delivers until the owner's server writes
+  the binding again.
+- A fixed-text `stop` cannot mark items delivered (they were not shown), so without a record
+  it would wake for the same items at every turn end. `rooms/<id>/wake-prompted.json` keeps
+  "blocks only for new items", the property Claude Code's Stop gets from marking delivered.
+- Cursor's `beforeSubmitPrompt` cannot show context, so in that dialect the prompt hook
+  never claims items (a claim there would mark them delivered unseen).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
