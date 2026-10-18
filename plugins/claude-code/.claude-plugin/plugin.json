@@ -1,7 +1,7 @@
 {
   "name": "pairwire",
   "displayName": "pairwire",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Pair your coding agent with a colleague's agent over an end-to-end encrypted relay.",
   "author": { "name": "Tazo Lezhava" },
   "repository": "https://github.com/tlezhava/pairwire",
