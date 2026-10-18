@@ -118,6 +118,36 @@ describe("INV-5 secret scanner rules (04 §7.3)", () => {
     expect(findings).toEqual([{ rule: "pairwire_share", offset: 2, length: split.length }]);
   });
 
+  it("INV-5 sees through every character the receiving sanitizer removes (ADR-030)", () => {
+    const gh = j("gh", "p_", rnd(ALNUM, 36));
+    const splitters = ["\u0001", "\u007F", "\u0085", "\u009B", "\u001B", "\u{E0100}", "\uFE0F", "\u034F", "\u3164", "\u115F", "\u180B", "\u0301", "\u200D"];
+    for (const s of splitters) {
+      const split = gh.slice(0, 8) + s + gh.slice(8);
+      expect(scanSecrets(`x ${split} y`), JSON.stringify(s)).toEqual([{ rule: "github_token", offset: 2, length: split.length }]);
+      const share = SHARE.slice(0, 10) + s + SHARE.slice(10, 30) + s + SHARE.slice(30);
+      expect(scanSecrets(share), JSON.stringify(s)).toEqual([{ rule: "pairwire_share", offset: 0, length: share.length }]);
+    }
+  });
+
+  it("INV-5 sees through compatibility look-alikes such as U+212A KELVIN SIGN and fullwidth letters (ADR-030)", () => {
+    const kelvin = j("gh", "p_", "K".repeat(4), rnd(ALNUM, 32)).replace(/K/g, "\u212A");
+    expect(scanSecrets(kelvin)).toEqual([{ rule: "github_token", offset: 0, length: kelvin.length }]);
+    const shareKelvin = SHARE.replace(/[kq]/g, (c) => (c === "q" ? "\uFF51" : "\u212A"));
+    expect(shareKelvin).not.toBe(SHARE);
+    expect(scanSecrets(`join ${shareKelvin}`)).toEqual([{ rule: "pairwire_share", offset: 5, length: shareKelvin.length }]);
+    const fullwidth = [...SHARE].map((c) => String.fromCodePoint(c.codePointAt(0)! + 0xfee0)).join("");
+    expect(scanSecrets(fullwidth).map((f) => f.rule)).toEqual(["pairwire_share"]);
+  });
+
+  it("INV-5 maps offsets back past astral splitters", () => {
+    const split = [...SHARE].join("\u{E0100}");
+    expect(scanSecrets(`ab ${split} cd`)).toEqual([{ rule: "pairwire_share", offset: 3, length: split.length }]);
+  });
+
+  it("finds nothing in prose that only uses ordinary non-ASCII text", () => {
+    expect(scanSecrets("Caf\u00E9 na\u00EFve \u2764\uFE0F \u65E5\u672C\u8A9E r\u00E9sum\u00E9 \u{1F44D}\u{1F3FD} \u212B")).toEqual([]);
+  });
+
   it("reports an Anthropic key once, not also as an OpenAI key", () => {
     const key = j("sk", "-ant-api03-", rnd(B64URL, 93));
     expect(scanSecrets(key).map((f) => f.rule)).toEqual(["anthropic_key"]);
@@ -145,6 +175,15 @@ describe("INV-7 redact()", () => {
     expect(redact(SHARE.toUpperCase())).toBe("[redacted:pairwire_share]");
     expect(redact("nothing to see")).toBe("nothing to see");
   });
+
+  it("INV-7 redacts share strings and tokens hidden by controls or look-alikes (ADR-030)", () => {
+    const gh = j("gh", "p_", rnd(ALNUM, 36));
+    const ctl = SHARE.slice(0, 12) + "\u0001" + SHARE.slice(12);
+    const kelvin = SHARE.replace(/k/g, "\u212A");
+    expect(redact(`a ${ctl} b ${gh.slice(0, 6)}\u007F${gh.slice(6)} c ${kelvin}@relay.example.com d`)).toBe(
+      "a [redacted:pairwire_share] b [redacted:github_token] c [redacted:pairwire_share] d",
+    );
+  });
 });
 
 describe("INV-5 scanner cost on hostile input", () => {
@@ -162,6 +201,9 @@ describe("INV-5 scanner cost on hostile input", () => {
     "jwt fragments": "eyJaaaaaaaaaaa.".repeat(N / 15),
     "slack fragments": "xoxb-".repeat(N / 5),
     "zero-width spam": "k\u200Be\u200By=".repeat(N / 7),
+    "control spam": "k\u0001e\u007Fy=".repeat(N / 7),
+    "Kelvin share prefix spam": "pw1_\u212A".repeat(N / 5),
+    "variation selector spam": "a\u{E0100}".repeat(N / 3),
   };
   for (const [name, text] of Object.entries(cases)) {
     it(`INV-5 scans 24 KiB of ${name} in under 250 ms`, () => {
