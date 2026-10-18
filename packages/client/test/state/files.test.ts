@@ -1,8 +1,8 @@
 // Atomic writes, locks, paths and the project directory (04 §3).
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { LOCK_STALE_MS, withLock, writeFileAtomic } from "../../src/fs-util.js";
+import { breakStaleLock, inspectLock, LOCK_STALE_MS, lockIdentity, withLock, writeFileAtomic } from "../../src/fs-util.js";
 import { chooseCtlPath, isNamedPipePath, roomDir } from "../../src/paths.js";
 import { gitRoot, projectHash, resolveProjectDir } from "../../src/project.js";
 import { runChild, tempDir } from "./helpers.js";
@@ -43,6 +43,88 @@ describe("withLock", () => {
       }),
     ).toThrow("boom");
     expect(existsSync(`${file}.lock`)).toBe(false);
+  });
+
+  it("excludes a 0.2.0 process holding the same lock, and is excluded by it (ADR-031)", async () => {
+    const dir = tempDir();
+    const file = join(dir, "counter");
+    writeFileSync(file, "0");
+    await Promise.all(["count", "count-0.2.0", "count", "count-0.2.0"].map((mode) => runChild([mode, file, "40"])));
+    expect(readFileSync(file, "utf8")).toBe("160");
+    expect(readdirSync(dir)).toEqual(["counter"]);
+  }, 30_000);
+
+  it("keeps the lock directory empty while held, as 0.1.x and 0.2.0 expect (ADR-031)", () => {
+    const file = join(tempDir(), "state.json");
+    withLock(file, () => expect(readdirSync(`${file}.lock`)).toEqual([]));
+  });
+
+  it("ADR-031: two processes that judged the same lock stale can't both enter", () => {
+    const dir = tempDir();
+    const file = join(dir, "delivered.json");
+    const lock = `${file}.lock`;
+    mkdirSync(lock);
+    const old = (Date.now() - LOCK_STALE_MS - 1000) / 1000;
+    utimesSync(lock, old, old);
+    // C finds the lock stale and is then preempted...
+    const verdict = inspectLock(lock);
+    if (verdict.state !== "stale") throw new Error("expected a stale lock");
+    // ...while B breaks the same stale lock and enters.
+    withLock(file, () => {
+      const held = lockIdentity(lock);
+      // C resumes and acts on its old verdict: B's live lock must survive.
+      expect(breakStaleLock(lock, verdict.id)).toBe(false);
+      expect(lockIdentity(lock)).toBe(held);
+      // A third contender sees a fresh lock and waits.
+      expect(inspectLock(lock).state).toBe("fresh");
+    });
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("ADR-031: a holder whose lock was broken and retaken does not remove the new holder's lock", () => {
+    const dir = tempDir();
+    const file = join(dir, "state.json");
+    const lock = `${file}.lock`;
+    let theirs = "";
+    withLock(file, () => {
+      // We overran LOCK_STALE_MS: someone broke our lock and now holds a new one.
+      rmdirSync(lock);
+      mkdirSync(lock);
+      theirs = lockIdentity(lock);
+    });
+    expect(lockIdentity(lock)).toBe(theirs);
+    expect(readdirSync(dir)).toEqual(["state.json.lock"]);
+  });
+
+  it("ADR-031: breaks a stale lock whose breaker died mid-break", () => {
+    const dir = tempDir();
+    const file = join(dir, "state.json");
+    const old = (Date.now() - LOCK_STALE_MS - 1000) / 1000;
+    for (const d of [`${file}.lock`, `${file}.lock.break`]) {
+      mkdirSync(d);
+      utimesSync(d, old, old);
+    }
+    expect(withLock(file, () => 7)).toBe(7);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("ADR-031: a breaker leaves a lock alone that is no longer the one it judged", () => {
+    const dir = tempDir();
+    const lock = join(dir, "state.json.lock");
+    mkdirSync(lock);
+    const old = (Date.now() - LOCK_STALE_MS - 1000) / 1000;
+    utimesSync(lock, old, old);
+    const verdict = inspectLock(lock);
+    if (verdict.state !== "stale") throw new Error("expected a stale lock");
+    // Replaced by another directory that is stale too, while the first still existed (new inode).
+    renameSync(lock, `${lock}.moved`);
+    mkdirSync(lock);
+    rmdirSync(`${lock}.moved`);
+    utimesSync(lock, old, old);
+    const other = lockIdentity(lock);
+    expect(breakStaleLock(lock, verdict.id)).toBe(false);
+    expect(lockIdentity(lock)).toBe(other);
+    expect(readdirSync(dir)).toEqual(["state.json.lock"]);
   });
 });
 
