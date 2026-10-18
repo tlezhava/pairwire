@@ -2,6 +2,7 @@
 import { WebSocket } from "ws";
 import { FrameQueue } from "../../core/test/relay-conformance/frame-queue.js";
 import { UpgradeRefused, type RelayUnderTest, type TestSocket } from "../../core/test/relay-conformance/suite.js";
+import type { RelayCaps } from "../src/caps.js";
 import { ManualClock } from "../src/clock.js";
 import type { LogSink } from "../src/log.js";
 import { createLogger } from "../src/log.js";
@@ -10,7 +11,7 @@ import type { RoomStore } from "../src/store.js";
 
 export async function startNodeRelay(
   sink: LogSink = () => {},
-  opts: { clock?: ManualClock; store?: RoomStore } = {},
+  opts: { clock?: ManualClock; store?: RoomStore; caps?: Partial<RelayCaps> } = {},
 ): Promise<RelayUnderTest & { clock: ManualClock; port: number }> {
   const clock = opts.clock ?? new ManualClock(Date.UTC(2026, 9, 15, 12));
   const server = createRelayServer({
@@ -20,6 +21,7 @@ export async function startNodeRelay(
     log: createLogger(sink),
     version: "0.0.0",
     ...(opts.store && { store: opts.store }),
+    ...(opts.caps && { caps: opts.caps }),
   });
   const { port } = await server.listen();
   const remote = relayAt(`127.0.0.1:${port}`, false);

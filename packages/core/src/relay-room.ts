@@ -53,12 +53,14 @@ export const CLOSE = {
   protocol_error: 4005,
   join_timeout: 4006,
   replaced: 4007,
+  overloaded: 4008,
 } as const;
 type CloseName = keyof typeof CLOSE;
 
 const PONG = '{"t":"pong"}';
 const HELLO_TYPE = 0x01;
 const REFILL_PER_MS = L.binaryFramesPerMinute / 60_000;
+const REPLY_REFILL_PER_MS = L.relayRepliesPerMinute / 60_000;
 
 const controlSchema = z.discriminatedUnion("t", [
   z.strictObject({ t: z.literal("join"), v: z.number(), token: z.string().nullable() }),
@@ -70,6 +72,20 @@ interface Conn {
   member: Member | null;
   /** Join deadline for a socket that hasn't joined yet. */
   deadline: number | null;
+  /** Reply limit (pong, error) for this socket; in memory only, like the rate limit. */
+  replies: Bucket;
+}
+
+interface Bucket {
+  tokens: number;
+  at: number;
+}
+
+/** A socket a rebuilt room already has (03, Room state machine: host hooks). */
+export interface KnownSocket {
+  member: Member | null;
+  /** When the socket connected (ms); without it, the join deadline counts from the rebuild. */
+  connectedAt?: number;
 }
 
 export class RelayRoom {
@@ -78,22 +94,26 @@ export class RelayRoom {
   readonly #random: (n: number) => Uint8Array;
   readonly #sockets = new Map<SocketId, Conn>();
   /** In memory only; resets on hibernation, which errs toward leniency (03). */
-  readonly #buckets = new Map<Member, { tokens: number; at: number }>();
+  readonly #buckets = new Map<Member, Bucket>();
+  readonly #admitBuffered: (bytes: number) => boolean;
   #out: Output = emptyOutput();
 
   constructor(opts: {
     now: () => number;
     random?: (n: number) => Uint8Array;
     state?: RoomState | null;
-    /** Sockets that survived hibernation, with the member each belongs to (null: not joined yet). */
-    sockets?: Record<SocketId, Member | null>;
+    /** Sockets that survived hibernation, with their member (null: not joined yet) and connect time. */
+    sockets?: Record<SocketId, KnownSocket>;
+    /** Asked before a frame is buffered; false refuses it with buffer_full (relay-wide caps). */
+    admitBuffered?: (bytes: number) => boolean;
   }) {
     this.#now = opts.now;
     this.#random = opts.random ?? randomBytes;
+    this.#admitBuffered = opts.admitBuffered ?? (() => true);
     this.state = opts.state ?? null;
     const now = this.#now();
-    for (const [socket, member] of Object.entries(opts.sockets ?? {})) {
-      this.#sockets.set(socket, { member, deadline: member ? null : now + L.joinDeadlineMs });
+    for (const [socket, { member, connectedAt }] of Object.entries(opts.sockets ?? {})) {
+      this.#sockets.set(socket, newConn(member, member ? null : (connectedAt ?? now) + L.joinDeadlineMs, now));
     }
     if (this.state) {
       for (const m of ["a", "b"] as const) {
@@ -108,9 +128,22 @@ export class RelayRoom {
     return this.#sockets.get(socket)?.member;
   }
 
-  connect(socket: SocketId): Output {
+  /** Offline-buffered frame bytes in this room, for a host that caps the total. */
+  bufferedBytes(): number {
+    if (!this.state) return 0;
+    let n = 0;
+    for (const slot of slotsOf(this.state)) for (const f of slot.buffer) n += f.bytes.length;
+    return n;
+  }
+
+  /** A new socket; `connectedAt` (default now) starts its join deadline. */
+  connect(socket: SocketId, connectedAt?: number): Output {
     return this.#run(() => {
-      this.#sockets.set(socket, { member: null, deadline: this.#now() + L.joinDeadlineMs });
+      const now = this.#now();
+      const unjoined = [...this.#sockets].filter(([, c]) => c.member === null);
+      // Close the oldest, so sockets parked here can't lock out one that joins now (03 Limits).
+      if (unjoined.length >= L.unjoinedSocketsPerRoom) this.#close(unjoined[0]![0], "overloaded");
+      this.#sockets.set(socket, newConn(null, (connectedAt ?? now) + L.joinDeadlineMs, now));
     });
   }
 
@@ -131,7 +164,7 @@ export class RelayRoom {
       const parsed = controlSchema.safeParse(raw);
       if (!parsed.success) return this.#close(socket, "protocol_error");
       const frame = parsed.data;
-      if (frame.t === "ping") return this.#send(socket, PONG);
+      if (frame.t === "ping") return this.#reply(socket, PONG);
       if (conn.member === null) {
         return frame.t === "join" ? this.#join(socket, conn, frame.token) : this.#close(socket, "protocol_error");
       }
@@ -161,6 +194,7 @@ export class RelayRoom {
       if (slot.buffer.length + 1 > L.offlineBufferFrames || used + bytes.length > L.offlineBufferBytes) {
         return this.#error(socket, "buffer_full");
       }
+      if (!this.#admitBuffered(bytes.length)) return this.#error(socket, "buffer_full");
       slot.buffer.push({ at: this.#now(), bytes: bytes.slice() });
       this.#out.persist = true;
     });
@@ -276,13 +310,8 @@ export class RelayRoom {
   #takeToken(member: Member): number {
     const now = this.#now();
     const b = this.#buckets.get(member) ?? { tokens: L.binaryFrameBurst, at: now };
-    b.tokens = Math.min(L.binaryFrameBurst, b.tokens + (now - b.at) * REFILL_PER_MS);
-    b.at = now;
     this.#buckets.set(member, b);
-    if (b.tokens >= 1) {
-      b.tokens -= 1;
-      return 0;
-    }
+    if (take(b, now, L.binaryFrameBurst, REFILL_PER_MS)) return 0;
     return Math.max(1, Math.ceil((1 - b.tokens) / REFILL_PER_MS / 1000));
   }
 
@@ -303,8 +332,14 @@ export class RelayRoom {
     this.#out.effects.push({ type: "send", socket, data });
   }
 
+  /** A pong or error: sent only within the socket's reply limit (03 Limits). */
+  #reply(socket: SocketId, data: string): void {
+    const conn = this.#sockets.get(socket);
+    if (conn && take(conn.replies, this.#now(), L.relayReplyBurst, REPLY_REFILL_PER_MS)) this.#send(socket, data);
+  }
+
   #error(socket: SocketId, code: "too_large" | "rate_limited" | "buffer_full", retryAfter?: number): void {
-    this.#send(socket, JSON.stringify(retryAfter === undefined ? { t: "error", code } : { t: "error", code, retry_after: retryAfter }));
+    this.#reply(socket, JSON.stringify(retryAfter === undefined ? { t: "error", code } : { t: "error", code, retry_after: retryAfter }));
   }
 
   /** Closes a socket. A joined member closed for its own fault counts as a disconnect. */
@@ -338,6 +373,19 @@ export class RelayRoom {
     }
     return times.length ? Math.min(...times) : null;
   }
+}
+
+function newConn(member: Member | null, deadline: number | null, now: number): Conn {
+  return { member, deadline, replies: { tokens: L.relayReplyBurst, at: now } };
+}
+
+/** Token bucket: refills, then takes one token if there is one. */
+function take(b: Bucket, now: number, burst: number, perMs: number): boolean {
+  b.tokens = Math.min(burst, b.tokens + Math.max(0, now - b.at) * perMs);
+  b.at = now;
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
 }
 
 function emptyOutput(): Output {

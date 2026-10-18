@@ -23073,7 +23073,12 @@ var RELAY_LIMITS = {
   offlineBufferBytes: 1024 * 1024,
   bufferedFrameLifetimeMs: 72 * HOUR,
   idleExpiryMs: 72 * HOUR,
-  maxAgeMs: 7 * 24 * HOUR
+  maxAgeMs: 7 * 24 * HOUR,
+  /** Sockets that upgraded but haven't joined; one more closes the oldest (4008). */
+  unjoinedSocketsPerRoom: 8,
+  /** Replies the relay writes back to one socket itself (pong, error). */
+  relayRepliesPerMinute: 60,
+  relayReplyBurst: 10
 };
 var CLIENT_LIMITS = {
   maxFrameBytes: 32 * 1024,
@@ -23086,6 +23091,7 @@ var CLIENT_LIMITS = {
 
 // packages/core/src/relay-room.ts
 var REFILL_PER_MS = RELAY_LIMITS.binaryFramesPerMinute / 6e4;
+var REPLY_REFILL_PER_MS = RELAY_LIMITS.relayRepliesPerMinute / 6e4;
 var controlSchema = external_exports.discriminatedUnion("t", [
   external_exports.strictObject({ t: external_exports.literal("join"), v: external_exports.number(), token: external_exports.string().nullable() }),
   external_exports.strictObject({ t: external_exports.literal("leave") }),

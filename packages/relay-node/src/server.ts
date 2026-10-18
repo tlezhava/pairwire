@@ -1,11 +1,13 @@
 // Node relay (03, Node implementation): the shared RelayRoom state machine behind an HTTP
 // server and the `ws` package. State is in memory, optionally saved to a RoomStore
-// (03, Persistence); timers replace Durable Object alarms.
+// (03, Persistence); timers replace Durable Object alarms. Relay-wide caps bound sockets,
+// rooms, buffered bytes and each socket's send queue (03, Relay-wide limits).
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
-import { RelayRoom, relayInfo, type Output } from "@pairwire/core";
+import { CLOSE, RelayRoom, relayInfo, type Output, type RoomState } from "@pairwire/core";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
+import { DEFAULT_CAPS, type RelayCaps } from "./caps.js";
 import { systemClock, type Clock } from "./clock.js";
 import { createLogger, roomTag, type Logger } from "./log.js";
 import type { RoomStore } from "./store.js";
@@ -14,6 +16,8 @@ const ROOM_PATH = /^\/v1\/rooms\/([^/]*)$/;
 const ROOM_ID = /^[a-z2-7]{26}$/;
 /** Above the 64 KiB limit so oversized frames get `error too_large` instead of a ws close. */
 const MAX_PAYLOAD = 256 * 1024;
+/** At most one `limit_refused` (or `tombstone_evicted`) line per cap per minute. */
+const LIMIT_LOG_MS = 60_000;
 
 export interface RelayServerOptions {
   port?: number;
@@ -23,6 +27,8 @@ export interface RelayServerOptions {
   version?: string;
   /** Saves room state across restarts; the caller opens and closes it. */
   store?: RoomStore;
+  /** Relay-wide limits; anything left out takes its default. */
+  caps?: Partial<RelayCaps>;
 }
 
 export interface RelayServer {
@@ -34,17 +40,30 @@ interface RoomEntry {
   room: RelayRoom;
   sockets: Map<string, WebSocket>;
   cancelAlarm: (() => void) | null;
+  /** This room's share of `bufferedTotal`, as of its last output. */
+  bufferedBytes: number;
 }
+
+type CapName = "sockets" | "sockets_per_address" | "rooms" | "buffered_bytes";
 
 export function createRelayServer(options: RelayServerOptions = {}): RelayServer {
   const clock = options.clock ?? systemClock;
   const log = options.log ?? createLogger();
   const version = options.version ?? "0.0.0";
   const store = options.store;
+  const caps: RelayCaps = { ...DEFAULT_CAPS, ...options.caps };
+  const under = (cap: number, value: number) => cap === 0 || value < cap;
   const rooms = new Map<string, RoomEntry>();
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
   let seq = 0;
   let closed = false;
+  let socketCount = 0;
+  /** Open sockets per client address. Addresses stay in memory and are never logged (03, Logging). */
+  const perAddress = new Map<string, number>();
+  let bufferedTotal = 0;
+  /** Ended rooms, oldest first: evicted to make way for a new room at the room cap. */
+  const tombstones = new Set<string>();
+  const limitLog = new Map<string, { count: number; loggedAt: number | null }>();
 
   const http: Server = createServer((req, res) => handleHttp(req, res));
   http.on("upgrade", (req, socket, head) => handleUpgrade(req, socket, head));
@@ -71,28 +90,93 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     if (!match) return refuse(404, "Not Found");
     const roomId = match[1]!;
     if (!ROOM_ID.test(roomId)) return refuse(400, "Bad Request");
-    wss.handleUpgrade(req, socket, head, (ws) => attach(roomId, ws));
+    const address = clientAddress(req, caps.trustProxy);
+    const full: CapName | null = !under(caps.maxSockets, socketCount)
+      ? "sockets"
+      : !under(caps.maxSocketsPerAddress, perAddress.get(address) ?? 0)
+        ? "sockets_per_address"
+        : !rooms.has(roomId) && !under(caps.maxRooms, rooms.size) && !evictTombstone()
+          ? "rooms"
+          : null;
+    if (full) {
+      refused(full);
+      return refuse(503, "Service Unavailable");
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => attach(roomId, ws, address));
+  }
+
+  function refused(cap: CapName): void {
+    logLimit("limit_refused", cap);
+  }
+
+  /** Counts an event and logs it, with the count so far, unless it was logged in the last minute. */
+  function logLimit(event: string, cap: CapName): void {
+    const key = `${event}:${cap}`;
+    const r = limitLog.get(key) ?? { count: 0, loggedAt: null };
+    limitLog.set(key, r);
+    r.count++;
+    const now = clock.now();
+    if (r.loggedAt !== null && now - r.loggedAt < LIMIT_LOG_MS) return;
+    log.warn(event, { limit: cap, count: r.count });
+    r.count = 0;
+    r.loggedAt = now;
+  }
+
+  /** Forgets the oldest tombstone with no open socket, as if it had reached max age (03). */
+  function evictTombstone(): boolean {
+    for (const roomId of tombstones) {
+      const entry = rooms.get(roomId);
+      if (entry && entry.sockets.size > 0) continue;
+      tombstones.delete(roomId);
+      if (!entry) continue;
+      entry.cancelAlarm?.();
+      rooms.delete(roomId);
+      try {
+        store?.delete(roomId);
+      } catch {
+        log.warn("state_write_failed", { room: roomTag(roomId) });
+      }
+      logLimit("tombstone_evicted", "rooms");
+      return true;
+    }
+    return false;
+  }
+
+  function newEntry(state: RoomState | null = null): RoomEntry {
+    const admitBuffered = (bytes: number) => {
+      if (caps.maxBufferedBytes === 0 || bufferedTotal + bytes <= caps.maxBufferedBytes) return true;
+      refused("buffered_bytes");
+      return false;
+    };
+    const room = new RelayRoom({ now: () => clock.now(), state, admitBuffered });
+    return { room, sockets: new Map(), cancelAlarm: null, bufferedBytes: 0 };
   }
 
   function entryFor(roomId: string): RoomEntry {
     let entry = rooms.get(roomId);
     if (!entry) {
-      entry = { room: new RelayRoom({ now: () => clock.now() }), sockets: new Map(), cancelAlarm: null };
+      entry = newEntry();
       rooms.set(roomId, entry);
     }
     return entry;
   }
 
-  function attach(roomId: string, ws: WebSocket): void {
+  function attach(roomId: string, ws: WebSocket, address: string): void {
     const entry = entryFor(roomId);
     const id = `c${seq++}`;
     entry.sockets.set(id, ws);
+    socketCount++;
+    perAddress.set(address, (perAddress.get(address) ?? 0) + 1);
     ws.on("message", (data: RawData, isBinary: boolean) => {
       if (!entry.sockets.has(id)) return;
       const bytes = toBytes(data);
       apply(roomId, entry, isBinary ? entry.room.binary(id, bytes) : entry.room.text(id, new TextDecoder().decode(bytes)));
     });
     ws.on("close", () => {
+      socketCount--;
+      const left = (perAddress.get(address) ?? 1) - 1;
+      if (left > 0) perAddress.set(address, left);
+      else perAddress.delete(address);
       if (!entry.sockets.delete(id)) return; // we closed it ourselves; the room already knows
       apply(roomId, entry, entry.room.disconnect(id));
     });
@@ -102,6 +186,9 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
 
   function apply(roomId: string, entry: RoomEntry, out: Output): void {
     if (closed) return; // sockets dropped by close() change nothing on disk
+    const bytes = entry.room.bufferedBytes();
+    bufferedTotal += bytes - entry.bufferedBytes;
+    entry.bufferedBytes = bytes;
     // Save before sending, so no member sees a token that isn't stored yet. A failed write
     // is logged and the room keeps running from memory (03, Persistence).
     if (store && (out.persist || out.deleteAll)) {
@@ -112,10 +199,20 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         log.warn("state_write_failed", { room: roomTag(roomId) });
       }
     }
+    const overloaded: string[] = [];
     for (const e of out.effects) {
       const ws = entry.sockets.get(e.socket);
       if (!ws) continue;
       if (e.type === "send") {
+        const size = typeof e.data === "string" ? Buffer.byteLength(e.data) : e.data.byteLength;
+        if (caps.maxOutboundBytes > 0 && ws.bufferedAmount + size > caps.maxOutboundBytes) {
+          // Not reading: drop the frame and the socket (the sender's client resends unacked frames).
+          entry.sockets.delete(e.socket);
+          ws.close(CLOSE.overloaded, "overloaded");
+          log.info("close", { code: CLOSE.overloaded, room: roomTag(roomId) });
+          overloaded.push(e.socket);
+          continue;
+        }
         ws.send(e.data, { binary: typeof e.data !== "string" });
       } else {
         entry.sockets.delete(e.socket);
@@ -124,6 +221,12 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       }
     }
     if (out.deleteAll) log.info("room_deleted", { room: roomTag(roomId) });
+    if (overloaded.length > 0) {
+      // Each counts as a disconnect. The room's alarm time covers the whole room, so the last
+      // of these outputs arms the timer and decides whether the room is forgotten.
+      for (const id of overloaded) apply(roomId, entry, entry.room.disconnect(id));
+      return;
+    }
     entry.cancelAlarm?.();
     entry.cancelAlarm = null;
     if (out.alarmAt !== null) {
@@ -132,6 +235,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         apply(roomId, entry, entry.room.alarm());
       });
     }
+    if (entry.room.state?.ended) tombstones.add(roomId);
+    else tombstones.delete(roomId);
     // An empty room with no state and no timer has nothing left to remember.
     if (entry.room.state === null && entry.sockets.size === 0 && entry.cancelAlarm === null) rooms.delete(roomId);
   }
@@ -148,7 +253,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       if (!state.ended && Object.values(state.slots).some((slot) => slot.connected)) {
         state.lastActivityAt = Math.max(state.lastActivityAt, now);
       }
-      const entry: RoomEntry = { room: new RelayRoom({ now: () => clock.now(), state }), sockets: new Map(), cancelAlarm: null };
+      const entry = newEntry(state);
       rooms.set(roomId, entry);
       apply(roomId, entry, { ...entry.room.alarm(), persist: true });
     }
@@ -167,6 +272,14 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         http.listen(port, host, () => {
           const actual = (http.address() as AddressInfo).port;
           log.info("listening", { port: actual });
+          log.info("limits", {
+            max_sockets: caps.maxSockets,
+            max_sockets_per_address: caps.maxSocketsPerAddress,
+            max_rooms: caps.maxRooms,
+            max_buffered_bytes: caps.maxBufferedBytes,
+            max_outbound_bytes: caps.maxOutboundBytes,
+            trust_proxy: caps.trustProxy,
+          });
           if (!isLoopback(host) && process.env.PAIRWIRE_RELAY_INSECURE_OK === undefined) {
             log.warn("tls_reminder", {
               message:
@@ -194,6 +307,16 @@ function toBytes(data: RawData): Uint8Array {
   if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength).slice();
+}
+
+/** The address the per-address cap counts: the TCP peer, or the proxy's last X-Forwarded-For entry. */
+function clientAddress(req: IncomingMessage, trustProxy: boolean): string {
+  if (trustProxy) {
+    const header = req.headers["x-forwarded-for"];
+    const last = (Array.isArray(header) ? header.join(",") : header)?.split(",").pop()?.trim();
+    if (last) return last;
+  }
+  return req.socket.remoteAddress ?? "unknown";
 }
 
 function isLoopback(host: string): boolean {

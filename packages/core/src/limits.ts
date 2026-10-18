@@ -16,6 +16,11 @@ export const RELAY_LIMITS = {
   bufferedFrameLifetimeMs: 72 * HOUR,
   idleExpiryMs: 72 * HOUR,
   maxAgeMs: 7 * 24 * HOUR,
+  /** Sockets that upgraded but haven't joined; one more closes the oldest (4008). */
+  unjoinedSocketsPerRoom: 8,
+  /** Replies the relay writes back to one socket itself (pong, error). */
+  relayRepliesPerMinute: 60,
+  relayReplyBurst: 10,
 } as const;
 
 /** Client-side limits; each stays below the matching relay limit. */
