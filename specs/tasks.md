@@ -152,7 +152,9 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   Hook wiring on Windows is unverified: `hooks.json` keeps the exec form verified on macOS
   (S1, S3), and exec form vs shell form under Git Bash is decided when a Windows Claude Code
   session can test it.
-- [ ] Short authentication string option (residual risk 1).
+- [ ] Short authentication string option (residual risk 1). Proposed on branch
+  `wf/m7-security-proposals`; spike S10 answered its harness questions (`decisions.md`).
+  Deferred by the human on 2026-10-18 until after the external security review.
 - [x] Control-channel server proof (residual risk 8): the server proves it owns `ctl_path`
   with an HMAC of a client nonce under a per-room `ctl.key`, so a squatted socket or pipe
   name is detected. Deferred by the human on 2026-10-16, approved on 2026-10-17; ADR-029,
