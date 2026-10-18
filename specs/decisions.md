@@ -777,6 +777,96 @@ text or the protocol.
   sent no reply led `ctl continue` to write `state.json` behind a live owner. It now falls
   back only when nothing accepts the connection (or the owner pid is dead).
 
+## ADR-032 Relay resource limits after the internal review
+
+Status: accepted (2026-10-18), pending review on `fix/relay-limits`. Spec text: `03-relay.md`
+Limits, Room state machine (host hooks), Cloudflare implementation (attachments, resource
+limits), Node implementation (relay-wide limits); `02-protocol.md` §5 (close 4008, error
+replies); `07-testing.md`. No invariant changes: none of these limits is an INV, and
+`00-product.md` is untouched.
+
+Context. An internal pre-1.0 security review found three relay problems. (1) relay-node
+never looked at its outbound queue: a socket that stops reading while it sends pings (each
+answered with a pong), oversized frames (each answered with `too_large`) or rate-limited
+frames, or a member that never reads what its peer forwards, made the relay queue without
+bound; the reviewer reached 469 MB of heap in 18 s over loopback, and an out-of-memory
+relay loses every room it holds in memory. (2) Nothing capped the relay as a whole: room
+ids need no secret, so a client can open any number of rooms, pin 2 MiB of offline buffer
+in each for 72 h, and open any number of sockets, including unjoined ones in one room. (3)
+A Durable Object rebuilt after hibernation gave every unjoined socket a fresh 10 s join
+deadline, because the attachment did not record when the socket connected.
+
+Decisions and why:
+
+1. **A per-socket reply limit in the shared room (60 per minute, burst 10),** counting the
+   frames the relay itself writes back: `pong` and `error`. Beyond it the reply is not sent;
+   the frame that caused it is handled as before (an oversized frame is still dropped). One
+   bucket for both, because an attacker would just switch between them. A compliant client
+   pings every 30 s and never draws an `error`, so it never meets this. It doesn't apply to
+   pings Cloudflare's auto-response answers, which never reach the room.
+2. **relay-node closes a socket whose outbound queue would pass 2 MiB** (`bufferedAmount`
+   plus the frame), with a new close code **4008 `overloaded`**, and treats it as a
+   disconnect. 2 MiB is twice the largest burst a compliant client is sent at once (a
+   rejoin's 1 MiB of buffered frames). The frame not sent is lost at the relay; the peer
+   never acked it, so the sender's client resends it (`02` §6.2). A new code rather than
+   1008: 4000-4999 is the range RFC 6455 leaves to applications, a named code tells the
+   client (and whoever reads its log) what happened, and the same code serves decision 3 in
+   both relays. Clients already retry any code they don't know with backoff, so no client
+   change is needed. The cap is a constant,
+   not a setting: nothing a compliant client does depends on it.
+3. **At most 8 unjoined sockets per room; a ninth closes the oldest with 4008.** Closing the
+   oldest instead of refusing the newest means sockets parked in a room cannot lock out a
+   member who connects now and joins within a round trip. A legitimate room rarely has more
+   than one or two sockets in this state. Added to `RELAY_LIMITS`, with the reply limit, so
+   both are reported at `/v1/info` and shared by both relays.
+4. **relay-node gets relay-wide caps, set by environment variables with defaults:** 1024
+   sockets, 10000 rooms, 256 MiB of buffered frames across all rooms, and a per-address
+   socket cap that is **off by default**. Sockets and rooms beyond a cap are refused at the
+   upgrade with HTTP 503, which the client treats as a network error. The byte cap goes
+   through a new optional room hook, `admitBuffered(bytes)`, and is answered with
+   `buffer_full` like a full slot buffer, so the room logic stays shared and pure. Refusals
+   are logged at most once a minute per cap, so the log can't be flooded either.
+   *Why the per-address cap is off:* relay-node is meant to sit behind a TLS proxy, where
+   every connection's TCP peer is the proxy. A default-on cap would cap the whole relay at
+   that number. `PAIRWIRE_RELAY_TRUST_PROXY=1` takes the address from the last
+   `X-Forwarded-For` entry instead, for operators whose proxy sets it. The address is kept
+   in memory to count and never logged (03 Logging). *Why these numbers:* they keep a small
+   VM's worst case near a gigabyte (256 MiB of buffers, plus up to 2 MiB per socket only
+   while that socket is being closed) while leaving room for hundreds of pairs; operators
+   with more traffic raise them.
+5. **The Durable Object stores each socket's connect time in its attachment** and passes
+   it to the room, which computes the deadline from it, so a rebuild never extends the
+   deadline; a socket already past it is closed at the next alarm. Attachments without the
+   field (written by the previous version) read as connected at the rebuild, which is
+   today's behavior.
+6. **Cloudflare gets no outbound cap and no relay-wide caps, by necessity or by choice.**
+   Workers WebSockets expose no `bufferedAmount`, so decision 2 can't be ported; the room
+   limits, the reply limit and the platform's per-isolate memory limit (which resets the
+   object, dropping that room's sockets but keeping its storage) are what bound it. A
+   per-address limit on room creation would need a Rate Limiting binding in `wrangler.toml`
+   and a deploy, which is the maintainer's decision; the hosted relay's residual (filling
+   free-plan quotas, failing closed for everyone for up to 72 h) is written down in `03`
+   instead.
+
+Not done:
+
+- **SQLite still rewrites the whole room for each buffered frame** (up to about 2.7 MB of
+  JSON at `synchronous = FULL`). Storing frames in their own table needs a schema
+  migration (version 2), a frame identity the store can diff against, and its own restart
+  tests: not a contained change. The byte cap bounds the file meanwhile; the rate at which
+  an attacker can make the relay rewrite rooms is bounded by the per-member rate limit
+  times the socket cap. Follow-up.
+- **A smaller combined buffer per room** (the reviewer's suggestion) would change a
+  limit clients and docs rely on (100 frames or 1 MiB per member); left as is.
+- Unverified, for the maintainer: a Durable Object whose two offline buffers are both full
+  stores about 2 MiB under one key. If that exceeds the storage backend's per-value limit,
+  the `put` would fail. Worth a check before the hosted relay sees heavy offline use.
+
+Consequences. `/v1/info` reports three new limits (`unjoinedSocketsPerRoom`,
+`relayRepliesPerMinute`, `relayReplyBurst`), so `npm run test:live` against the hosted relay
+fails its limits check until the relay is redeployed with this change. relay-node operators
+get five environment variables, documented in the README.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

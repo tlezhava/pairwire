@@ -179,7 +179,7 @@ Relay → client:
 | `{"t":"peer_joined","epoch":8}` | The other member connected (or reconnected). |
 | `{"t":"peer_left","reason":"disconnected"}` | The other member's socket closed; their slot is kept. |
 | `{"t":"peer_left","reason":"left"}` | The other member sent `leave`. The room is over. Followed by close 4003. |
-| `{"t":"error","code":"<code>","retry_after":30}` | Non-fatal error (`rate_limited`, `buffer_full`, `too_large`). The frame that caused it was dropped. `retry_after` in seconds, optional. |
+| `{"t":"error","code":"<code>","retry_after":30}` | Non-fatal error (`rate_limited`, `buffer_full`, `too_large`). The frame that caused it was dropped. `retry_after` in seconds, optional. Errors and pongs count against a per-socket reply limit (`03` Limits); beyond it the frame is still dropped but no error is sent. |
 
 Close codes:
 
@@ -193,6 +193,7 @@ Close codes:
 | 4005 | `protocol_error` | First frame not `join`, or malformed control frame | no |
 | 4006 | `join_timeout` | No `join` within 10 s | yes |
 | 4007 | `replaced` | Another connection rejoined this slot with the same token | no |
+| 4008 | `overloaded` | The relay dropped the connection to protect its resources: too many sockets waiting to join this room, or the client did not read its frames (relay-node's outbound queue, `03` Limits) | yes, with backoff |
 | other | network / server error | | yes, with backoff |
 
 Membership rules:

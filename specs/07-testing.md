@@ -85,7 +85,13 @@ From then on it fails CI.
 - INV-1: a test relay wrapper records every byte received; after a full session the
   recording contains no share secret, `psk`, display name or plaintext body.
 - Durable Object hibernation: sockets survive a simulated hibernation (attachment
-  restored); ping auto-response does not invoke `webSocketMessage`.
+  restored); ping auto-response does not invoke `webSocketMessage`; an unjoined socket is
+  still closed with 4006 at its original join deadline after the object is rebuilt.
+- Resource limits (`03` Limits, ADR-032): the conformance suite covers the unjoined-socket
+  limit (oldest closed with 4008) and the reply limit on `error`s. relay-node tests cover
+  its relay-wide caps (sockets, sockets per address, rooms, buffered bytes, each refused
+  as specified and logged without the address) and the outbound queue: a joined member
+  that stops reading is closed with 4008 and its peer gets `peer_left`.
 
 ### client and e2e
 
