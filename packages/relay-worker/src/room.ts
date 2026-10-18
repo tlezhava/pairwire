@@ -1,6 +1,7 @@
 // One Durable Object per room, driving the shared RelayRoom state machine (03, Cloudflare
 // implementation). Uses the WebSocket Hibernation API only: never ws.accept(), pings are
-// answered by the auto-response, and each socket's id and slot live in its attachment.
+// answered by the auto-response, and each socket's id, slot and connect time live in its
+// attachment.
 import { DurableObject } from "cloudflare:workers";
 import { RelayRoom, type KnownSocket, type Member, type Output, type RoomState } from "@pairwire/core";
 import type { Env } from "./env.js";
@@ -8,6 +9,8 @@ import type { Env } from "./env.js";
 interface Attachment {
   id: string;
   member: Member | null;
+  /** ms; keeps the join deadline across hibernation. Absent in attachments older versions wrote. */
+  connectedAt?: number;
 }
 
 const STATE_KEY = "state";
@@ -27,7 +30,7 @@ export class RoomObject extends DurableObject<Env> {
       const sockets: Record<string, KnownSocket> = {};
       for (const ws of ctx.getWebSockets()) {
         const a = attachmentOf(ws);
-        if (a) sockets[a.id] = { member: a.member };
+        if (a) sockets[a.id] = a.connectedAt === undefined ? { member: a.member } : { member: a.member, connectedAt: a.connectedAt };
       }
       this.#room = new RelayRoom({ now: () => Date.now(), state, sockets });
     });
@@ -36,10 +39,10 @@ export class RoomObject extends DurableObject<Env> {
   override async fetch(request: Request): Promise<Response> {
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("upgrade required", { status: 426 });
     const { 0: client, 1: server } = new WebSocketPair();
-    const attachment: Attachment = { id: crypto.randomUUID(), member: null };
+    const attachment: Attachment = { id: crypto.randomUUID(), member: null, connectedAt: Date.now() };
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(attachment);
-    await this.#apply(this.#room.connect(attachment.id));
+    await this.#apply(this.#room.connect(attachment.id, attachment.connectedAt));
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -89,7 +92,8 @@ export class RoomObject extends DurableObject<Env> {
     // Keep each live socket's slot in its attachment so it survives hibernation.
     for (const [id, ws] of sockets) {
       const member = this.#room.memberOf(id);
-      if (member !== undefined && attachmentOf(ws)?.member !== member) ws.serializeAttachment({ id, member } satisfies Attachment);
+      const a = attachmentOf(ws);
+      if (member !== undefined && a && a.member !== member) ws.serializeAttachment({ ...a, member } satisfies Attachment);
     }
     if (out.deleteAll) {
       await this.ctx.storage.deleteAlarm();
