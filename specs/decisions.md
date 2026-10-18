@@ -820,12 +820,20 @@ Decisions and why:
    than one or two sockets in this state. Added to `RELAY_LIMITS`, with the reply limit, so
    both are reported at `/v1/info` and shared by both relays.
 4. **relay-node gets relay-wide caps, set by environment variables with defaults:** 1024
-   sockets, 10000 rooms, 256 MiB of buffered frames across all rooms, and a per-address
+   sockets, 50000 rooms, 256 MiB of buffered frames across all rooms, and a per-address
    socket cap that is **off by default**. Sockets and rooms beyond a cap are refused at the
    upgrade with HTTP 503, which the client treats as a network error. The byte cap goes
    through a new optional room hook, `admitBuffered(bytes)`, and is answered with
    `buffer_full` like a full slot buffer, so the room logic stays shared and pure. Refusals
    are logged at most once a minute per cap, so the log can't be flooded either.
+   *Why tombstones are evicted:* a room without buffered frames costs about 2 KB (measured:
+   100000 idle rooms took 213 MB of heap), and ending a room is as cheap as opening one, so
+   a plain room cap would let one client fill it with tombstones that last 7 days and lock
+   out every new room for that long. A new room therefore evicts the oldest tombstone that
+   has no open socket; an evicted tombstone behaves like one past max age (a join with its
+   token gets 4002, which clients already treat like 4003). Live rooms are never evicted,
+   since that would end real pairs, so a client that opens live rooms can still fill the cap
+   for up to 72 h (idle expiry); see "For the reviewer" below.
    *Why the per-address cap is off:* relay-node is meant to sit behind a TLS proxy, where
    every connection's TCP peer is the proxy. A default-on cap would cap the whole relay at
    that number. `PAIRWIRE_RELAY_TRUST_PROXY=1` takes the address from the last
@@ -862,6 +870,16 @@ Not done:
 - Unverified, for the maintainer: a Durable Object whose two offline buffers are both full
   stores about 2 MiB under one key. If that exceeds the storage backend's per-value limit,
   the `put` would fail. Worth a check before the hosted relay sees heavy offline use.
+
+For the reviewer:
+
+- **Room cap trade-off.** Once live rooms fill the room cap, new rooms are refused for up
+  to 72 h; without the cap, the same client could run the relay out of memory (about 2 KB
+  per room, so roughly a million rooms per 2 GB), taking existing rooms down too. The cap
+  protects existing pairs at the expense of new ones. A per-address limit on room creation
+  would address the fill, but on a proxied relay it depends on trusting the proxy's
+  header, like the per-address socket cap. Whether 50000 is the right default, and whether
+  room creation should be rate-limited per address, is a product decision.
 
 Consequences. `/v1/info` reports three new limits (`unjoinedSocketsPerRoom`,
 `relayRepliesPerMinute`, `relayReplyBurst`), so `npm run test:live` against the hosted relay

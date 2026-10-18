@@ -190,7 +190,7 @@ caps are logged at startup (`limits`, numbers only).
 |---|---|---|---|
 | `PAIRWIRE_RELAY_MAX_SOCKETS` | 1024 | open WebSockets on the relay | upgrade refused with HTTP 503 |
 | `PAIRWIRE_RELAY_MAX_SOCKETS_PER_ADDRESS` | 0 (off) | open WebSockets from one client address | upgrade refused with HTTP 503 |
-| `PAIRWIRE_RELAY_MAX_ROOMS` | 10000 | rooms held by the relay (with state, sockets or a timer; tombstones count) | upgrade to a room the relay doesn't hold refused with HTTP 503 |
+| `PAIRWIRE_RELAY_MAX_ROOMS` | 50000 | rooms held by the relay (with state, sockets or a timer; tombstones count) | an upgrade to a room the relay doesn't hold first evicts the oldest tombstone with no open socket; with none to evict, refused with HTTP 503 |
 | `PAIRWIRE_RELAY_MAX_BUFFERED_MIB` | 256 | offline-buffered frame bytes across all rooms, in MiB | `error buffer_full`, frame dropped |
 | `PAIRWIRE_RELAY_TRUST_PROXY` | unset | `1`: take the client address from the last `X-Forwarded-For` entry instead of the TCP peer (unset, empty or `0`: don't; anything else is a startup error) | — |
 
@@ -201,8 +201,16 @@ caps are logged at startup (`limits`, numbers only).
   it would cap the whole relay. Set `PAIRWIRE_RELAY_TRUST_PROXY=1` only behind a proxy
   that sets `X-Forwarded-For` and is the only way in; otherwise a client can put any
   address there. The address is held in memory to count sockets and is never logged.
+- A room without buffered frames costs about 2 KB of memory, so the room cap is a
+  backstop against running out of memory, not against a client that opens rooms to fill
+  it: once it is full of live rooms, new rooms are refused until rooms expire (72 h idle).
+  Tombstones (ended rooms) are evicted instead, oldest first, so ending rooms can't fill
+  it for 7 days. An evicted tombstone behaves like one past max age (Cloudflare
+  implementation): a join with its token gets 4002, which clients treat like 4003, and a
+  token-less join creates a fresh room. Its SQLite row is deleted. Evictions are logged as
+  `tombstone_evicted`, at most once a minute with a count.
 - Rooms loaded from SQLite at startup all count; if they exceed the room cap, the relay
-  still loads them and refuses new rooms until enough expire.
+  still loads them and refuses new rooms until enough expire or are evicted.
 - **Outbound queue per socket: 2 MiB** (not configurable). Before each frame it sends,
   the relay checks the socket's `bufferedAmount`; a frame that would take it over 2 MiB
   is not sent, and the socket is closed with 4008 `overloaded` and treated as a
