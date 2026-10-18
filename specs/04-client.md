@@ -1405,6 +1405,90 @@ Differences from Claude Code that the client handles:
   terminal command instead of `/pairwire:accept` (section 5, Hold mode, "Hints").
   Hop budget resets also happen through Codex's UserPromptSubmit hook.
 
+### Proposed (ADR-033): Gemini CLI, Cursor, and a Codex idle wake
+
+Status: proposed, not built. The facts come from the harnesses' docs (spike S11, docs
+part, `decisions.md`); everything marked **[S11]** waits for the hands-on part of S11, which
+runs the probe in `spikes/s11/` in a real session of each harness.
+
+**One rule for wake channels.** Gemini's `AfterAgent` reason, Cursor's `stop`
+`followup_message` and `codex queue` all reach the model as a new prompt, not as tool
+output. pairwire never puts peer text in them. They carry one fixed sentence,
+`WAKE_PROMPT` = "pairwire: new message(s) from your collaborator are waiting; call the
+pairwire inbox tool to read them.", and the messages arrive through `inbox`, labeled and
+sanitized as everywhere else (section 5). The `UserPromptSubmit`-equivalent hook treats a
+prompt equal to `WAKE_PROMPT` like a `<task-notification>` prompt: it does not reset the hop
+budget, so two agents waking each other stay bounded by the budgets (REQ-SAFE-3).
+
+**Finding the session without a session id.** Hooks get a session id from every harness,
+but an MCP server gets one only from Claude Code (environment) and Codex (`_meta`). For the
+others the owning server records its parent process (the harness) in a sidecar file,
+`bindings/<hash>.harness-pid`, not in the binding itself, because 0.1.x and 0.2.x read
+bindings with a strict schema; `run.sh` passes its own parent as `PAIRWIRE_HOOK_PPID`. A hook whose binding has no
+`owner_session` acts when the two pids are equal, and on its first action records its
+session id as `owner_session`, exactly as `_meta` does for Codex. If the harness starts
+hooks and MCP servers from different processes [S11], the room stays on D1 there.
+
+#### Gemini CLI
+
+`pairwire install --gemini` writes a Gemini extension to `~/.pairwire/bin/gemini/` and
+prints the one command the human runs, `gemini extensions link ~/.pairwire/bin/gemini`
+[S11: `link` versus `install <path>`]. The extension holds:
+
+- `gemini-extension.json` with the MCP server (`node <bundle> mcp`,
+  `env: {PAIRWIRE_HARNESS: "gemini", PAIRWIRE_PROJECT_DIR: "${workspacePath}"}`). Extension
+  servers start with only HOME, PATH and similar variables plus declared settings, so the
+  other `PAIRWIRE_*` variables become extension `settings` [S11]. Extensions cannot set
+  `trust`, so every pairwire tool call prompts: INV-4 holds by default. "Always allow" and
+  `--yolo` remove the prompt; whether the hook input names the mode is [S11], and until it
+  does the README states the risk as it does for Codex.
+- `hooks/hooks.json`: `SessionStart`, `BeforeAgent`, `AfterTool` and `AfterAgent`, mapped
+  to pairwire's `session-start`, `user-prompt-submit`, `post-tool-use` and `stop`. Gemini's
+  output format matches Claude Code's (`hookSpecificOutput.additionalContext`,
+  `decision: "block"` with a `reason`, `systemMessage`), so D2 works unchanged except that the
+  `AfterAgent` reason is `WAKE_PROMPT`, because Gemini sends it as a new prompt.
+- `skills/pairwire/SKILL.md` (the same file as the plugin's) and `GEMINI.md` pointing at it.
+- `commands/pairwire/{say,continue,accept,log}.toml`, each `!{node <bundle> ctl … {{args}}}`.
+  Gemini shell-escapes `{{args}}` inside `!{…}` and shows the exact command for confirmation
+  before running it, before the model sees the prompt, so these are human-only paths like
+  the Claude Code commands [S11: that the model cannot run a custom command itself, and the
+  hook-before-command order S10 found in Claude Code].
+
+No D3: Gemini has no asynchronous wake.
+
+#### Cursor
+
+`pairwire install --cursor` merges entries into `~/.cursor/mcp.json` and
+`~/.cursor/hooks.json` (with backups, idempotent, marked by the bundle path as for Codex)
+and installs the guide [S11: Cursor's user-level skills or rules location].
+
+- MCP server: `node <bundle> mcp` with `env: {PAIRWIRE_HARNESS: "cursor"}`. Whether
+  `${workspaceFolder}` resolves in the user-level file is [S11]; without it the server's cwd
+  must identify the project.
+- Hooks, through `PAIRWIRE_HOOK_DIALECT=cursor` set in each hook command, because Cursor's
+  fields differ: input `conversation_id` and `workspace_roots[0]` stand in for `session_id`
+  and `cwd`; output `additional_context` replaces `hookSpecificOutput.additionalContext`.
+  Events: `sessionStart` and `postToolUse` inject context (`sessionStart` is
+  fire-and-forget, so its context may arrive after the first turn), `beforeSubmitPrompt`
+  only resets the hop budget (it cannot inject), and `stop` returns
+  `followup_message: WAKE_PROMPT` when messages are waiting. Cursor caps follow-ups at
+  `loop_limit` (default 5) per conversation.
+- Approval: Cursor asks before running an MCP tool by default (INV-4). Its auto-run modes
+  and allowlists remove the prompt, and hooks cannot see them [S11]; the README says so.
+  REQ-SAFE-5's human-only warning has no channel in Cursor hooks (no `systemMessage`), so
+  `status` carries it instead.
+- Human-only commands: none in Cursor; the human uses `pairwire ctl` in a terminal, as in
+  Codex.
+
+#### Codex idle wake
+
+When an inbound item arrives, the room has no undelivered wake outstanding, and the owner's
+binding records a Codex `_meta.threadId`, the MCP server runs
+`codex queue --thread <threadId> --message <WAKE_PROMPT>` with `execFile` (no shell, fixed
+arguments). At most one wake per room is outstanding; it clears when a hook or `inbox`
+delivers. Off by default (`PAIRWIRE_DELIVERY=wake` opts in) until [S11-codex] confirms that
+`queue` starts a turn in an idle thread and only queues in a busy one.
+
 ### Any MCP harness
 
 `pairwire install --print-config <harness>` prints the MCP server entry for that harness
