@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "s11-SessionStart",
+            "type": "command",
+            "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs gemini SessionStart",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "s11-BeforeAgent",
+            "type": "command",
+            "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs gemini BeforeAgent",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "s11-AfterTool",
+            "type": "command",
+            "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs gemini AfterTool",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "name": "s11-AfterAgent",
+            "type": "command",
+            "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs gemini AfterAgent",
+            "timeout": 10000
+          }
+        ]
+      }
+    ]
+  }
+}

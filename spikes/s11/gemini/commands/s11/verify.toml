@@ -1,0 +1,6 @@
+description = "pairwire spike S11: does BeforeAgent run before this command's shell line?"
+prompt = """
+!{node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs gemini bang}
+
+Quote the S11-BANG line above exactly. Then say whether you can see any 6-digit code or the words FOR THE HUMAN ONLY anywhere. Do nothing else.
+"""

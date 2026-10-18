@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "s11": {
+      "command": "node",
+      "args": [
+        "/Users/tamazlezhava/Projects/pairwire/spikes/s11/server.mjs",
+        "cursor"
+      ],
+      "env": {
+        "S11_WORKSPACE": "${workspaceFolder}"
+      }
+    }
+  }
+}
