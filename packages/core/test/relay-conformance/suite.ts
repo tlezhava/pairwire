@@ -234,6 +234,29 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
         expect(await closed(socket)).toBe(4004);
       });
 
+      it("closes the oldest unjoined socket with 4008 beyond 8 per room, and lets the newest join", async () => {
+        const roomId = room();
+        const waiting: TestSocket[] = [];
+        for (let i = 0; i < RELAY_LIMITS.unjoinedSocketsPerRoom; i++) waiting.push(await relay.connect(roomId));
+        const newest = await relay.connect(roomId);
+        expect(await closed(waiting[0]!)).toBe(4008);
+        newest.sendText(JSON.stringify({ t: "join", v: 1, token: null }));
+        expect(await text(newest)).toMatchObject({ t: "joined", member: "a" });
+        await waiting[1]!.quiet();
+      });
+
+      it("sends at most 10 error replies at once to one socket, and still drops the frames", async () => {
+        const { a, b } = await pair();
+        for (let i = 0; i < RELAY_LIMITS.relayReplyBurst + 3; i++) a.socket.sendBinary(msg(i, RELAY_LIMITS.maxBinaryFrameBytes + 1));
+        for (let i = 0; i < RELAY_LIMITS.relayReplyBurst; i++) expect(await text(a.socket)).toEqual({ t: "error", code: "too_large" });
+        await a.socket.quiet();
+        await b.socket.quiet();
+        if (!options.fakeClock) return;
+        await relay.advance!(1 * S);
+        a.socket.sendBinary(msg(99, RELAY_LIMITS.maxBinaryFrameBytes + 1));
+        expect(await text(a.socket)).toEqual({ t: "error", code: "too_large" });
+      });
+
       it("closes with 4005 for a control frame over 1 KiB", async () => {
         const { socket } = await member(room());
         socket.sendText(JSON.stringify({ t: "leave", pad: "x".repeat(1100) }));

@@ -2,7 +2,7 @@
 // implementation). Uses the WebSocket Hibernation API only: never ws.accept(), pings are
 // answered by the auto-response, and each socket's id and slot live in its attachment.
 import { DurableObject } from "cloudflare:workers";
-import { RelayRoom, type Member, type Output, type RoomState } from "@pairwire/core";
+import { RelayRoom, type KnownSocket, type Member, type Output, type RoomState } from "@pairwire/core";
 import type { Env } from "./env.js";
 
 interface Attachment {
@@ -24,10 +24,10 @@ export class RoomObject extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('{"t":"ping"}', '{"t":"pong"}'));
     void ctx.blockConcurrencyWhile(async () => {
       const state = (await ctx.storage.get<RoomState>(STATE_KEY)) ?? null;
-      const sockets: Record<string, Member | null> = {};
+      const sockets: Record<string, KnownSocket> = {};
       for (const ws of ctx.getWebSockets()) {
         const a = attachmentOf(ws);
-        if (a) sockets[a.id] = a.member;
+        if (a) sockets[a.id] = { member: a.member };
       }
       this.#room = new RelayRoom({ now: () => Date.now(), state, sockets });
     });
