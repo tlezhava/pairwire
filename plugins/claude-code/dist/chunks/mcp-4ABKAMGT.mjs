@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   transcriptEvents
-} from "./chunk-BII22GGN.mjs";
+} from "./chunk-B6AWBEXB.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -10,6 +10,7 @@ import {
   claimUndelivered,
   coordFooter,
   coordStatusLines,
+  hasUndeliveredNotice,
   inboxCounts,
   loadView,
   readContractFile,
@@ -18,17 +19,17 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-2HBILADL.mjs";
+} from "./chunk-75KBPX3N.mjs";
 import {
   assertStatePrivate
-} from "./chunk-277PW5RP.mjs";
+} from "./chunk-TKLH36NC.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-MTXTLJYG.mjs";
+} from "./chunk-SPGYXN4T.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -50,7 +51,7 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-NXFQKJ6Z.mjs";
+} from "./chunk-VSMKZZ5B.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -135,7 +136,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-GA7MQSBW.mjs";
+} from "./chunk-CPUICV65.mjs";
 import {
   __commonJS,
   __require,
@@ -26825,7 +26826,7 @@ var RoomConnection = class {
       const notice = noticePeerChanged(before.peer, peer);
       this.#o.log.warn("peer_changed");
       this.#o.events?.peerChanged?.(notice);
-      this.#notice(notice);
+      if (!hasUndeliveredNotice(this.#o.home, this.#roomId, "peer_changed")) this.#notice(notice);
     }
     this.#emitStatus();
     this.#resendUnacked();

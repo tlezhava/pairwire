@@ -20,7 +20,7 @@ import {
   formatRelayAddress,
   parseRelayAddress,
   redact
-} from "./chunk-GA7MQSBW.mjs";
+} from "./chunk-CPUICV65.mjs";
 import {
   bytesToHex,
   randomBytes,
