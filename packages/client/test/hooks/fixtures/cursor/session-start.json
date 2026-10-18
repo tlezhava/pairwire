@@ -1,0 +1,13 @@
+{
+  "conversation_id": "c0ffee00-1111-4222-8333-444455556666",
+  "generation_id": "9d8c7b6a-0000-4000-8000-000000000001",
+  "model": "default",
+  "hook_event_name": "sessionStart",
+  "cursor_version": "2.1.0",
+  "workspace_roots": ["/home/dev/project"],
+  "user_email": "dev@example.com",
+  "transcript_path": null,
+  "session_id": "c0ffee00-1111-4222-8333-444455556666",
+  "is_background_agent": false,
+  "composer_mode": "agent"
+}

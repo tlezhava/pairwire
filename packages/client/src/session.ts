@@ -74,6 +74,14 @@ export interface SessionOptions {
 /** First line of a D3 wake (04 §6). */
 export const WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";
 
+/**
+ * REQ-SAFE-5 in Cursor (04 §10): its hooks have no channel to the human and can't see auto-run,
+ * so `status` says it.
+ */
+export const CURSOR_APPROVAL_WARNING =
+  "Approval: Cursor asks you before each message your agent sends, unless auto-run or an MCP allowlist covers the pairwire send tool; " +
+  "then messages go out without asking you first. pairwire cannot see that setting.";
+
 /** 04 §7 step 5. */
 const SENDS_PER_MINUTE = 20;
 const MINUTE = 60_000;
@@ -437,6 +445,7 @@ export class ClientSession {
         `Relay: ${state.relay ?? "default relay"}`,
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...(hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : []),
+        ...(harnessOf(this.#o.env) === "cursor" && isOpen(state) ? [CURSOR_APPROVAL_WARNING] : []),
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
           peer: state.peer ? displayName(state.peer.name) : "your collaborator",

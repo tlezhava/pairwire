@@ -1,38 +1,26 @@
-// `pairwire hook <event>`: delivery tier D2 in Claude Code (04 §6). Reads the hook JSON on
-// stdin and returns hook JSON for stdout. Synchronous and fast; never fails the harness:
-// any internal error means no output, logged to hook-errors.log.
+// `pairwire hook <event>`: delivery tier D2 in Claude Code (04 §6), and in other harnesses
+// through a hook dialect (04 §10). Reads the hook JSON on stdin and returns hook JSON for
+// stdout. Synchronous and fast; never fails the harness: any internal error means no output
+// (or the dialect's neutral answer), logged to hook-errors.log.
 import { displayName, renderForHook } from "@pairwire/core";
 import { adoptOwnerSession, readBinding, readHarnessPid, sessionOwnsBinding, type Binding } from "./binding.js";
 import { DEFAULT_CONFIG, loadConfig, type Config } from "./config.js";
+import { hookDialect, type HookDialect, type HookInput, type HookOutcome } from "./hook-dialect.js";
 import { hookErrorLogger } from "./log.js";
 import { isHarnessProcess, type HookProcess } from "./process-tree.js";
 import { resolveProjectDir } from "./project.js";
 import { renderItemsFor } from "./coord.js";
 import { claimUndelivered } from "./room-files.js";
 import { isOpen, readState, updateState, type RoomState } from "./state.js";
-import { isHumanPrompt } from "./wake.js";
+import { announceWake, isHumanPrompt } from "./wake.js";
 
 export const HOOK_EVENTS = ["session-start", "user-prompt-submit", "post-tool-use", "stop"] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
-
-const EVENT_NAME: Record<HookEvent, string> = {
-  "session-start": "SessionStart",
-  "user-prompt-submit": "UserPromptSubmit",
-  "post-tool-use": "PostToolUse",
-  stop: "Stop",
-};
 
 /** Permission modes in which `send` runs without an approval prompt (S6, ADR-017). */
 const UNPROMPTED_MODES = new Set(["bypassPermissions", "auto"]);
 
 export const STOP_REASON_LEAD = "pairwire: new message(s) from your collaborator; handling them before stopping.";
-
-interface HookInput {
-  session_id?: string;
-  cwd?: string;
-  permission_mode?: string;
-  prompt?: string;
-}
 
 export interface HookOptions extends Pick<HookProcess, "ppid" | "platform" | "processTable"> {
   home: string;
@@ -42,25 +30,27 @@ export interface HookOptions extends Pick<HookProcess, "ppid" | "platform" | "pr
 
 /** Returns the JSON to print, or "" for no output. Never throws. */
 export function runHook(event: HookEvent, stdin: string, o: HookOptions): string {
+  const dialect = hookDialect(o.env);
+  let outcome: HookOutcome | null = null;
   try {
-    const out = hook(event, parseInput(stdin), o);
-    return out ? JSON.stringify(out) : "";
+    outcome = hook(event, dialect.input(parseInput(stdin)), dialect, o);
   } catch (e) {
     hookErrorLogger(o.home).error("hook_failed", e, { hook: event });
-    return "";
   }
+  const out = dialect.output(event, outcome);
+  return out ? JSON.stringify(out) : "";
 }
 
-function parseInput(stdin: string): HookInput {
+function parseInput(stdin: string): Record<string, unknown> {
   try {
     const v = JSON.parse(stdin) as unknown;
-    return typeof v === "object" && v !== null ? (v as HookInput) : {};
+    return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : {};
   } catch {
     return {};
   }
 }
 
-function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string, unknown> | null {
+function hook(event: HookEvent, input: HookInput, dialect: HookDialect, o: HookOptions): HookOutcome | null {
   const project = resolveProjectDir(o.env, input.cwd ?? o.cwd);
   const binding = readBinding(o.home, project);
   // Only the owning session's hooks act, so a passive session never takes the owner's mail.
@@ -76,12 +66,13 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
     // except that they hold peer messages (04 §2: an unreadable config fails closed)
   }
 
-  const out: Record<string, unknown> = {};
-  const warning = bypassWarning(event, input, state, roomId, o.home);
-  if (warning) out.systemMessage = warning;
+  const out: HookOutcome = {};
+  // A dialect without a warning channel records nothing as warned (04 §10).
+  const warning = dialect.warns ? bypassWarning(event, input, state, roomId, o.home) : null;
+  if (warning) out.warning = warning;
 
   if (event === "session-start") {
-    addContext(out, event, reminder(state));
+    out.context = reminder(state);
     return out;
   }
   if (event === "user-prompt-submit" && isHumanPrompt(input.prompt ?? "")) {
@@ -89,18 +80,21 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
   }
   if (config.delivery === "pull") return finish(out);
   if (event === "stop" && !config.autoContinue) return finish(out);
+  // Cursor's prompt hook can't show anything, so it claims nothing.
+  if (!dialect.canShow(event)) return finish(out);
+  // A fixed-text wake marks nothing delivered: the items stay for inbox or a later context.
+  if (event === "stop" && dialect.wakeText) {
+    if (announceWake(o.home, roomId, config.hold)) out.wake = true;
+    return finish(out);
+  }
 
   const rendered = claimUndelivered(o.home, roomId, { hold: config.hold }, (items, ledger) => {
     const r = renderForHook(renderItemsFor(o.home, roomId, items, { hold: config.hold, now: Date.now(), ledger }));
     return { ids: r.deliveredIds, result: r };
   });
   if (rendered.text !== null) {
-    if (event === "stop") {
-      out.decision = "block";
-      out.reason = `${STOP_REASON_LEAD}\n\n${rendered.text}`;
-    } else {
-      addContext(out, event, rendered.text);
-    }
+    if (event === "stop") out.blockReason = `${STOP_REASON_LEAD}\n\n${rendered.text}`;
+    else out.context = rendered.text;
   }
   return finish(out);
 }
@@ -121,12 +115,8 @@ function ownsBinding(binding: Binding | null, session: string | undefined, proje
   return true;
 }
 
-function finish(out: Record<string, unknown>): Record<string, unknown> | null {
+function finish(out: HookOutcome): HookOutcome | null {
   return Object.keys(out).length > 0 ? out : null;
-}
-
-function addContext(out: Record<string, unknown>, event: HookEvent, text: string): void {
-  out.hookSpecificOutput = { hookEventName: EVENT_NAME[event], additionalContext: text };
 }
 
 /**
