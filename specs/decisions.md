@@ -792,7 +792,8 @@ tighten their mechanisms.
    selector, a Hangul filler or a combining mark there. The same worked for a display
    name closing `<pairwire_notice>`, for inline contract content (which passed the
    invariance check) and for `<pairwire_transcript>`. Decision: step 3 matches a
-   skeleton. After each `<` (and its compatibility forms U+FE64, U+FF1C) it skips
+   skeleton. After each `<` (and U+FE64, U+FF1C and U+226E, which NFC makes of `<` and
+   U+0338) it skips
    whitespace, combining marks and default-ignorable code points anywhere, allows a
    slash or two (`/`, `\` or a listed look-alike; two for JSON's `<\/`), folds the other characters by NFKD without
    marks and lowercased, and checks whether they begin with one of the keywords. Matching
