@@ -189,6 +189,14 @@ New risks and their mitigations:
     of a project file the local agent named. For a short or guessable file the hash reveals
     its content. The dot-segment and sensitive-name rules, the content secret scan and the
     approval prompt narrow this; they don't remove it.
+13. **(ADR-031) A relay can deny service.** It can drop or delay any frame, and nothing in
+    v1 stops that. Clients validate its control frames and keep an epoch floor across
+    connections (`02-protocol.md` §4.1, §5), so a hostile relay can't crash a client or
+    replay a peer HELLO for an epoch the client has seen. It can still withhold an epoch
+    from one client and hand it that epoch later together with the peer's recorded HELLO:
+    the client then holds a session nobody can read, and messages stall until the next
+    real handshake. Confidentiality is unaffected, because no one holds the matching
+    private key.
 
 ## Security review gate
 

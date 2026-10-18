@@ -777,6 +777,84 @@ text or the protocol.
   sent no reply led `ctl continue` to write `state.json` behind a live owner. It now falls
   back only when nothing accepts the connection (or the owner pid is dead).
 
+## ADR-031 Client robustness against a hostile relay and local races
+
+Status: proposed (2026-10-18), from the internal pre-1.0 security review (areas "crypto"
+and "local"). Spec text: `02-protocol.md` §4.1 and §5, `04-client.md` section 3 (lock
+details, `epoch`) and section 10 (Codex install), `05-security.md` residual risk 13. No
+INV-* text changes; this brings the client in line with the existing rule that every
+external input is validated, and tightens ADR-012's epoch binding.
+
+1. **Relay text frames are validated** (`relayFrameSchema`, `parseRelayFrame` in
+   `packages/core`). The client fed `epoch`, `retry_after` and `expires_at` from the relay
+   into the handshake, the timers and `state.json` unchecked. A `peer_joined` with
+   `epoch: 4294967296` (or none, or 1.5) threw out of the `ws` message listener and, with no
+   `uncaughtException` handler, took the MCP server down on every restart; a huge
+   `retry_after` overflowed `setTimeout` (Node clamps to 1 ms) and spun the pump. Now a
+   frame with a known `t` that fails its schema, or text that isn't a JSON object with a
+   string `t`, is a relay protocol error: logged with its type and the failing field names
+   only, then the socket is closed and the client reconnects with backoff. Unknown `t`
+   values are ignored, as before, for forward compatibility. Every socket handler runs
+   inside a guard, so an exception (a bad frame, a full disk) is logged by error name and
+   treated the same way instead of reaching the socket library. Every timer delay is
+   clamped to 0..2^31-1 ms, and `retry_after` is bounded at 3600 s. Not halting: a relay
+   that sends bad frames could already drop the connection at will, so reconnecting costs
+   nothing new, while a halt would turn one bad frame into a dead room.
+2. **Epoch floor across connections.** Each connection made a new `Handshake` starting at
+   epoch -1, so a relay could answer a reconnect with an epoch it had already used, replay
+   the peer's recorded HELLO for it, and rotate the client onto a session whose peer key no
+   longer exists, silently (no notice, `session: true`). The client now persists the
+   highest epoch it has seen (from `joined` and `peer_joined`) and seeds each `Handshake`
+   with it as a floor; HELLOs at or below it are neither sent nor accepted, which also
+   covers the epoch of the current stored session. A `joined` at or below the floor, or a
+   `peer_joined` at or below the connection's latest epoch (or before `joined`), is a relay
+   protocol error. Choices:
+   - **Stored in the existing `epoch` field, not a new one.** `state.json` is parsed with a
+     strict schema in 0.1.x and 0.2.0 (`z.strictObject`), so a new field would make an
+     older client that reads the file after a downgrade, or an older session still running
+     after an upgrade, refuse the room. The old meaning (epoch of the latest `joined`) is a
+     lower bound of the new one, and an honest relay never lowers it, so both versions can
+     share the file.
+   - **Refused joins reconnect, they don't halt, and they reset the backoff.** The honest
+     ways an epoch can go back are a relay-node SQLite write that failed (logged, room kept
+     in memory) followed by a restart, and a restore from backup. Each refused `joined` is
+     still an accepted socket that raises the relay's epoch, so the client climbs back over
+     its floor at about one second per lost epoch. Resetting the backoff gives a hostile
+     relay nothing it couldn't already do by sending a valid `joined` and closing. A deleted
+     or recreated room, or an in-memory relay-node restart, never reaches this check: the
+     token no longer matches, the relay answers 4002 and the room ends locally.
+   - The floor can't help when the relay never showed the client an epoch at all; that and
+     plain frame dropping are documented as residual risk 13 (denial of service only).
+3. **The mkdir lock breaks and releases atomically.** The stale verdict and the `rmdir`
+   were separate steps, so two processes that found the same stale lock could both enter,
+   and a holder's `finally` could remove a newer holder's lock. The review suggested an
+   owner token file inside the lock directory. That would break 0.1.x and 0.2.0, which
+   share these files and break a stale lock with a plain `rmdir`: on a non-empty directory
+   it throws, their `catch` loops straight back to `mkdir` before the deadline check, and
+   they spin forever (an old session still running after an upgrade, or a terminal `ctl`
+   from the other install). So the directory stays empty and its identity (device, inode,
+   birth time, from `stat`) is the owner token. Breaking happens under a second lock,
+   `<file>.lock.break`, which serializes breakers: the breaker re-checks that the lock is
+   still stale and still the directory it judged, renames it to a unique name (only one
+   rename of a given directory can win) and removes it only if the renamed directory is
+   the judged one, else renames it back. Release renames its own lock aside the same way
+   and removes it only if it is the directory it created. If the identity check after the
+   rename fails, the rename back can still replace an empty lock created in that instant on
+   POSIX; that needs a holder suspended past 5 s plus two more contenders within
+   microseconds, against two contenders and a stale lock before. On Windows, where a rename
+   can fail while another process looks at the directory (EPERM, already treated as
+   contention there), release falls back to checking the identity and removing in place.
+4. **`install --codex` quotes for the shell and for TOML.** The hook command and the
+   `config.toml` path came from `JSON.stringify`: `$` and backticks in a path expanded in
+   `sh`, and U+007F or a lone surrogate made `config.toml` unparseable, which stops Codex
+   itself. The hook path is now single-quoted (`'` as `'\''`); the TOML path is a literal
+   string, or a basic string with `\` and `"` escaped when it contains `'`. Paths with
+   control characters or lone surrogates are refused with a clear error before any file
+   changes. `isOurs()` still recognizes the raw path and the 0.2.0 `JSON.stringify` form
+   besides the new one, so a reinstall over 0.2.0 replaces the old entries instead of
+   doubling them. The path comes only from `PAIRWIRE_HOME`/`HOME`, which the user controls,
+   so this fixes broken installs, not an attack.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
