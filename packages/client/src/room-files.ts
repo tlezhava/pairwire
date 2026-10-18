@@ -213,6 +213,12 @@ export interface InboxCounts {
   held: number;
 }
 
+/** Whether a local notice of this event is still waiting for the agent (04 §3, Peer identity). */
+export function hasUndeliveredNotice(home: string, roomId: string, event: string): boolean {
+  const l = readLedger(home, roomId);
+  return readInbox(home, roomId).some((e) => e.source === "local" && e.event === event && !l.ids.has(e.id));
+}
+
 export function inboxCounts(home: string, roomId: string, hold: boolean): InboxCounts {
   const l = readLedger(home, roomId);
   const counts: InboxCounts = { messages: 0, notices: 0, held: 0 };

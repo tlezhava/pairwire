@@ -5,7 +5,7 @@ import {
   errorCode,
   expiresAt,
   readState
-} from "./chunk-NXFQKJ6Z.mjs";
+} from "./chunk-VSMKZZ5B.mjs";
 import {
   roomFile
 } from "./chunk-GVGSGJLD.mjs";
@@ -14,7 +14,7 @@ import {
   isCollabKind,
   redact,
   sanitizeText
-} from "./chunk-GA7MQSBW.mjs";
+} from "./chunk-CPUICV65.mjs";
 
 // packages/client/src/transcript.ts
 import { appendFileSync, readFileSync } from "node:fs";
@@ -100,9 +100,11 @@ function transcriptEvents(home, roomId, now, onError, sessionHasCurrent, peerHas
     },
     inbound: (entry) => {
       if (entry.source === "peer") return write(peerMessage(entry, roomExpiresAt()));
-      const warn = entry.event === "peer_changed" || entry.event === "wrong_key";
-      write((warn ? warningLine : noticeLine)(entry.text, entry.received_at));
+      if (entry.event === "peer_changed") return;
+      write((entry.event === "wrong_key" ? warningLine : noticeLine)(entry.text, entry.received_at));
     },
+    // A changed peer identity is a warning for the human, every time (04 §3, ADR-030).
+    peerChanged: (notice) => write(warningLine(notice.text, now())),
     delivered: (ids) => write(deliveredLine(ids, now()))
   };
 }

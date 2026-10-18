@@ -121,10 +121,13 @@ export function transcriptEvents(
     },
     inbound: (entry) => {
       if (entry.source === "peer") return write(peerMessage(entry, roomExpiresAt()));
-      // A changed peer identity or a wrong key is a warning for the human (04 §3, 02 §4.2).
-      const warn = entry.event === "peer_changed" || entry.event === "wrong_key";
-      write((warn ? warningLine : noticeLine)(entry.text, entry.received_at));
+      // Written from `peerChanged`, which fires for every change even when no notice is queued.
+      if (entry.event === "peer_changed") return;
+      // A wrong key is a warning for the human (02 §4.2).
+      write((entry.event === "wrong_key" ? warningLine : noticeLine)(entry.text, entry.received_at));
     },
+    // A changed peer identity is a warning for the human, every time (04 §3, ADR-030).
+    peerChanged: (notice) => write(warningLine(notice.text, now())),
     delivered: (ids) => write(deliveredLine(ids, now())),
   };
 }

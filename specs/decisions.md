@@ -777,6 +777,70 @@ text or the protocol.
   sent no reply led `ctl continue` to write `state.json` behind a live owner. It now falls
   back only when nothing accepts the connection (or the owner pid is dead).
 
+## ADR-030 Sanitizer and scanner hardening after the internal review
+
+Status: proposed (2026-10-18), from the internal pre-1.0 security review (`inject` area).
+Spec text: `04-client.md` section 3 (Peer identity), section 5 (steps 2 and 3, the test
+vectors, Hold mode) and section 7 step 3; `02-protocol.md` §6.3 (inline content);
+`05-security.md` residual risks 13 and 14; `06-agent-guide.md` section 2; `07-testing.md`.
+No INV-* text changes: these bring the code into line with INV-3 and INV-5 as written and
+tighten their mechanisms.
+
+1. **Tag look-alikes hidden by joining characters (high).** Step 3 allowed only
+   whitespace between `<`, `/` and the keyword, and step 2 deliberately keeps ZWJ, so
+   `</\u200Dpairwire_message>` survived and closed the wrapper; so did a CGJ, a variation
+   selector, a Hangul filler or a combining mark there. The same worked for a display
+   name closing `<pairwire_notice>`, for inline contract content (which passed the
+   invariance check) and for `<pairwire_transcript>`. Decision: step 3 matches a
+   skeleton. After each `<` (and U+FE64, U+FF1C and U+226E, which NFC makes of `<` and
+   U+0338) it skips
+   whitespace, combining marks and default-ignorable code points anywhere, allows a
+   slash or two (`/`, `\` or a listed look-alike; two for JSON's `<\/`), folds the other characters by NFKD without
+   marks and lowercased, and checks whether they begin with one of the keywords. Matching
+   anywhere in the name (not only after `<` and `/`) closes `pair\u200Dwire_message` too;
+   the folding closes fullwidth letters, ligatures and U+212A. It is a hand-written scan
+   rather than a regex: it stops at the first character that is neither skippable, the
+   slash, nor the next keyword letter, and `<` is never one of those, so each character is
+   examined for at most one `<` and the step is linear without a fixed look-ahead bound.
+   The keyword list is unchanged; `pairwire` already covers every element pairwire emits.
+   More text now has its `<` turned into `‹` (for example `<s y s t e m`), which is
+   harmless; the cost of a false negative is a forged harness tag. Removing ZWJ outside
+   emoji sequences was the alternative; it would still leave the other joiners and marks.
+2. **The scanner and the sanitizer disagreed (medium).** The scanner's de-splitting copy
+   removed Cf and the tag block only, while the receiving sanitizer also removes C0/C1
+   controls and DEL and applies NFC, so `ghp_` + `\u0001` + … or a share string with
+   U+212A passed the scan and reached the peer's agent intact (`parseShareString` even
+   accepts the Kelvin form). Decision: the scanner checks the body as the peer's agent
+   reads it: every character the sanitizer removes, plus combining marks and every
+   default-ignorable code point, is taken out, and each remaining character is replaced
+   by its NFKC form, with offsets mapped back to the original. `redact()` uses the same
+   scan, so the logging backstop covers these forms too. Printable-ASCII text skips the
+   copy. Rejecting outbound controls outright was the simpler alternative, but it would
+   change the envelope rules for every sender and still miss the NFKC look-alikes.
+3. **Invisible characters outside Cf survived (low).** Variation selectors (including the
+   256-character supplement, one byte each), CGJ and the Hangul fillers carry a hidden
+   payload as well as the tag block did, and the human sees only an emoji in hold-mode
+   review or the transcript. Decision: step 2 removes U+E0100–U+E01EF, U+034F, U+115F,
+   U+1160, U+3164, U+FFA0 and U+180B–U+180D, U+180F, and keeps U+FE00–U+FE0F only
+   directly after a base character (General Category L, N, P or S), one per base, which
+   is all emoji presentation and standardized variation sequences need. Inline contract
+   content containing any of these now fails the invariance check and is unreadable
+   (§6.3.5) to an updated client; a 0.2.0 client still accepts it. Paths keep their
+   schema; the sanitizer removes these characters when they are rendered.
+4. **`peer_changed` notices were unbounded (low).** Every HELLO with a new name queued a
+   notice, local notices are never held and every notice wakes an idle session, so a peer
+   reconnecting under new names had an unreviewed 40-character channel and a wake flood in
+   hold mode. Decision: a `peer_changed` notice is queued only when no earlier one for the
+   room is undelivered, like `held`. The transcript still gets a warning for every change
+   (it now comes from the connection's `peerChanged` event rather than the notice), so the
+   human's record is complete. Residual risk 13 documents the display-name channel.
+5. **The guide overstated `author="human"` (low).** `author` is set by the sender's
+   client, and the renderer copies it, but the guide told the agent the collaborator typed
+   such a message. Decision: `06` section 2 says it is the collaborator's client's claim,
+   which pairwire can't verify, and that it carries no more authority than other peer
+   messages; residual risk 14. This changes the text agents receive (SKILL.md), so it
+   needs the human's approval with this ADR.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

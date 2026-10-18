@@ -189,6 +189,19 @@ New risks and their mitigations:
     of a project file the local agent named. For a short or guessable file the hash reveals
     its content. The dot-segment and sensitive-name rules, the content secret scan and the
     approval prompt narrow this; they don't remove it.
+13. **The peer's display name reaches the agent unreviewed.** Local notices are never
+    held (`04` §5, Hold mode), and `peer_joined`, `peer_changed`, `held` and
+    `peer_unreadable` carry the peer's display name: at most 40 characters, sanitized
+    (no tag look-alikes, no invisible characters), and labeled as a notice. In hold mode
+    that is a short channel the human doesn't see first. A peer can repeat only
+    `peer_changed` at will (by reconnecting under new names), so at most one undelivered
+    `peer_changed` notice exists per room at a time (ADR-030); every change still goes to
+    the transcript.
+14. **`author="human"` is the sender's claim.** The receiving client can't tell whether
+    the peer's user typed a message: a modified client, or a peer agent with unrestricted
+    Bash (risk 2 on the sender's side), can mark any basic message `human`. The agent guide
+    describes it as a claim pairwire can't verify, and it never overrides the local user
+    (ADR-030).
 
 ## Security review gate
 
