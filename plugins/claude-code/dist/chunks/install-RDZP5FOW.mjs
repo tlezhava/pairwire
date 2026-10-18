@@ -5,7 +5,7 @@ import {
 } from "./chunk-HDMYU3UC.mjs";
 import {
   HARNESSES
-} from "./chunk-2KWGILWH.mjs";
+} from "./chunk-7VVD7K5U.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/install.ts
@@ -37,14 +37,42 @@ function defaultInstallOptions(env, out, pairwireHome) {
   const userHome = env.HOME || homedir();
   return { sourceRoot, pairwireHome, userHome, codexHome: env.CODEX_HOME || join(userHome, ".codex"), out };
 }
-var tomlString = (s) => JSON.stringify(s);
+function shellQuote(s) {
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+function tomlPath(s) {
+  return s.includes("'") ? `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"` : `'${s}'`;
+}
+function pathProblem(p) {
+  for (let i = 0; i < p.length; i++) {
+    const c = p.charCodeAt(i);
+    if (c <= 31 || c >= 127 && c <= 159) return "a control character";
+    if (c >= 55296 && c <= 56319) {
+      const next = p.charCodeAt(i + 1);
+      if (next >= 56320 && next <= 57343) {
+        i++;
+        continue;
+      }
+      return "an unpaired UTF-16 surrogate";
+    }
+    if (c >= 56320 && c <= 57343) return "an unpaired UTF-16 surrogate";
+  }
+  return null;
+}
+function assertUsablePath(p, what) {
+  const problem = pathProblem(p);
+  if (problem) {
+    throw new InstallError(`The ${what} path ${JSON.stringify(p)} contains ${problem}, which Codex's config.toml can't hold. Set PAIRWIRE_HOME to a path without it.`);
+  }
+}
 function codexToml(bundle) {
+  assertUsablePath(bundle, "pairwire bundle");
   return [
     "[mcp_servers.pairwire]",
     'command = "node"',
-    `args = [${tomlString(bundle)}, "mcp"]`,
+    `args = [${tomlPath(bundle)}, "mcp"]`,
     'env = { PAIRWIRE_HARNESS = "codex" }',
-    `env_vars = [${ENV_VARS.map(tomlString).join(", ")}]`,
+    `env_vars = [${ENV_VARS.map((v) => JSON.stringify(v)).join(", ")}]`,
     "startup_timeout_sec = 20"
   ].join("\n");
 }
@@ -56,7 +84,7 @@ function stripBlock(text) {
   return (text.slice(0, start).trimEnd() + "\n" + text.slice(end + MARK_END.length).replace(/^\n+/, "")).replace(/^\n+$/, "");
 }
 function isOurs(command, runSh) {
-  return typeof command === "string" && (command.includes(runSh) || command.includes(JSON.stringify(runSh)));
+  return typeof command === "string" && [runSh, JSON.stringify(runSh), shellQuote(runSh)].some((form) => command.includes(form));
 }
 function withoutPairwire(file, runSh) {
   const hooks = {};
@@ -109,6 +137,9 @@ var Installer = class {
     for (const p of ["dist/pairwire.mjs", "hooks/run.sh", "skills/pairwire/SKILL.md"]) {
       if (!existsSync(join(src, p))) throw new InstallError(`The pairwire bundle at ${src} is incomplete (missing ${p}).`);
     }
+    assertUsablePath(this.#o.pairwireHome, "pairwire state directory");
+    assertUsablePath(this.bundle, "pairwire bundle");
+    assertUsablePath(this.runSh, "hook script");
     const config = existsSync(this.configPath) ? readFileSync(this.configPath, "utf8") : "";
     const outside = stripBlock(config);
     if (/^\s*\[mcp_servers\.pairwire\]/m.test(outside) || /^\s*\[mcp_servers\.["']pairwire["']\]/m.test(outside)) {
@@ -142,7 +173,7 @@ ${MARK_END}
     for (const event of CODEX_HOOK_EVENTS) {
       const group = {
         ...event === "PostToolUse" ? { matcher: "*" } : {},
-        hooks: [{ type: "command", command: `sh ${JSON.stringify(this.runSh)} ${EVENT_ARG[event]}`, timeout: 10 }]
+        hooks: [{ type: "command", command: `sh ${shellQuote(this.runSh)} ${EVENT_ARG[event]}`, timeout: 10 }]
       };
       next.hooks[event] = [...next.hooks[event] ?? [], group];
     }
@@ -211,6 +242,9 @@ export {
   MARK_BEGIN,
   MARK_END,
   defaultInstallOptions,
+  pathProblem,
   printConfig,
-  runningPluginRoot
+  runningPluginRoot,
+  shellQuote,
+  tomlPath
 };

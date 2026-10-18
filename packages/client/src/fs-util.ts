@@ -1,5 +1,6 @@
 // Private directories, atomic writes and mkdir locks for the local state (04 §3, INV-9).
 // Synchronous on purpose: hooks are short-lived processes and every file is small.
+import { randomBytes } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
@@ -78,39 +79,143 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** True if this process created `path` now; false if it exists (or is being removed, on Windows). */
+function tryMkdir(path: string): boolean {
+  try {
+    mkdirSync(path, { mode: PRIVATE_DIR_MODE });
+    return true;
+  } catch (e) {
+    // Windows answers EPERM while another process is still removing the directory.
+    if (!isContention(e)) throw e;
+    return false;
+  }
+}
+
+/**
+ * Which directory is at `path`: device, inode and birth time. Lock directories stay empty
+ * (0.1.x and 0.2.0 break stale locks with a plain rmdir), so this identity is the owner
+ * token (04 §3, ADR-031).
+ */
+export function lockIdentity(path: string): string {
+  const s = statSync(path, { bigint: true });
+  return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
+}
+
+export type LockInspection = { state: "gone" } | { state: "fresh" } | { state: "stale"; id: string };
+
+/** Whether the lock directory at `lock` exists and, if so, whether it is past LOCK_STALE_MS. */
+export function inspectLock(lock: string): LockInspection {
+  try {
+    const s = statSync(lock, { bigint: true });
+    if (Date.now() - Number(s.mtimeMs) <= LOCK_STALE_MS) return { state: "fresh" };
+    return { state: "stale", id: `${s.dev}:${s.ino}:${s.birthtimeNs}` };
+  } catch {
+    return { state: "gone" };
+  }
+}
+
+/**
+ * Removes the directory at `path` only if it is still the one with identity `id`: it is
+ * renamed to a unique name first (only one rename of a directory can win), checked, and
+ * put back if it turns out to be another one. Returns whether it removed it.
+ */
+function removeIfSame(path: string, id: string): boolean {
+  const aside = `${path}.${randomBytes(8).toString("hex")}.gone`;
+  try {
+    renameSync(path, aside);
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return false;
+    // Windows can refuse to rename a directory another process is looking at: check in place.
+    try {
+      if (lockIdentity(path) !== id) return false;
+      rmdirSync(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  let same: boolean;
+  try {
+    same = lockIdentity(aside) === id;
+  } catch {
+    return false;
+  }
+  if (!same) {
+    try {
+      renameSync(aside, path);
+      return false;
+    } catch {
+      // Someone took the path meanwhile; the directory we moved can't go back.
+    }
+  }
+  try {
+    rmdirSync(aside);
+  } catch {
+    // not empty or already gone: an older client's or a newer holder's business
+  }
+  return same;
+}
+
+/**
+ * Breaks the stale lock `lock` whose identity was `judged` when it was found stale. Breakers
+ * take `<lock>.break` first, so two processes that judged the same stale lock can't both
+ * break it, and the second one never removes the lock the first then created (ADR-031).
+ * Returns whether the stale lock is gone.
+ */
+export function breakStaleLock(lock: string, judged: string): boolean {
+  const breaker = `${lock}.break`;
+  if (!tryMkdir(breaker)) {
+    const stuck = inspectLock(breaker);
+    if (stuck.state === "stale") removeIfSame(breaker, stuck.id); // a breaker that died mid-break
+    return false;
+  }
+  let breakerId: string | null = null;
+  try {
+    breakerId = lockIdentity(breaker);
+    const now = inspectLock(lock);
+    if (now.state === "gone") return true;
+    return now.state === "stale" && now.id === judged && removeIfSame(lock, judged);
+  } finally {
+    if (breakerId !== null) removeIfSame(breaker, breakerId);
+    else rmdirSafe(breaker);
+  }
+}
+
+function rmdirSafe(path: string): void {
+  try {
+    rmdirSync(path);
+  } catch {
+    // gone already
+  }
+}
+
 /**
  * Runs `fn` while holding `<file>.lock` (a directory, created atomically by mkdir). A lock
- * older than LOCK_STALE_MS is broken.
+ * older than LOCK_STALE_MS is broken; breaking and releasing check the directory's identity,
+ * so neither ever removes another holder's lock (04 §3).
  */
 export function withLock<T>(file: string, fn: () => T): T {
   const lock = `${file}.lock`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let id: string;
   for (;;) {
-    try {
-      mkdirSync(lock, { mode: PRIVATE_DIR_MODE });
-      break;
-    } catch (e) {
-      // Windows answers EPERM while another process is still removing the lock directory.
-      if (!isContention(e)) throw e;
-    }
-    try {
-      if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
-        rmdirSync(lock);
-        continue;
+    if (tryMkdir(lock)) {
+      try {
+        id = lockIdentity(lock);
+        break;
+      } catch {
+        continue; // removed under us before we could look: try again
       }
-    } catch {
-      continue; // released between our mkdir and stat
     }
+    const seen = inspectLock(lock);
+    if (seen.state === "gone") continue; // released between our mkdir and stat
+    if (seen.state === "stale" && breakStaleLock(lock, seen.id)) continue;
     if (Date.now() > deadline) throw new LockTimeoutError(file);
     sleepSync(10);
   }
   try {
     return fn();
   } finally {
-    try {
-      rmdirSync(lock);
-    } catch {
-      // already broken as stale by another process
-    }
+    removeIfSame(lock, id);
   }
 }

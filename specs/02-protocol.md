@@ -90,6 +90,42 @@ most **one** HELLO per epoch. HELLOs for an older epoch, a second HELLO for the 
 epoch, and HELLOs for an epoch the client has not seen yet are dropped and counted. (A
 peer can only restart its handshake by reconnecting, which creates a new epoch.)
 
+**Epoch floor across connections (ADR-031).** The binding above would hold only within one
+connection if every new connection started from nothing: a relay could then hand a
+reconnecting client an epoch it had already used, replay the peer's HELLO recorded for it,
+and leave the client on a session whose peer key was wiped long ago. So:
+
+- The client persists the highest epoch it has seen for the room (room state `epoch`,
+  `04-client.md` section 3), from `joined` and from `peer_joined`. The value only ever
+  increases, and it is written before the client sends a HELLO for that epoch.
+- Each connection starts its handshake state with that value as its **floor**. It sends no
+  HELLO and accepts none for an epoch at or below the floor. This also covers the epoch of
+  the current stored session, which is never above the floor.
+- An honest relay raises the epoch on every accepted socket and stores it with the room, so
+  a `joined` on a new connection always carries an epoch above the floor, and each
+  `peer_joined` carries one above the latest epoch of that connection (and comes after
+  `joined`, rule 4 of section 5). A `joined` or `peer_joined` that breaks this is a **relay
+  protocol error** (section 5): the client takes nothing from the frame, closes the socket
+  and reconnects. It never halts the room over it.
+
+Legitimate cases, none of which locks an honest user out:
+
+- **Room deleted and recreated** (max age, `deleteAll()` on Cloudflare) or **relay-node
+  restarted with in-memory state**: the member token no longer matches, the relay closes
+  with 4002 and the client ends the room locally (section 5, rule 2). A recreated room is
+  only ever joined with `token: null`, by a client with a fresh room state and no floor.
+- **A relay whose stored epoch went back** (relay-node with SQLite after a failed write it
+  logged and survived, then a restart; a restore from backup): each refused `joined` is
+  still an accepted socket that raises the relay's epoch by one, and so is each reconnect
+  of the peer. The refused `joined` resets the reconnect backoff like any accepted join, so
+  the client climbs back above its floor at about one reconnect per lost epoch, roughly a
+  second each.
+
+The floor stops replays of HELLOs for epochs the client has seen. A relay that never
+showed a client some epoch can still give it that epoch later with a recorded peer HELLO;
+the result is the same denial of service as dropping frames, which a relay can always do
+(`05-security.md`, residual risk 15).
+
 ### 4.2 HELLO contents
 
 ```
@@ -180,6 +216,27 @@ Relay → client:
 | `{"t":"peer_left","reason":"disconnected"}` | The other member's socket closed; their slot is kept. |
 | `{"t":"peer_left","reason":"left"}` | The other member sent `leave`. The room is over. Followed by close 4003. |
 | `{"t":"error","code":"<code>","retry_after":30}` | Non-fatal error (`rate_limited`, `buffer_full`, `too_large`). The frame that caused it was dropped. `retry_after` in seconds, optional. Errors and pongs count against a per-socket reply limit (`03` Limits); beyond it the frame is still dropped but no error is sent. |
+| `{"t":"pong"}` | Answer to `ping`. |
+
+Clients validate every relay text frame (ADR-031; `relayFrameSchema` in `packages/core`).
+Extra fields are ignored, and a frame whose `t` is a string the client doesn't know is
+ignored too, so a newer relay can add frames. A frame that isn't a JSON object, has no
+string `t`, or has a known `t` with a field outside these bounds is a **relay protocol
+error**:
+
+| Frame | Field bounds |
+|---|---|
+| `joined` | `member` `"a"` or `"b"`; `token` 43 base64url characters (32 bytes); `epoch` an integer 0..2^32-1; `peer_present` a boolean; `buffered` and `expires_at` safe non-negative integers |
+| `peer_joined` | `epoch` an integer 0..2^32-1 |
+| `peer_left` | `reason` `"disconnected"` or `"left"` |
+| `error` | `code` 1..32 characters of `a-z` and `_`; `retry_after`, if present, a number 0..3600 |
+| `pong` | none |
+
+On a relay protocol error, including the epoch rules of §4.1, the client logs the frame
+type and the names of the failing fields (never the frame), closes the socket and
+reconnects with backoff. It does not halt: a relay that sends bad frames costs what a
+flaky network costs. An exception while handling any relay frame is treated the same way
+and never reaches the socket library.
 
 Close codes:
 

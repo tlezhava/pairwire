@@ -11,7 +11,7 @@ import {
   roomTag,
   withLock,
   writeFileAtomic
-} from "./chunk-IQ4ZVMHA.mjs";
+} from "./chunk-V6BBUVLD.mjs";
 import {
   hookErrorsPath,
   roomFile
@@ -25,7 +25,7 @@ import {
   pathsOverlap,
   sanitizeAttr,
   scanSecrets
-} from "./chunk-2KWGILWH.mjs";
+} from "./chunk-7VVD7K5U.mjs";
 import {
   bytesToHex,
   sha256

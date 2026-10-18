@@ -197,6 +197,23 @@ it cannot tell whether the human asked for it, so it fails closed.
   `state.json` and binding updates take a lock (`mkdir <file>.lock`, stale after 5 s), so
   two MCP servers starting at once can't both take over a dead owner. Times in these files
   are Unix milliseconds, like the relay's `expires_at`.
+- **Lock details (ADR-031).** The lock directory stays empty, as 0.1.x and 0.2.0 expect:
+  they break a stale lock with a plain `rmdir`, which would spin forever on a directory
+  with something in it. Ownership is the directory's identity instead (device, inode,
+  birth time), which the holder records right after its `mkdir`. A process that finds a
+  stale lock breaks it only while holding a second lock, `<file>.lock.break` (same `mkdir`
+  rule, also stale after 5 s): under it, it checks that the lock is still stale and still
+  the directory it judged, renames it to a unique `<file>.lock.<random>.gone`, and removes
+  the renamed directory only if it is that directory; otherwise it renames it back.
+  Release works the same way with the holder's recorded identity, so a holder whose lock
+  was broken never removes the next holder's lock. On Windows, where renaming a directory
+  can fail while another process looks at it, release falls back to checking the identity
+  and removing the directory in place.
+- `epoch` is the highest relay epoch seen for the room, from `joined` and `peer_joined`
+  (`null` before the first `joined`). It only increases; each connection starts its
+  handshake with it as the floor (`02-protocol.md` §4.1). Clients before ADR-031 wrote the
+  epoch of the latest `joined` here, which an honest relay never lowers, so their files
+  keep the same meaning.
 - `relay` is the address the room was started or joined with (`null`: the built-in
   default at that time), so a reconnect (REQ-ROOM-6) reaches the same relay. `instance`
   is 16 random bytes in base32, created with the room and sent in every HELLO
@@ -1335,11 +1352,18 @@ edits (`<file>.pairwire-backup-<UTC timestamp>`) before changing it.
    ```toml
    [mcp_servers.pairwire]
    command = "node"
-   args = ["<home>/.pairwire/bin/dist/pairwire.mjs", "mcp"]
+   args = ['<home>/.pairwire/bin/dist/pairwire.mjs', "mcp"]
    env = { PAIRWIRE_HARNESS = "codex" }
    env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"]
    startup_timeout_sec = 20
    ```
+
+   The bundle path is written as a TOML literal string (`'...'`, so Windows backslashes
+   need no escaping), or as a basic string with `\\` and `\"` escaped when it contains a
+   `'` (ADR-031). Install refuses, before changing any file, a state directory whose path
+   contains a control character (U+0000–U+001F, U+007F–U+009F) or a lone UTF-16 surrogate:
+   neither can be written in TOML, and a broken `config.toml` stops Codex itself from
+   starting.
 
    Codex starts MCP servers with a cleared environment (only HOME, PATH, USER, … plus
    `env` and the names in `env_vars`), so pairwire's variables are passed by name. No `cwd`:
@@ -1347,8 +1371,11 @@ edits (`<file>.pairwire-backup-<UTC timestamp>`) before changing it.
    turns into the project (git root). If the file already defines `[mcp_servers.pairwire]`
    outside the markers, install stops and says so.
 3. **Hooks** in `$CODEX_HOME/hooks.json` (Claude-compatible format): SessionStart,
-   UserPromptSubmit, PostToolUse and Stop, each `sh "<home>/.pairwire/bin/hooks/run.sh" <event>`.
-   Existing entries are kept; earlier pairwire entries (recognized by that path) are replaced.
+   UserPromptSubmit, PostToolUse and Stop, each `sh '<home>/.pairwire/bin/hooks/run.sh' <event>`.
+   The path is single-quoted for the POSIX shell Codex runs the command with (a `'` in it
+   is written `'\''`), so `$`, backticks and backslashes in it stay literal. Existing
+   entries are kept; earlier pairwire entries (recognized by that path, raw, single-quoted or
+   in the double-quoted form 0.2.0 wrote) are replaced.
    Codex runs a hook only after the user trusts it with `/hooks`; install prints this step.
    Codex has no `asyncRewake`, so there is no `stop-wait` hook and no D3 wake: Codex sessions
    get D1 and D2. (`codex queue` can wake an idle thread [hands-on]; a later version may use it

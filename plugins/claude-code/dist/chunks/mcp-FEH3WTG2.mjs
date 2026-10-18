@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   transcriptEvents
-} from "./chunk-I3ZPBIIA.mjs";
+} from "./chunk-G6D7GQZL.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -19,17 +19,17 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-HEZW7OXX.mjs";
+} from "./chunk-BM7N4KKH.mjs";
 import {
   assertStatePrivate
-} from "./chunk-TBARSCXB.mjs";
+} from "./chunk-OMHNOFXD.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-SGIIW2YI.mjs";
+} from "./chunk-WJTGR6M6.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -51,7 +51,7 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-IQ4ZVMHA.mjs";
+} from "./chunk-V6BBUVLD.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -116,6 +116,7 @@ import {
   parse,
   parseAsync,
   parseRelayAddress,
+  parseRelayFrame,
   parseShareString,
   pathsOverlap,
   preprocess,
@@ -136,7 +137,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-2KWGILWH.mjs";
+} from "./chunk-7VVD7K5U.mjs";
 import {
   __commonJS,
   __require,
@@ -26584,6 +26585,8 @@ var RoomConnection = class {
   #leaving = null;
   #leaveRequested = false;
   #unreadableNoticed = false;
+  /** The highest epoch seen for the room: the persisted floor, then this connection's (02 §4.1). */
+  #seenEpoch = -1;
   #queue = [];
   #sentTimes = [];
   #pausedUntil = 0;
@@ -26704,24 +26707,55 @@ var RoomConnection = class {
     if (this.#stopped || this.#halted) return;
     const s = this.#state();
     if (!s || !isOpen(s)) return;
-    this.#handshake = new Handshake({ keys: this.#o.keys, payload: this.#o.hello });
+    const floor = s.epoch ?? -1;
+    this.#seenEpoch = floor;
+    this.#handshake = new Handshake({ keys: this.#o.keys, payload: this.#o.hello, floor });
     this.#joined = false;
     this.#peerConnected = false;
     const factory = this.#o.socketFactory ?? wsSocketFactory;
     let socket = null;
     const current = () => socket !== null && socket === this.#socket;
     socket = factory(this.#o.url, {
-      onOpen: () => {
-        if (!current()) return;
+      onOpen: () => this.#guard(current, "open", () => {
         socket.sendText(JSON.stringify({ t: "join", v: 1, token: this.#state()?.token ?? null }));
         this.#schedulePing();
-      },
-      onText: (d) => current() && this.#onText(d),
-      onBinary: (d) => current() && this.#onBinary(d),
-      onClose: (code) => current() && this.#onClose(code)
+      }),
+      onText: (d) => this.#guard(current, "text", () => this.#onText(d)),
+      onBinary: (d) => this.#guard(current, "binary", () => this.#onBinary(d)),
+      onClose: (code) => this.#guard(current, "close", () => this.#onClose(code))
     });
     this.#socket = socket;
     this.#emitStatus();
+  }
+  /**
+   * Runs a socket handler for the current socket. Nothing it throws reaches the socket
+   * library (02 §5): the error is logged by name and costs a reconnect.
+   */
+  #guard(current, on, fn) {
+    if (!current()) return;
+    try {
+      fn();
+    } catch (e) {
+      this.#o.log.warn("relay_handler_failed", { on, error: e instanceof Error ? e.name : typeof e });
+      try {
+        if (on !== "close" && current()) this.#relayProtocolError("handler_failed");
+        else if (on === "close" && !this.#socket) this.#scheduleReconnect();
+      } catch {
+      }
+    }
+  }
+  /**
+   * A relay protocol error found by the client (02 §4.1, §5): log what kind, drop the socket
+   * and reconnect with backoff. Never a halt, never a throw.
+   */
+  #relayProtocolError(reason, fields = {}) {
+    this.#o.log.warn("relay_protocol_error", { reason, ...fields });
+    const socket = this.#socket;
+    try {
+      this.#onClose(1002);
+    } finally {
+      socket?.close(1002);
+    }
   }
   #schedulePing() {
     this.#set("ping", this.#tune.pingIntervalMs, () => {
@@ -26730,53 +26764,61 @@ var RoomConnection = class {
     });
   }
   #onText(data) {
-    let frame;
-    try {
-      frame = JSON.parse(data);
-    } catch {
-      return this.#o.log.warn("relay_bad_frame");
+    const parsed = parseRelayFrame(data);
+    if (!parsed.ok) {
+      if (parsed.reason === "unknown_type") return;
+      return this.#relayProtocolError("bad_frame", { frame: parsed.t, fields: parsed.fields.join(",") });
     }
+    const frame = parsed.frame;
     switch (frame.t) {
       case "joined":
         return this.#onJoined(frame);
       case "peer_joined":
-        this.#peerConnected = true;
-        this.#emitStatus();
-        return this.#startEpoch(Number(frame.epoch));
+        return this.#onPeerJoined(frame.epoch);
       case "peer_left":
         this.#peerConnected = false;
         if (frame.reason === "left") this.#peerLeft = true;
         return this.#emitStatus();
       case "error": {
-        const code = String(frame.code);
-        this.#o.log.warn("relay_error", { code });
-        if (code === "rate_limited" || code === "buffer_full") {
-          const retry = typeof frame.retry_after === "number" ? frame.retry_after * 1e3 : this.#tune.defaultRetryMs;
+        this.#o.log.warn("relay_error", { code: frame.code });
+        if (frame.code === "rate_limited" || frame.code === "buffer_full") {
+          const retry = frame.retry_after !== void 0 ? frame.retry_after * 1e3 : this.#tune.defaultRetryMs;
           this.#pausedUntil = this.#t.now() + retry;
           this.#set("retry", retry, () => this.#resendUnacked());
         }
         return;
       }
-      default:
+      case "pong":
         return;
     }
   }
+  /** Raises the persisted epoch floor; written before any HELLO for `epoch` goes out (02 §4.1). */
+  #raiseEpoch(epoch, change = (s) => s) {
+    this.#seenEpoch = epoch;
+    updateState(this.#o.home, this.#roomId, (s) => ({ ...change(s), epoch: Math.max(s.epoch ?? -1, epoch) }));
+  }
+  #onPeerJoined(epoch) {
+    if (!this.#joined || epoch <= this.#seenEpoch) {
+      return this.#relayProtocolError("epoch_order", { epoch, seen: this.#seenEpoch });
+    }
+    this.#raiseEpoch(epoch);
+    this.#peerConnected = true;
+    this.#emitStatus();
+    this.#startEpoch(epoch);
+  }
   #onJoined(frame) {
-    const epoch = Number(frame.epoch);
-    const expires = typeof frame.expires_at === "number" ? frame.expires_at : null;
-    updateState(this.#o.home, this.#roomId, (s) => ({
-      ...s,
-      member: frame.member === "a" || frame.member === "b" ? frame.member : s.member,
-      token: typeof frame.token === "string" ? frame.token : s.token,
-      epoch,
-      expires_at: expires ?? s.expires_at
-    }));
+    const epoch = frame.epoch;
+    if (epoch <= this.#seenEpoch) {
+      this.#attempt = 0;
+      return this.#relayProtocolError("epoch_rollback", { epoch, floor: this.#seenEpoch });
+    }
+    this.#raiseEpoch(epoch, (s) => ({ ...s, member: frame.member, token: frame.token, expires_at: frame.expires_at }));
     this.#joined = true;
     this.#attempt = 0;
-    this.#peerConnected = frame.peer_present === true;
+    this.#peerConnected = frame.peer_present;
     this.#scheduleExpiry();
     this.#scheduleResendCheck();
-    this.#o.log.info("joined", { epoch, peer_present: this.#peerConnected, buffered: Number(frame.buffered ?? 0) });
+    this.#o.log.info("joined", { epoch, peer_present: this.#peerConnected, buffered: frame.buffered });
     this.#emitStatus();
     if (this.#leaveRequested) return this.#sendLeaveWhenDrained();
     if (this.#peerConnected) this.#startEpoch(epoch);
@@ -27050,12 +27092,13 @@ var RoomConnection = class {
   }
   #set(name, ms, fn) {
     this.#clear(name);
+    const delay = Number.isNaN(ms) ? MAX_TIMER_MS : Math.min(MAX_TIMER_MS, Math.max(0, ms));
     this.#timers.set(
       name,
       this.#t.setTimeout(() => {
         this.#timers.delete(name);
         fn();
-      }, ms)
+      }, delay)
     );
   }
   #clear(name) {

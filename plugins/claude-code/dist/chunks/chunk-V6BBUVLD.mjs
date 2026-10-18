@@ -20,7 +20,7 @@ import {
   formatRelayAddress,
   parseRelayAddress,
   redact
-} from "./chunk-2KWGILWH.mjs";
+} from "./chunk-7VVD7K5U.mjs";
 import {
   bytesToHex,
   randomBytes,
@@ -33,6 +33,7 @@ import { appendFileSync, renameSync as renameSync2, statSync as statSync2 } from
 import { dirname as dirname2 } from "node:path";
 
 // packages/client/src/fs-util.ts
+import { randomBytes as randomBytes2 } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 var PRIVATE_DIR_MODE = 448;
@@ -96,34 +97,108 @@ function isContention(e, platform = process.platform) {
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
+function tryMkdir(path) {
+  try {
+    mkdirSync(path, { mode: PRIVATE_DIR_MODE });
+    return true;
+  } catch (e) {
+    if (!isContention(e)) throw e;
+    return false;
+  }
+}
+function lockIdentity(path) {
+  const s = statSync(path, { bigint: true });
+  return `${s.dev}:${s.ino}:${s.birthtimeNs}`;
+}
+function inspectLock(lock) {
+  try {
+    const s = statSync(lock, { bigint: true });
+    if (Date.now() - Number(s.mtimeMs) <= LOCK_STALE_MS) return { state: "fresh" };
+    return { state: "stale", id: `${s.dev}:${s.ino}:${s.birthtimeNs}` };
+  } catch {
+    return { state: "gone" };
+  }
+}
+function removeIfSame(path, id) {
+  const aside = `${path}.${randomBytes2(8).toString("hex")}.gone`;
+  try {
+    renameSync(path, aside);
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return false;
+    try {
+      if (lockIdentity(path) !== id) return false;
+      rmdirSync(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  let same;
+  try {
+    same = lockIdentity(aside) === id;
+  } catch {
+    return false;
+  }
+  if (!same) {
+    try {
+      renameSync(aside, path);
+      return false;
+    } catch {
+    }
+  }
+  try {
+    rmdirSync(aside);
+  } catch {
+  }
+  return same;
+}
+function breakStaleLock(lock, judged) {
+  const breaker = `${lock}.break`;
+  if (!tryMkdir(breaker)) {
+    const stuck = inspectLock(breaker);
+    if (stuck.state === "stale") removeIfSame(breaker, stuck.id);
+    return false;
+  }
+  let breakerId = null;
+  try {
+    breakerId = lockIdentity(breaker);
+    const now = inspectLock(lock);
+    if (now.state === "gone") return true;
+    return now.state === "stale" && now.id === judged && removeIfSame(lock, judged);
+  } finally {
+    if (breakerId !== null) removeIfSame(breaker, breakerId);
+    else rmdirSafe(breaker);
+  }
+}
+function rmdirSafe(path) {
+  try {
+    rmdirSync(path);
+  } catch {
+  }
+}
 function withLock(file, fn) {
   const lock = `${file}.lock`;
   const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  let id;
   for (; ; ) {
-    try {
-      mkdirSync(lock, { mode: PRIVATE_DIR_MODE });
-      break;
-    } catch (e) {
-      if (!isContention(e)) throw e;
-    }
-    try {
-      if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
-        rmdirSync(lock);
+    if (tryMkdir(lock)) {
+      try {
+        id = lockIdentity(lock);
+        break;
+      } catch {
         continue;
       }
-    } catch {
-      continue;
     }
+    const seen = inspectLock(lock);
+    if (seen.state === "gone") continue;
+    if (seen.state === "stale" && breakStaleLock(lock, seen.id)) continue;
     if (Date.now() > deadline) throw new LockTimeoutError(file);
     sleepSync(10);
   }
   try {
     return fn();
   } finally {
-    try {
-      rmdirSync(lock);
-    } catch {
-    }
+    removeIfSame(lock, id);
   }
 }
 

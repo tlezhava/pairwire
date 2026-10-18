@@ -220,6 +220,38 @@ describe("Handshake state machine (02 §4.1)", () => {
     expect(a.receive(evil)).toEqual({ type: "dropped", reason: "zero_dh", wrongKey: false });
   });
 
+  it("ADR-031: a HELLO replayed from an earlier connection's epoch is dropped below the floor", () => {
+    const { a, b } = pair();
+    // Connection 1: both sides handshake at epoch 5; the relay records b's HELLO.
+    const helloA5 = a.startEpoch(5)!;
+    const recorded = b.startEpoch(5)!;
+    expect(a.receive(recorded).type).toBe("session");
+    expect(b.receive(helloA5).type).toBe("session");
+
+    // Without a floor, a new connection accepts the replay (the review's finding).
+    const unseeded = new Handshake({ keys, payload: payload("Tazo", "a".repeat(26)) });
+    expect(unseeded.startEpoch(5)).not.toBeNull();
+    expect(unseeded.receive(recorded).type).toBe("session");
+
+    // Connection 2, seeded with the highest epoch seen: no HELLO, no session at or below it.
+    const next = new Handshake({ keys, payload: payload("Tazo", "a".repeat(26)), floor: 5 });
+    expect(next.startEpoch(5)).toBeNull();
+    expect(next.startEpoch(4)).toBeNull();
+    expect(next.receive(recorded)).toEqual({ type: "dropped", reason: "stale_epoch", wrongKey: false });
+    next.noteEpoch(3);
+    expect(next.receive(recorded)).toEqual({ type: "dropped", reason: "stale_epoch", wrongKey: false });
+  });
+
+  it("ADR-031: a floored handshake still pairs at a newer epoch", () => {
+    const a = new Handshake({ keys, payload: payload("Tazo", "a".repeat(26)), floor: 5 });
+    const b = new Handshake({ keys, payload: payload("Nika", "b".repeat(26)), floor: 6 });
+    expect(b.startEpoch(6)).toBeNull();
+    const helloA = a.startEpoch(7)!;
+    const helloB = b.startEpoch(7)!;
+    expect(a.receive(helloB).type).toBe("session");
+    expect(b.receive(helloA).type).toBe("session");
+  });
+
   it("signals wrongKey on the fifth HELLO that fails to decrypt on this connection", () => {
     const { a } = pair();
     a.startEpoch(7);

@@ -47,7 +47,7 @@ describe("pairwire install --codex", () => {
         "# >>> pairwire >>>",
         "[mcp_servers.pairwire]",
         'command = "node"',
-        `args = [${JSON.stringify(join(bin, "dist", "pairwire.mjs"))}, "mcp"]`,
+        `args = ['${join(bin, "dist", "pairwire.mjs")}', "mcp"]`,
         'env = { PAIRWIRE_HARNESS = "codex" }',
         'env_vars = ["PAIRWIRE_HOME", "PAIRWIRE_RELAY", "PAIRWIRE_NAME", "PAIRWIRE_DELIVERY", "PAIRWIRE_LOG", "PAIRWIRE_HOLD"]',
         "startup_timeout_sec = 20",
@@ -57,7 +57,7 @@ describe("pairwire install --codex", () => {
     expect(toml).not.toMatch(/approval_mode/);
     const hooks = JSON.parse(readFileSync(m.codex("hooks.json"), "utf8")) as { hooks: Record<string, { hooks: { command: string }[] }[]> };
     expect(Object.keys(hooks.hooks).sort()).toEqual(["PostToolUse", "SessionStart", "Stop", "UserPromptSubmit"]);
-    expect(hooks.hooks.Stop!.map((g) => g.hooks[0]!.command)).toEqual(["echo mine", `sh ${JSON.stringify(join(bin, "hooks", "run.sh"))} stop`]);
+    expect(hooks.hooks.Stop!.map((g) => g.hooks[0]!.command)).toEqual(["echo mine", `sh '${join(bin, "hooks", "run.sh")}' stop`]);
     expect(readFileSync(join(m.home, ".agents/skills/pairwire/SKILL.md"), "utf8")).toContain("name: pairwire");
     expect(readdirSync(join(m.home, ".codex")).filter((f) => f.includes(".pairwire-backup-")).sort()).toHaveLength(2);
   });
@@ -104,7 +104,8 @@ describe("Claude Code ↔ Codex", () => {
     const m = machine();
     expect(m.install("--codex").status).toBe(0);
     const toml = readFileSync(m.codex("config.toml"), "utf8");
-    const args = JSON.parse(toml.match(/^args = (\[.*\])$/m)![1]!) as string[];
+    // A TOML literal string (ADR-031); the temp path holds no `'`.
+    const args = [toml.match(/^args = \['([^']*)', "mcp"\]$/m)![1]!, "mcp"];
     const project = join(m.home, "project");
     mkdirSync(join(project, ".git"), { recursive: true });
     // Codex clears the environment: a fixed list, plus `env`, plus the names in `env_vars`.

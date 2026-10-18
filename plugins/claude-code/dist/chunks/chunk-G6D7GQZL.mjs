@@ -5,7 +5,7 @@ import {
   errorCode,
   expiresAt,
   readState
-} from "./chunk-IQ4ZVMHA.mjs";
+} from "./chunk-V6BBUVLD.mjs";
 import {
   roomFile
 } from "./chunk-GVGSGJLD.mjs";
@@ -14,7 +14,7 @@ import {
   isCollabKind,
   redact,
   sanitizeText
-} from "./chunk-2KWGILWH.mjs";
+} from "./chunk-7VVD7K5U.mjs";
 
 // packages/client/src/transcript.ts
 import { appendFileSync, readFileSync } from "node:fs";

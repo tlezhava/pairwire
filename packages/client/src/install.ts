@@ -50,15 +50,53 @@ export function defaultInstallOptions(env: NodeJS.ProcessEnv, out: Writable, pai
   return { sourceRoot, pairwireHome, userHome, codexHome: env.CODEX_HOME || join(userHome, ".codex"), out };
 }
 
-const tomlString = (s: string) => JSON.stringify(s);
+/** A POSIX shell word for `s`: single quotes keep `$`, backticks and backslashes literal. */
+export function shellQuote(s: string): string {
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * A TOML string for a path (04 §10): a literal string, so Windows backslashes stay as they
+ * are, or a basic string with `\` and `"` escaped when the path holds a `'`. Callers refuse
+ * paths with control characters or lone surrogates first (pathProblem), which TOML can't hold.
+ */
+export function tomlPath(s: string): string {
+  return s.includes("'") ? `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"` : `'${s}'`;
+}
+
+/** Why `p` can't be written into a shell command and config.toml, or null (ADR-031). */
+export function pathProblem(p: string): string | null {
+  for (let i = 0; i < p.length; i++) {
+    const c = p.charCodeAt(i);
+    if (c <= 0x1f || (c >= 0x7f && c <= 0x9f)) return "a control character";
+    if (c >= 0xd800 && c <= 0xdbff) {
+      const next = p.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        i++;
+        continue;
+      }
+      return "an unpaired UTF-16 surrogate";
+    }
+    if (c >= 0xdc00 && c <= 0xdfff) return "an unpaired UTF-16 surrogate";
+  }
+  return null;
+}
+
+function assertUsablePath(p: string, what: string): void {
+  const problem = pathProblem(p);
+  if (problem) {
+    throw new InstallError(`The ${what} path ${JSON.stringify(p)} contains ${problem}, which Codex's config.toml can't hold. Set PAIRWIRE_HOME to a path without it.`);
+  }
+}
 
 function codexToml(bundle: string): string {
+  assertUsablePath(bundle, "pairwire bundle");
   return [
     "[mcp_servers.pairwire]",
     'command = "node"',
-    `args = [${tomlString(bundle)}, "mcp"]`,
+    `args = [${tomlPath(bundle)}, "mcp"]`,
     'env = { PAIRWIRE_HARNESS = "codex" }',
-    `env_vars = [${ENV_VARS.map(tomlString).join(", ")}]`,
+    `env_vars = [${ENV_VARS.map((v) => JSON.stringify(v)).join(", ")}]`,
     "startup_timeout_sec = 20",
   ].join("\n");
 }
@@ -84,11 +122,12 @@ interface HookGroup {
 type HooksFile = { hooks?: Record<string, HookGroup[]>; [k: string]: unknown };
 
 /**
- * Our hook commands quote run.sh with JSON.stringify, which doubles Windows backslashes, so
- * match both the raw and the quoted path.
+ * Our hook commands: the run.sh path single-quoted (ADR-031), or, as 0.2.0 wrote them, quoted
+ * with JSON.stringify, which doubles Windows backslashes. Match the raw path and both forms,
+ * so a reinstall over 0.2.0 replaces its entries.
  */
 function isOurs(command: unknown, runSh: string): boolean {
-  return typeof command === "string" && (command.includes(runSh) || command.includes(JSON.stringify(runSh)));
+  return typeof command === "string" && [runSh, JSON.stringify(runSh), shellQuote(runSh)].some((form) => command.includes(form));
 }
 
 function withoutPairwire(file: HooksFile, runSh: string): HooksFile {
@@ -149,7 +188,10 @@ export class Installer {
     for (const p of ["dist/pairwire.mjs", "hooks/run.sh", "skills/pairwire/SKILL.md"]) {
       if (!existsSync(join(src, p))) throw new InstallError(`The pairwire bundle at ${src} is incomplete (missing ${p}).`);
     }
-    // Check config.toml before touching anything.
+    // Check the paths and config.toml before touching anything.
+    assertUsablePath(this.#o.pairwireHome, "pairwire state directory");
+    assertUsablePath(this.bundle, "pairwire bundle");
+    assertUsablePath(this.runSh, "hook script");
     const config = existsSync(this.configPath) ? readFileSync(this.configPath, "utf8") : "";
     const outside = stripBlock(config);
     if (/^\s*\[mcp_servers\.pairwire\]/m.test(outside) || /^\s*\[mcp_servers\.["']pairwire["']\]/m.test(outside)) {
@@ -184,7 +226,7 @@ export class Installer {
     for (const event of CODEX_HOOK_EVENTS) {
       const group: HookGroup = {
         ...(event === "PostToolUse" ? { matcher: "*" } : {}),
-        hooks: [{ type: "command", command: `sh ${JSON.stringify(this.runSh)} ${EVENT_ARG[event]}`, timeout: 10 }],
+        hooks: [{ type: "command", command: `sh ${shellQuote(this.runSh)} ${EVENT_ARG[event]}`, timeout: 10 }],
       };
       next.hooks![event] = [...(next.hooks![event] ?? []), group];
     }
