@@ -2,9 +2,10 @@
 // stdin and returns hook JSON for stdout. Synchronous and fast; never fails the harness:
 // any internal error means no output, logged to hook-errors.log.
 import { displayName, renderForHook } from "@pairwire/core";
-import { readBinding, sessionOwnsBinding } from "./binding.js";
+import { adoptOwnerSession, readBinding, readHarnessPid, sessionOwnsBinding, type Binding } from "./binding.js";
 import { DEFAULT_CONFIG, loadConfig, type Config } from "./config.js";
 import { hookErrorLogger } from "./log.js";
+import { isHarnessProcess, type HookProcess } from "./process-tree.js";
 import { resolveProjectDir } from "./project.js";
 import { renderItemsFor } from "./coord.js";
 import { claimUndelivered } from "./room-files.js";
@@ -33,7 +34,7 @@ interface HookInput {
   prompt?: string;
 }
 
-export interface HookOptions {
+export interface HookOptions extends Pick<HookProcess, "ppid" | "platform" | "processTable"> {
   home: string;
   env: NodeJS.ProcessEnv;
   cwd: string;
@@ -63,7 +64,7 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
   const project = resolveProjectDir(o.env, input.cwd ?? o.cwd);
   const binding = readBinding(o.home, project);
   // Only the owning session's hooks act, so a passive session never takes the owner's mail.
-  if (!sessionOwnsBinding(binding, input.session_id)) return null;
+  if (!ownsBinding(binding, input.session_id, project, o)) return null;
   const roomId = binding!.room_id;
   const state = readState(o.home, roomId);
   if (!state || !isOpen(state)) return null;
@@ -102,6 +103,22 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
     }
   }
   return finish(out);
+}
+
+/**
+ * The owning session's id matches (04 §3); or the binding has none and this hook runs in the
+ * harness that started the owning server (04 §10, ADR-033), and then its session id becomes
+ * `owner_session`, so later hooks take the first path.
+ */
+function ownsBinding(binding: Binding | null, session: string | undefined, project: string, o: HookOptions): boolean {
+  if (sessionOwnsBinding(binding, session)) return true;
+  if (!binding || binding.owner_session !== null) return false;
+  const harnessPid = readHarnessPid(o.home, project, binding);
+  if (harnessPid === null || !isHarnessProcess(harnessPid, o)) return false;
+  if (typeof session === "string" && session !== "" && session.length <= 200) {
+    adoptOwnerSession(o.home, project, binding.room_id, binding.owner_pid, session);
+  }
+  return true;
 }
 
 function finish(out: Record<string, unknown>): Record<string, unknown> | null {

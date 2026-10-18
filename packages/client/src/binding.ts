@@ -26,6 +26,8 @@ export interface Claimant {
   session: string | null;
   /** The harness it runs in (PAIRWIRE_HARNESS), so `ctl` can name the human's commands (04 §3). */
   harness?: string;
+  /** Its parent process, the harness, for the harness-pid sidecar when `session` is null (04 §10). */
+  harnessPid?: number;
   now: number;
 }
 
@@ -47,6 +49,45 @@ export class PassiveSessionError extends Error {
 }
 
 export const bindingPath = (home: string, projectDir: string) => join(bindingsDir(home), `${projectHash(projectDir)}.json`);
+
+/**
+ * `bindings/<hash>.harness-pid` (04 §3, §10, ADR-033): the owning server's parent, for hooks to
+ * find their session by while the binding has no `owner_session`. A sidecar, because 0.1.x and
+ * 0.2.x read bindings with a strict schema; it names the owner pid because those versions
+ * don't know the file and may leave a stale one behind when they take a binding over.
+ */
+export const harnessPidSchema = z.strictObject({
+  owner_pid: z.number().int().positive(),
+  harness_pid: z.number().int().min(2),
+});
+const sidecarPath = (path: string) => path.replace(/\.json$/, ".harness-pid");
+export const harnessPidPath = (home: string, projectDir: string) => sidecarPath(bindingPath(home, projectDir));
+
+/** The harness pid recorded for `binding`'s owner, or null (none, unreadable, or stale). */
+export function readHarnessPid(home: string, projectDir: string, binding: Binding): number | null {
+  let text: string;
+  try {
+    text = readFileSync(harnessPidPath(home, projectDir), "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = harnessPidSchema.safeParse(safeJson(text));
+  return parsed.success && parsed.data.owner_pid === binding.owner_pid ? parsed.data.harness_pid : null;
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** Removes a binding file and its sidecar. */
+function removeBindingFile(path: string): void {
+  removeFile(path);
+  removeFile(sidecarPath(path));
+}
 
 /** A pid that exists, even if owned by another user (EPERM), counts as alive. */
 export function isProcessAlive(pid: number): boolean {
@@ -99,13 +140,13 @@ export function claimProject(home: string, projectDir: string, me: Claimant, ali
     const binding = readBindingFile(path);
     if (!binding) return { kind: "idle" };
     if (!roomIsOpen(home, binding.room_id)) {
-      removeFile(path);
+      removeBindingFile(path);
       return { kind: "idle" };
     }
     if (binding.owner_pid === me.pid) return { kind: "owner", roomId: binding.room_id, tookOver: false };
     if (alive(binding.owner_pid)) return { kind: "passive", ownerPid: binding.owner_pid, roomId: binding.room_id };
     const { owner_harness: _previous, ...rest } = binding;
-    writeBinding(path, { ...rest, ...owner(me) });
+    writeBinding(path, { ...rest, ...owner(me) }, me.harnessPid);
     return { kind: "owner", roomId: binding.room_id, tookOver: true };
   });
 }
@@ -123,13 +164,21 @@ export function bindProject(home: string, projectDir: string, roomId: string, me
       throw new PassiveSessionError(existing.owner_pid);
     }
     const binding: Binding = { project_dir: projectDir, room_id: roomId, ...owner(me) };
-    writeBinding(path, binding);
+    writeBinding(path, binding, me.harnessPid);
     return binding;
   });
 }
 
-function writeBinding(path: string, binding: Binding): void {
+/**
+ * Writes the binding, and its harness-pid sidecar while it has no `owner_session` (04 §10); a
+ * binding with a session, or a server without a usable parent, has none.
+ */
+function writeBinding(path: string, binding: Binding, harnessPid?: number): void {
   writeFileAtomic(path, JSON.stringify(bindingSchema.parse(binding), null, 2) + "\n");
+  const side = sidecarPath(path);
+  const record = harnessPidSchema.safeParse({ owner_pid: binding.owner_pid, harness_pid: harnessPid });
+  if (binding.owner_session === null && record.success) writeFileAtomic(side, JSON.stringify(record.data) + "\n");
+  else removeFile(side);
 }
 
 function bindingFiles(home: string): string[] {
@@ -155,7 +204,7 @@ export function bindingsForRoom(home: string, roomId: string): Binding[] {
 export function removeBindingFor(home: string, roomId: string): void {
   for (const path of bindingFiles(home)) {
     withLock(path, () => {
-      if (readBindingFile(path)?.room_id === roomId) removeFile(path);
+      if (readBindingFile(path)?.room_id === roomId) removeBindingFile(path);
     });
   }
 }
@@ -170,7 +219,9 @@ export function sessionOwnsBinding(binding: Binding | null, sessionId: string | 
 
 /**
  * Records the harness session that owns the room when the binding has none yet: Codex gives
- * the MCP server no session variable, only `_meta.sessionId` on each tool call (04 §10).
+ * the MCP server no session variable, only `_meta.sessionId` on each tool call, and in other
+ * harnesses the first hook that matches the harness pid records its own (04 §10). Removes the
+ * harness-pid sidecar with that write.
  */
 export function adoptOwnerSession(home: string, projectDir: string, roomId: string, pid: number, session: string): boolean {
   const path = bindingPath(home, projectDir);

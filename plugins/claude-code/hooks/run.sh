@@ -56,4 +56,7 @@ if [ "$major" -lt 20 ]; then
   exit 0
 fi
 
+# The harness, for hooks that find their session by its pid (specs/04-client.md section 10).
+PAIRWIRE_HOOK_PPID=$PPID
+export PAIRWIRE_HOOK_PPID
 exec node "$root/dist/pairwire.mjs" hook "$event"

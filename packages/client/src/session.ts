@@ -55,6 +55,8 @@ export interface SessionOptions {
   log: Logger;
   /** This MCP server's pid (tests run several sessions in one process). */
   pid?: number;
+  /** Its parent's pid, the harness (04 §10, harness-pid sidecar); default process.ppid. */
+  ppid?: number;
   isAlive?: (pid: number) => boolean;
   now?: () => number;
   /** How long `join` waits for the handshake (04 §4: 30 s). */
@@ -521,7 +523,7 @@ export class ClientSession {
   }
 
   #claimant() {
-    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), now: this.#now() };
+    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), harnessPid: this.#o.ppid ?? process.ppid, now: this.#now() };
   }
 
   /**

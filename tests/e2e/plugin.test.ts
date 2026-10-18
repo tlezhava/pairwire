@@ -121,6 +121,15 @@ describe.skipIf(onWindows)("hooks/run.sh", () => {
     expect(n.calls()).toBe(`${BUNDLE} hook stop\n`);
   });
 
+  it("passes its parent, the harness, to the client as PAIRWIRE_HOOK_PPID (ADR-033)", () => {
+    const n = fakeNode("v20.11.1");
+    writeFileSync(join(n.bin, "node"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo v20.11.1; exit 0; fi\necho "ppid=$PAIRWIRE_HOOK_PPID" >> "${join(n.bin, "calls")}"\n`);
+    const home = tempDir();
+    writeFileSync(join(home, "active"), "");
+    expect(run("post-tool-use", { ...n.env, PAIRWIRE_HOME: home, PAIRWIRE_HOOK_PPID: "1" }).status).toBe(0);
+    expect(n.calls()).toBe(`ppid=${process.pid}\n`);
+  });
+
   it("remembers a Node that passed the version check, and checks again when that binary changes", () => {
     const n = fakeNode("v22.1.0");
     const home = tempDir();
