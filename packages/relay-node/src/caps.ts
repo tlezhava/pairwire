@@ -8,7 +8,7 @@ export interface RelayCaps {
   maxSockets: number;
   /** Open WebSockets from one client address; 0: no cap (the default, see trustProxy). */
   maxSocketsPerAddress: number;
-  /** Rooms the relay holds (state, sockets or a timer); 0: no cap. */
+  /** Rooms the relay holds (state, sockets or a timer); tombstones are evicted first. 0: no cap. */
   maxRooms: number;
   /** Offline-buffered frame bytes across all rooms; 0: no cap. */
   maxBufferedBytes: number;
@@ -21,7 +21,7 @@ export interface RelayCaps {
 export const DEFAULT_CAPS: RelayCaps = {
   maxSockets: 1024,
   maxSocketsPerAddress: 0,
-  maxRooms: 10_000,
+  maxRooms: 50_000,
   maxBufferedBytes: 256 * MiB,
   maxOutboundBytes: 2 * MiB,
   trustProxy: false,

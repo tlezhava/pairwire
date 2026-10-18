@@ -16,8 +16,8 @@ const ROOM_PATH = /^\/v1\/rooms\/([^/]*)$/;
 const ROOM_ID = /^[a-z2-7]{26}$/;
 /** Above the 64 KiB limit so oversized frames get `error too_large` instead of a ws close. */
 const MAX_PAYLOAD = 256 * 1024;
-/** At most one `limit_refused` line per cap per minute. */
-const REFUSAL_LOG_MS = 60_000;
+/** At most one `limit_refused` (or `tombstone_evicted`) line per cap per minute. */
+const LIMIT_LOG_MS = 60_000;
 
 export interface RelayServerOptions {
   port?: number;
@@ -61,7 +61,9 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
   /** Open sockets per client address. Addresses stay in memory and are never logged (03, Logging). */
   const perAddress = new Map<string, number>();
   let bufferedTotal = 0;
-  const refusals = new Map<CapName, { count: number; loggedAt: number | null }>();
+  /** Ended rooms, oldest first: evicted to make way for a new room at the room cap. */
+  const tombstones = new Set<string>();
+  const limitLog = new Map<string, { count: number; loggedAt: number | null }>();
 
   const http: Server = createServer((req, res) => handleHttp(req, res));
   http.on("upgrade", (req, socket, head) => handleUpgrade(req, socket, head));
@@ -93,7 +95,7 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
       ? "sockets"
       : !under(caps.maxSocketsPerAddress, perAddress.get(address) ?? 0)
         ? "sockets_per_address"
-        : !rooms.has(roomId) && !under(caps.maxRooms, rooms.size)
+        : !rooms.has(roomId) && !under(caps.maxRooms, rooms.size) && !evictTombstone()
           ? "rooms"
           : null;
     if (full) {
@@ -103,16 +105,41 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
     wss.handleUpgrade(req, socket, head, (ws) => attach(roomId, ws, address));
   }
 
-  /** Counts a refusal and logs it unless this cap was logged in the last minute. */
   function refused(cap: CapName): void {
-    const r = refusals.get(cap) ?? { count: 0, loggedAt: null };
-    refusals.set(cap, r);
+    logLimit("limit_refused", cap);
+  }
+
+  /** Counts an event and logs it, with the count so far, unless it was logged in the last minute. */
+  function logLimit(event: string, cap: CapName): void {
+    const key = `${event}:${cap}`;
+    const r = limitLog.get(key) ?? { count: 0, loggedAt: null };
+    limitLog.set(key, r);
     r.count++;
     const now = clock.now();
-    if (r.loggedAt !== null && now - r.loggedAt < REFUSAL_LOG_MS) return;
-    log.warn("limit_refused", { limit: cap, count: r.count });
+    if (r.loggedAt !== null && now - r.loggedAt < LIMIT_LOG_MS) return;
+    log.warn(event, { limit: cap, count: r.count });
     r.count = 0;
     r.loggedAt = now;
+  }
+
+  /** Forgets the oldest tombstone with no open socket, as if it had reached max age (03). */
+  function evictTombstone(): boolean {
+    for (const roomId of tombstones) {
+      const entry = rooms.get(roomId);
+      if (entry && entry.sockets.size > 0) continue;
+      tombstones.delete(roomId);
+      if (!entry) continue;
+      entry.cancelAlarm?.();
+      rooms.delete(roomId);
+      try {
+        store?.delete(roomId);
+      } catch {
+        log.warn("state_write_failed", { room: roomTag(roomId) });
+      }
+      logLimit("tombstone_evicted", "rooms");
+      return true;
+    }
+    return false;
   }
 
   function newEntry(state: RoomState | null = null): RoomEntry {
@@ -208,6 +235,8 @@ export function createRelayServer(options: RelayServerOptions = {}): RelayServer
         apply(roomId, entry, entry.room.alarm());
       });
     }
+    if (entry.room.state?.ended) tombstones.add(roomId);
+    else tombstones.delete(roomId);
     // An empty room with no state and no timer has nothing left to remember.
     if (entry.room.state === null && entry.sockets.size === 0 && entry.cancelAlarm === null) rooms.delete(roomId);
   }

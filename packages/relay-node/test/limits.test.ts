@@ -70,7 +70,7 @@ describe("relay-node caps from the environment (03, Relay-wide limits)", () => {
     expect(DEFAULT_CAPS).toEqual({
       maxSockets: 1024,
       maxSocketsPerAddress: 0,
-      maxRooms: 10_000,
+      maxRooms: 50_000,
       maxBufferedBytes: 256 * MiB,
       maxOutboundBytes: 2 * MiB,
       trustProxy: false,
@@ -132,6 +132,32 @@ describe("relay-node relay-wide caps (03, Relay-wide limits)", () => {
       await join(await connect(port, held));
       await expect(connect(port, room())).rejects.toMatchObject({ status: 503 });
       await join(await connect(port, held));
+    });
+  });
+
+  it("evicts the oldest tombstone for a new room at the room cap; its token then gets 4002", async () => {
+    await withRelay({ maxRooms: 2 }, async ({ port }, lines) => {
+      const ended = room();
+      const a = await connect(port, ended);
+      const { token } = await join(a);
+      a.ws.send('{"t":"leave"}');
+      expect(await a.queue.next()).toEqual({ kind: "close", code: 4003 });
+      const live = room();
+      await join(await connect(port, live));
+      await settle();
+      // the cap is full (one tombstone, one live room): the tombstone makes way
+      const third = await connect(port, room());
+      await join(third);
+      // with live rooms only, a new room is refused
+      await expect(connect(port, room())).rejects.toMatchObject({ status: 503 });
+      // the third room ends too, making way for the first room's id, now unknown
+      third.ws.send('{"t":"leave"}');
+      expect(await third.queue.next()).toEqual({ kind: "close", code: 4003 });
+      await settle();
+      const late = await connect(port, ended);
+      late.ws.send(JSON.stringify({ t: "join", v: 1, token }));
+      expect(await late.queue.next()).toEqual({ kind: "close", code: 4002 });
+      expect(lines.some((l) => l.includes('"event":"tombstone_evicted"'))).toBe(true);
     });
   });
 
