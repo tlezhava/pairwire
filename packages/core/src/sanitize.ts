@@ -8,7 +8,7 @@
  */
 const REMOVE =
   // eslint-disable-next-line no-control-regex -- matching control characters is the point
-  /(?!\u200D)\p{Cf}|[\u{E0000}-\u{E007F}]|[\u0000-\u0008\u000B-\u001F\u007F-\u009F]|[\u{E0100}-\u{E01EF}\u034F\u115F\u1160\u3164\uFFA0\u180B-\u180D\u180F]/gu;
+  /(?!\u200D)\p{Cf}|[\u{E0000}-\u{E007F}]|[\u0000-\u0008\u000B-\u001F\u007F-\u009F]|[\u{E0100}-\u{E01EF}]|[\u115F\u1160\u3164\uFFA0]|\u034F|[\u180B-\u180D]|\u180F/gu;
 /** Step 2: U+FE00–U+FE0F survive only directly after a base character, one per base (a VS is a mark, not a base). */
 const STRAY_VARIATION_SELECTOR = /(?<![\p{L}\p{N}\p{P}\p{S}])[\uFE00-\uFE0F]/gu;
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;

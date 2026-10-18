@@ -158,7 +158,7 @@ describe("INV-3 injection corpus through the renderer", () => {
       const inner = out.slice(out.indexOf(">\n", out.indexOf("<pairwire_message ")) + 2, out.lastIndexOf("\n</pairwire_message>"));
       expect(inner, body).not.toMatch(/<\s*\/?\s*(pairwire|system|channel|function|antml)/i);
       expect(tagLike(inner), body).toBe(false);
-      expect(inner, body).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200B\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}\u034F\u115F\u3164]/u);
+      expect(inner, body).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200B\u{E0000}-\u{E007F}\u115F\u3164]|[\u{E0100}-\u{E01EF}]|\u034F/u);
     }
   });
 
