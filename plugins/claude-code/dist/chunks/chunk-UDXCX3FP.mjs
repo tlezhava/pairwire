@@ -3600,14 +3600,14 @@ function codePointLength(str) {
   const units = str.length;
   if (!highSurrogate.test(str))
     return units;
-  let count = units;
+  let count2 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str.charCodeAt(i) & 64512) === 55296 && (str.charCodeAt(i + 1) & 64512) === 56320) {
-      count--;
+      count2--;
       i++;
     }
   }
-  return count;
+  return count2;
 }
 function getLengthableOrigin(input2) {
   if (Array.isArray(input2))
@@ -7990,8 +7990,8 @@ function az_default() {
 }
 
 // node_modules/zod/v4/locales/be.js
-function getBelarusianPlural(count, one, few, many) {
-  const absCount = Math.abs(count);
+function getBelarusianPlural(count2, one, few, many) {
+  const absCount = Math.abs(count2);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -10638,8 +10638,8 @@ function hu_default() {
 }
 
 // node_modules/zod/v4/locales/hy.js
-function getArmenianPlural(count, one, many) {
-  return Math.abs(count) === 1 ? one : many;
+function getArmenianPlural(count2, one, many) {
+  return Math.abs(count2) === 1 ? one : many;
 }
 function withDefiniteArticle(word) {
   if (!word)
@@ -13377,8 +13377,8 @@ function ro_default() {
 }
 
 // node_modules/zod/v4/locales/ru.js
-function getRussianPlural(count, one, few, many) {
-  const absCount = Math.abs(count);
+function getRussianPlural(count2, one, few, many) {
+  const absCount = Math.abs(count2);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -22172,9 +22172,12 @@ function deriveSession(ePriv, ePub, pPub, psk) {
 var Handshake = class {
   constructor(opts) {
     this.opts = opts;
+    this.#floor = opts.floor ?? -1;
+    this.#latest = this.#floor;
   }
   opts;
-  #latest = -1;
+  #floor;
+  #latest;
   #ephemeral = null;
   #acceptedEpoch = -1;
   #failures = 0;
@@ -22193,6 +22196,7 @@ var Handshake = class {
    * or `null` if this epoch is not newer than one already handled.
    */
   startEpoch(epoch) {
+    if (epoch <= this.#floor) return null;
     if (epoch < this.#latest || epoch === this.#latest && this.#ephemeral?.epoch === epoch) return null;
     if (epoch === this.#latest && this.#acceptedEpoch === epoch) return null;
     this.#latest = epoch;
@@ -22214,7 +22218,7 @@ var Handshake = class {
       reason,
       wrongKey: false
     });
-    if (opened.epoch < this.#latest) return drop("stale_epoch");
+    if (opened.epoch <= this.#floor || opened.epoch < this.#latest) return drop("stale_epoch");
     if (opened.epoch > this.#latest) return drop("unseen_epoch");
     if (this.#acceptedEpoch === opened.epoch) return drop("duplicate");
     const eph = this.#ephemeral;
@@ -23064,6 +23068,48 @@ var roomStateSchema = external_exports.strictObject({
   slots: external_exports.strictObject({ a: slotSchema.optional(), b: slotSchema.optional() })
 });
 
+// packages/core/src/relay-frames.ts
+var MAX_RETRY_AFTER_S = 3600;
+var u322 = external_exports.number().int().min(0).max(4294967295);
+var count = external_exports.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+var relayFrameSchema = external_exports.discriminatedUnion("t", [
+  external_exports.object({
+    t: external_exports.literal("joined"),
+    member: external_exports.enum(["a", "b"]),
+    token: external_exports.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    epoch: u322,
+    peer_present: external_exports.boolean(),
+    buffered: count,
+    expires_at: count
+  }),
+  external_exports.object({ t: external_exports.literal("peer_joined"), epoch: u322 }),
+  external_exports.object({ t: external_exports.literal("peer_left"), reason: external_exports.enum(["disconnected", "left"]) }),
+  external_exports.object({
+    t: external_exports.literal("error"),
+    code: external_exports.string().regex(/^[a-z_]{1,32}$/),
+    retry_after: external_exports.number().min(0).max(MAX_RETRY_AFTER_S).optional()
+  }),
+  external_exports.object({ t: external_exports.literal("pong") })
+]);
+var KNOWN = new Set(relayFrameSchema.options.map((o) => o.shape.t.value));
+function parseRelayFrame(text) {
+  const invalid = (t2, fields3 = []) => ({ ok: false, reason: "invalid", t: t2, fields: fields3 });
+  let json2;
+  try {
+    json2 = JSON.parse(text);
+  } catch {
+    return invalid(null);
+  }
+  if (typeof json2 !== "object" || json2 === null || Array.isArray(json2)) return invalid(null);
+  const t = json2.t;
+  if (typeof t !== "string") return invalid(null);
+  if (!KNOWN.has(t)) return { ok: false, reason: "unknown_type" };
+  const parsed = relayFrameSchema.safeParse(json2);
+  if (parsed.success) return { ok: true, frame: parsed.data };
+  const fields2 = new Set(parsed.error.issues.map((i) => i.path[0]).filter((k) => typeof k === "string"));
+  return invalid(t, [...fields2].sort());
+}
+
 // packages/core/src/secrets.ts
 var RULES = [
   { id: "pairwire_share", pattern: /pw1_[a-z2-7]{52}(?:@(?:[a-z0-9.-]{1,253}|\[::1\])(?::[0-9]{1,5})?)?/gi },
@@ -23246,6 +23292,7 @@ export {
   deriveRoomKeys,
   RELAY_LIMITS,
   CLIENT_LIMITS,
+  parseRelayFrame,
   noticePeerJoined,
   noticePeerLeft,
   noticePeerChanged,
