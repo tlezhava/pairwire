@@ -1083,6 +1083,21 @@ Implementation notes (foundation, 2026-10-19; `04` §3 and §10 amended):
 - Cursor's `beforeSubmitPrompt` cannot show context, so in that dialect the prompt hook
   never claims items (a claim there would mark them delivered unseen).
 
+Implementation notes (`install --cursor`, 2026-10-19; `04` §10 "Cursor" amended):
+
+- The guide goes to `~/.cursor/skills/pairwire/SKILL.md`: cursor.com/docs (Agent Skills) lists
+  `~/.cursor/skills/` as a user-level skills directory, so no User Rule step is needed.
+- No `${env:NAME}` in `mcp.json`: Cursor's docs don't say what an unset name expands to, and
+  every value but an empty one would break the server. The server inherits Cursor's
+  environment [S11]; a non-default PAIRWIRE_HOME is written as an absolute path into the MCP
+  `env` and the hook commands instead, so server, hooks and bundle agree even when Cursor was
+  started without the shell profile.
+- `PAIRWIRE_PROJECT_DIR: "${workspaceFolder}"` is passed because `resolveProjectDir()` already
+  ignores an unexpanded or empty value; it can only help, unless S11 finds it expands to the
+  home directory.
+- `run.sh` prints no Node-missing notice in the cursor dialect: a `systemMessage` is not part
+  of any Cursor hook's output schema.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

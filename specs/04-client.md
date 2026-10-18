@@ -1501,13 +1501,59 @@ No D3: Gemini has no asynchronous wake.
 
 #### Cursor
 
-`pairwire install --cursor` merges entries into `~/.cursor/mcp.json` and
-`~/.cursor/hooks.json` (with backups, idempotent, marked by the bundle path as for Codex)
-and installs the guide [S11: Cursor's user-level skills or rules location].
+`pairwire install --cursor` sets everything up; like `--codex` it is idempotent, backs up
+every file before changing it (`<file>.pairwire-backup-<UTC timestamp>`), and refuses, before
+changing any file, a state directory whose path has a control character or a lone surrogate.
 
-- MCP server: `node <bundle> mcp` with `env: {PAIRWIRE_HARNESS: "cursor"}`. Whether
-  `${workspaceFolder}` resolves in the user-level file is [S11]; without it the server's cwd
-  must identify the project.
+1. **Files.** Copies `dist/` and `hooks/run.sh` to `~/.pairwire/bin/`, as `--codex` does.
+2. **MCP server**, merged into `~/.cursor/mcp.json` as `mcpServers.pairwire`; every other key
+   and server is kept:
+
+   ```json
+   { "type": "stdio", "command": "node", "args": ["<home>/.pairwire/bin/dist/pairwire.mjs", "mcp"],
+     "env": { "PAIRWIRE_HARNESS": "cursor", "PAIRWIRE_PROJECT_DIR": "${workspaceFolder}" } }
+   ```
+
+   `PAIRWIRE_PROJECT_DIR` is safe whatever Cursor does with `${workspaceFolder}` in the
+   user-level file [S11]: expanded to the workspace, it names the project; left as it is or
+   expanded to an empty string, `resolveProjectDir()` ignores it and falls back to the
+   server's cwd. (If S11 finds that it expands to the folder holding `~/.cursor`, the entry
+   must drop it.) The user's `PAIRWIRE_*` variables are not passed with `${env:NAME}`: the
+   docs don't say what an unset name expands to, and a literal `${env:PAIRWIRE_RELAY}` would
+   break the server; the server inherits Cursor's environment instead [S11], and since
+   Cursor is usually started from the desktop, without the shell profile, the README points
+   to `~/.pairwire/config.json` for the relay and name. One exception: when the state
+   directory is not `<home>/.pairwire` (PAIRWIRE_HOME set at install time), its absolute path
+   is written as `PAIRWIRE_HOME` in `env` and in each hook command, so the server, the hooks
+   and the bundle under it agree. An existing `mcpServers.pairwire` whose `args` don't contain
+   the bundle path is not pairwire's install: install stops and says so.
+3. **Hooks**, merged into `~/.cursor/hooks.json` (`"version": 1` when the file has none; other
+   keys, events and entries are kept): `sessionStart`, `beforeSubmitPrompt`, `postToolUse` and
+   `stop`, each `{"command": "PAIRWIRE_HOOK_DIALECT=cursor sh '<home>/.pairwire/bin/hooks/run.sh' <event>", "timeout": 10}`
+   (seconds) with `session-start`, `user-prompt-submit`, `post-tool-use` and `stop`, the path
+   single-quoted as for Codex. Earlier pairwire entries, recognized by the run.sh path, are
+   replaced. The command needs a POSIX shell; which shell Cursor runs it with, notably on
+   Windows, is [S11]. User hooks run with `~/.cursor` as their cwd, so the cursor dialect takes
+   the project from `workspace_roots[0]`.
+4. **Guide** at `~/.cursor/skills/pairwire/SKILL.md` (the plugin's file). Cursor's docs list
+   `~/.cursor/skills/` as a user-level Agent Skills directory (it also reads `~/.agents/skills/`
+   and `~/.claude/skills/`, so a machine that also has the Codex install sees the same skill
+   twice, with the same text).
+5. `pairwire install --cursor --uninstall` removes pairwire's MCP entry, its hook entries and
+   the skill (with backups), and leaves `~/.pairwire` alone.
+
+Install and uninstall refuse to edit a file that is not valid JSON (Cursor's files are
+sometimes hand-edited with comments or trailing commas), or whose `mcpServers` or `hooks` is
+not an object of the expected shape, and say which file to fix; nothing is changed then.
+They print next steps: restart Cursor, enable the pairwire server in Cursor's MCP settings if
+asked, keep the approval prompt for the send tool, use `pairwire ctl` in a terminal for the
+human-only commands, and, because Cursor's hooks have been unreliable in some releases, ask
+the agent to check its pairwire inbox when messages don't show up on their own.
+
+Behavior in a Cursor session:
+
+- MCP server: Cursor gives it no session id, so hooks find it through the harness-pid sidecar
+  (above). Whether Cursor starts hooks and MCP servers from the same process is [S11].
 - Hooks, through `PAIRWIRE_HOOK_DIALECT=cursor` set in each hook command, because Cursor's
   fields differ: input `conversation_id` and `workspace_roots[0]` stand in for `session_id`
   and `cwd`; output `additional_context` replaces `hookSpecificOutput.additionalContext`.
@@ -1515,7 +1561,9 @@ and installs the guide [S11: Cursor's user-level skills or rules location].
   fire-and-forget, so its context may arrive after the first turn), `beforeSubmitPrompt`
   only resets the hop budget (it cannot inject), and `stop` returns
   `followup_message: WAKE_PROMPT` when messages are waiting. Cursor caps follow-ups at
-  `loop_limit` (default 5) per conversation.
+  `loop_limit` (default 5) per conversation. With Node missing or too old, `run.sh` prints
+  nothing in this dialect (its notice is a `systemMessage`, which Cursor has no channel for;
+  Cursor's MCP settings show the server failing to start instead).
 - Approval: Cursor asks before running an MCP tool by default (INV-4). Its auto-run modes
   and allowlists remove the prompt, and hooks cannot see them [S11]; the README says so.
   REQ-SAFE-5's human-only warning has no channel in Cursor hooks (no `systemMessage`), so
