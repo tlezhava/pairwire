@@ -3,7 +3,7 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   claimUndelivered,
   renderItemsFor
-} from "./chunk-SIRPDPDH.mjs";
+} from "./chunk-BM7N4KKH.mjs";
 import {
   DEFAULT_CONFIG,
   hookErrorLogger,
@@ -14,12 +14,12 @@ import {
   resolveProjectDir,
   sessionOwnsBinding,
   updateState
-} from "./chunk-CXTTLDGW.mjs";
+} from "./chunk-V6BBUVLD.mjs";
 import "./chunk-GVGSGJLD.mjs";
 import {
   displayName,
   renderForHook
-} from "./chunk-UDXCX3FP.mjs";
+} from "./chunk-7VVD7K5U.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/hooks.ts

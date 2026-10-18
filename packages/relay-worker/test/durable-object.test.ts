@@ -66,6 +66,21 @@ describe("relay-worker Durable Object (03, Cloudflare implementation)", () => {
     expect(await back.socket.next()).toEqual({ kind: "binary", data: msg(7) });
   });
 
+  it("closes an unjoined socket at its original join deadline after the object is rebuilt", async () => {
+    const roomId = newRoom();
+    const stub = stubFor(roomId);
+    const { socket } = await connectRaw(roomId);
+    const deadline = await runInDurableObject(stub, (_o, s) => s.storage.getAlarm());
+    expect(deadline).not.toBeNull();
+    await evictDurableObject(stub);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(deadline! + 1000);
+    // The rebuild happens at the fake time, past the original deadline.
+    expect(await runDurableObjectAlarm(stub)).toBe(true);
+    vi.useRealTimers();
+    expect(await socket.next()).toEqual({ kind: "close", code: 4006 });
+  });
+
   it("answers pings by auto-response without invoking webSocketMessage", async () => {
     const { roomId, a } = await pair();
     const stub = stubFor(roomId);

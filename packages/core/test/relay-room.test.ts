@@ -52,6 +52,9 @@ describe("limits (03, Limits)", () => {
       bufferedFrameLifetimeMs: 72 * H,
       idleExpiryMs: 72 * H,
       maxAgeMs: 7 * D,
+      unjoinedSocketsPerRoom: 8,
+      relayRepliesPerMinute: 60,
+      relayReplyBurst: 10,
     });
   });
 
@@ -440,12 +443,106 @@ describe("persisted state", () => {
     h.room.disconnect("s2");
     h.room.binary("s1", msg(9));
     const saved: RoomState = structuredClone(h.room.state!);
-    const restored = new RelayRoom({ now: h.now, state: saved, sockets: { s1: "a" } });
+    const restored = new RelayRoom({ now: h.now, state: saved, sockets: { s1: { member: "a" } } });
     expect(sent(restored.binary("s1", msg(10)), "s1")).toEqual([]);
     expect(restored.state?.slots.b?.buffer).toHaveLength(2);
     expect(restored.state?.slots.a?.token).toBe(a);
     const back = restored.connect("s2b");
     expect(back.effects).toEqual([]);
+  });
+});
+
+describe("join deadline across a rebuild (03, Room state machine: host hooks)", () => {
+  it("keeps an unjoined socket's original deadline when the room is rebuilt from its connect time", () => {
+    const now = T0 + 11 * S;
+    const room = new RelayRoom({ now: () => now, sockets: { s1: { member: null, connectedAt: T0 } } });
+    expect(closes(room.alarm())).toEqual([["s1", 4006]]);
+  });
+
+  it("asks for an alarm at the original deadline, not 10 s after the rebuild", () => {
+    const now = T0 + 5 * S;
+    const room = new RelayRoom({ now: () => now, sockets: { s1: { member: null, connectedAt: T0 } } });
+    expect(room.alarm().alarmAt).toBe(T0 + 10 * S);
+  });
+
+  it("counts a socket without a connect time (an older attachment) from the rebuild", () => {
+    let now = T0;
+    const room = new RelayRoom({ now: () => now, sockets: { s1: { member: null } } });
+    now += 10 * S - 1;
+    expect(closes(room.alarm())).toEqual([]);
+    now += 1;
+    expect(closes(room.alarm())).toEqual([["s1", 4006]]);
+  });
+
+  it("uses the connect time passed to connect()", () => {
+    const h = harness();
+    expect(h.room.connect("s1", T0 - 4 * S).alarmAt).toBe(T0 + 6 * S);
+  });
+});
+
+describe("resource limits (03 Limits, ADR-032)", () => {
+  it("closes the oldest unjoined socket with 4008 when a ninth connects", () => {
+    const h = harness();
+    h.join("m1"); // joined members don't count
+    for (let i = 1; i <= 8; i++) expect(closes(h.room.connect(`u${i}`))).toEqual([]);
+    expect(closes(h.room.connect("u9"))).toEqual([["u1", 4008]]);
+    expect(h.room.memberOf("u1")).toBeUndefined();
+    expect(json(h.room.text("u9", '{"t":"join","v":1,"token":null}'), "u9")[0]).toMatchObject({ t: "joined", member: "b" });
+    // u9 joined, so the next connection fits again
+    expect(closes(h.room.connect("u10"))).toEqual([]);
+  });
+
+  it("answers at most 10 pongs at once per socket, then one per second", () => {
+    const h = harness();
+    h.room.connect("s1");
+    h.room.connect("s2");
+    const pongs = (socket: string, n: number) =>
+      Array.from({ length: n }, () => sent(h.room.text(socket, '{"t":"ping"}'), socket).length).reduce((a, b) => a + b, 0);
+    expect(pongs("s1", 15)).toBe(10);
+    expect(pongs("s2", 1)).toBe(1); // per socket
+    h.advance(1 * S);
+    expect(pongs("s1", 3)).toBe(1);
+    h.advance(10 * S);
+    expect(pongs("s1", 12)).toBe(10);
+  });
+
+  it("counts error replies against the same limit and still drops the frames", () => {
+    const h = harness();
+    h.join("s1");
+    h.join("s2");
+    let errors = 0;
+    for (let i = 0; i < 6; i++) {
+      const out = h.room.binary("s1", msg(i, 64 * 1024 + 1));
+      errors += json(out, "s1").length;
+      expect(sent(out, "s2")).toEqual([]);
+    }
+    for (let i = 0; i < 6; i++) errors += sent(h.room.text("s1", '{"t":"ping"}'), "s1").length;
+    expect(errors).toBe(10);
+  });
+
+  it("refuses a frame the host's admitBuffered rejects with buffer_full, and reports bufferedBytes", () => {
+    let now = T0;
+    let budget = 100;
+    const room = new RelayRoom({ now: () => now, admitBuffered: (n) => n <= budget });
+    const join = (s: string, token: string | null = null) => {
+      room.connect(s);
+      return room.text(s, JSON.stringify({ t: "join", v: 1, token }));
+    };
+    join("s1");
+    join("s2");
+    room.disconnect("s2");
+    expect(room.bufferedBytes()).toBe(0);
+    expect(room.binary("s1", msg(1, 60)).effects).toEqual([]);
+    expect(room.bufferedBytes()).toBe(60);
+    budget = 40;
+    now += S;
+    expect(json(room.binary("s1", msg(2, 60)), "s1")).toEqual([{ t: "error", code: "buffer_full" }]);
+    expect(room.bufferedBytes()).toBe(60);
+    // a connected peer gets the frame directly: the hook is only asked about buffering
+    join("s3", room.state!.slots.b!.token);
+    expect(room.bufferedBytes()).toBe(0);
+    budget = 0;
+    expect(sent(room.binary("s1", msg(3, 60)), "s3")).toHaveLength(1);
   });
 });
 

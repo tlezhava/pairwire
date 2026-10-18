@@ -124,7 +124,7 @@ Legitimate cases, none of which locks an honest user out:
 The floor stops replays of HELLOs for epochs the client has seen. A relay that never
 showed a client some epoch can still give it that epoch later with a recorded peer HELLO;
 the result is the same denial of service as dropping frames, which a relay can always do
-(`05-security.md`, residual risk 13).
+(`05-security.md`, residual risk 15).
 
 ### 4.2 HELLO contents
 
@@ -215,7 +215,7 @@ Relay → client:
 | `{"t":"peer_joined","epoch":8}` | The other member connected (or reconnected). |
 | `{"t":"peer_left","reason":"disconnected"}` | The other member's socket closed; their slot is kept. |
 | `{"t":"peer_left","reason":"left"}` | The other member sent `leave`. The room is over. Followed by close 4003. |
-| `{"t":"error","code":"<code>","retry_after":30}` | Non-fatal error (`rate_limited`, `buffer_full`, `too_large`). The frame that caused it was dropped. `retry_after` in seconds, optional. |
+| `{"t":"error","code":"<code>","retry_after":30}` | Non-fatal error (`rate_limited`, `buffer_full`, `too_large`). The frame that caused it was dropped. `retry_after` in seconds, optional. Errors and pongs count against a per-socket reply limit (`03` Limits); beyond it the frame is still dropped but no error is sent. |
 | `{"t":"pong"}` | Answer to `ping`. |
 
 Clients validate every relay text frame (ADR-031; `relayFrameSchema` in `packages/core`).
@@ -250,6 +250,7 @@ Close codes:
 | 4005 | `protocol_error` | First frame not `join`, or malformed control frame | no |
 | 4006 | `join_timeout` | No `join` within 10 s | yes |
 | 4007 | `replaced` | Another connection rejoined this slot with the same token | no |
+| 4008 | `overloaded` | The relay dropped the connection to protect its resources: too many sockets waiting to join this room, or the client did not read its frames (relay-node's outbound queue, `03` Limits) | yes, with backoff |
 | other | network / server error | | yes, with backoff |
 
 Membership rules:
@@ -443,10 +444,11 @@ Contracts:
   `local_path`).
 - **Inline** (`content` non-null): at most 16 KiB of UTF-8. `sha256` must equal
   SHA-256(utf8(`content`)), and `content` must be unchanged by the sanitizer's text step
-  (`04` §5, steps 1 to 3: NFC, no Cf characters or controls other than `\n` and `\t`, no
-  tag look-alikes), so the bytes the receiving agent reads are exactly the hashed bytes. A
-  receiver checks both; failing either makes the envelope unreadable (§6.3.5). Its UTF-8
-  is counted in the 28 KiB envelope limit like every other field.
+  (`04` §5, steps 1 to 3: NFC, no Cf characters or controls other than `\n` and `\t`, none
+  of the other invisible characters step 2 removes, no tag look-alikes, ADR-030), so the
+  bytes the receiving agent reads are exactly the hashed bytes. A receiver checks both;
+  failing either makes the envelope unreadable (§6.3.5). Its UTF-8 is counted in the
+  28 KiB envelope limit like every other field.
 
 Examples (common fields shortened):
 

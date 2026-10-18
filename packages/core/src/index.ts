@@ -86,6 +86,7 @@ export {
   encodeRoomState,
   type BufferedFrame,
   type Effect,
+  type KnownSocket,
   type Member,
   type Output,
   type RoomState,

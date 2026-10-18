@@ -11,7 +11,7 @@ import {
   roomTag,
   withLock,
   writeFileAtomic
-} from "./chunk-CXTTLDGW.mjs";
+} from "./chunk-V6BBUVLD.mjs";
 import {
   hookErrorsPath,
   roomFile
@@ -25,7 +25,7 @@ import {
   pathsOverlap,
   sanitizeAttr,
   scanSecrets
-} from "./chunk-UDXCX3FP.mjs";
+} from "./chunk-7VVD7K5U.mjs";
 import {
   bytesToHex,
   sha256
@@ -165,6 +165,10 @@ function withLedger(home, roomId, fn) {
 }
 function isHeld(e, l, hold) {
   return hold && e.source === "peer" && !l.ids.has(e.id) && !l.released.has(e.id);
+}
+function hasUndeliveredNotice(home, roomId, event) {
+  const l = readLedger(home, roomId);
+  return readInbox(home, roomId).some((e) => e.source === "local" && e.event === event && !l.ids.has(e.id));
 }
 function inboxCounts(home, roomId, hold) {
   const l = readLedger(home, roomId);
@@ -376,6 +380,7 @@ export {
   readOutbox,
   updateOutbox,
   unacked,
+  hasUndeliveredNotice,
   inboxCounts,
   claimUndelivered,
   releaseHeld,

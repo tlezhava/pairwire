@@ -230,6 +230,22 @@ never message text. Outside Docker this needs Node 22.13 or later (Node 22 print
 `ExperimentalWarning` for `node:sqlite`; Node 24 doesn't); without it the relay refuses to
 start rather than silently keeping state in memory.
 
+The relay caps its resources as a whole; change the defaults with these variables (`0`
+turns a cap off, an invalid value stops the relay at startup):
+
+| Variable | Default | What it caps |
+|---|---|---|
+| `PAIRWIRE_RELAY_MAX_SOCKETS` | 1024 | open connections (beyond it: HTTP 503) |
+| `PAIRWIRE_RELAY_MAX_SOCKETS_PER_ADDRESS` | 0 (off) | open connections from one client address (HTTP 503) |
+| `PAIRWIRE_RELAY_MAX_ROOMS` | 50000 | rooms the relay holds; at the cap a new room replaces the oldest ended one, or gets HTTP 503 |
+| `PAIRWIRE_RELAY_MAX_BUFFERED_MIB` | 256 | encrypted frames waiting for offline members, all rooms together (`buffer_full`) |
+| `PAIRWIRE_RELAY_TRUST_PROXY` | unset | `1`: count addresses from the proxy's `X-Forwarded-For` |
+
+Behind a proxy every connection comes from the proxy's address, so the per-address cap
+only makes sense with `PAIRWIRE_RELAY_TRUST_PROXY=1`, and only when the proxy sets
+`X-Forwarded-For` (Caddy does) and clients can't reach the relay around it. A client that
+stops reading what the relay sends is disconnected once 2 MiB are waiting for it.
+
 Put TLS in front of it, for example with Caddy:
 
 ```

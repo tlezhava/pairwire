@@ -53,17 +53,26 @@ const VALUE_STOP = /[\s"'`,;]/;
 const MAX_NAME = 64;
 const MAX_VALUE = 256;
 
-/** Format characters (and the tag block) a sender might use to split a secret. */
-const SPLITTERS = /[\p{Cf}\u{E0000}-\u{E007F}]/u;
+/**
+ * Characters a sender might use to split a secret: everything the receiving sanitizer removes
+ * (04 §5 step 2), plus combining marks and every default-ignorable code point (ADR-030).
+ */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point
+const SPLITTER = /^[\p{Cf}\p{M}\p{Default_Ignorable_Code_Point}\u{E0000}-\u{E007F}\u0000-\u0008\u000B-\u001F\u007F-\u009F]$/u;
+/** Text the peer's view can't differ from: printable ASCII, newline and tab. */
+const PLAIN = /^[\n\t\x20-\x7E]*$/;
 
+/**
+ * Scans the text as written and as the peer's agent will read it (04 §7.3, ADR-030), and
+ * reports every finding at its offsets in the original text.
+ */
 export function scanSecrets(text: string): SecretFinding[] {
   const found = scanPlain(text);
-  if (SPLITTERS.test(text)) {
-    const { stripped, map } = stripSplitters(text);
-    for (const f of scanPlain(stripped)) {
-      const start = map[f.offset]!;
-      const lastUnit = f.offset + f.length - 1;
-      found.push({ rule: f.rule, offset: start, length: map[lastUnit]! + 1 - start });
+  if (!PLAIN.test(text)) {
+    const { view, starts, ends } = peerView(text);
+    for (const f of scanPlain(view)) {
+      const start = starts[f.offset]!;
+      found.push({ rule: f.rule, offset: start, length: ends[f.offset + f.length - 1]! - start });
     }
   }
   return dedupe(found);
@@ -133,19 +142,28 @@ function dedupe(findings: SecretFinding[]): SecretFinding[] {
   return kept.sort((a, b) => a.offset - b.offset);
 }
 
-/** The text without splitter characters, and for each kept UTF-16 unit its original offset. */
-function stripSplitters(text: string): { stripped: string; map: number[] } {
-  let stripped = "";
-  const map: number[] = [];
+/**
+ * The text without splitter characters and with every other character in its NFKC form
+ * (U+212A KELVIN SIGN reads as K, fullwidth letters as ASCII). For each UTF-16 unit of the
+ * view, `starts` and `ends` give the original range of the character it came from.
+ */
+function peerView(text: string): { view: string; starts: number[]; ends: number[] } {
+  let view = "";
+  const starts: number[] = [];
+  const ends: number[] = [];
   let offset = 0;
   for (const ch of text) {
-    if (!SPLITTERS.test(ch)) {
-      stripped += ch;
-      for (let i = 0; i < ch.length; i++) map.push(offset + i);
+    if (!SPLITTER.test(ch)) {
+      const folded = ch.normalize("NFKC");
+      view += folded;
+      for (let i = 0; i < folded.length; i++) {
+        starts.push(offset);
+        ends.push(offset + ch.length);
+      }
     }
     offset += ch.length;
   }
-  return { stripped, map };
+  return { view, starts, ends };
 }
 
 /** At least 16 characters, a letter and a digit, and >= 3.0 bits of Shannon entropy per character. */

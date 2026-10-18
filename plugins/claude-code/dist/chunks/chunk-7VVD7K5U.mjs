@@ -18,13 +18,53 @@ import {
 } from "./chunk-KARZWXGF.mjs";
 
 // packages/core/src/sanitize.ts
-var REMOVE = new RegExp("(?!\\u200D)\\p{Cf}|[\\u{E0000}-\\u{E007F}]|[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]", "gu");
+var REMOVE = (
+  // eslint-disable-next-line no-control-regex -- matching control characters is the point
+  new RegExp("(?!\\u200D)\\p{Cf}|[\\u{E0000}-\\u{E007F}]|[\\u0000-\\u0008\\u000B-\\u001F\\u007F-\\u009F]|[\\u{E0100}-\\u{E01EF}]|[\\u115F\\u1160\\u3164\\uFFA0]|\\u034F|[\\u180B-\\u180D]|\\u180F", "gu")
+);
+var STRAY_VARIATION_SELECTOR = /(?<![\p{L}\p{N}\p{P}\p{S}])[\uFE00-\uFE0F]/gu;
 var LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-var TAG_LOOKALIKE = /<(?=\s*(?:\/\s*)?(?:pairwire_message|system-reminder|system|channel|function|antml|pairwire))/gi;
+var TAG_OPENER = /[<\uFE64\uFF1C\u226E]/g;
+var TAG_SKIP = /^[\s\p{M}\p{Default_Ignorable_Code_Point}]$/u;
+var TAG_SLASHES = /* @__PURE__ */ new Set(["/", "\\", "\u2044", "\u2215", "\u2216", "\u29F8", "\u29F9", "\uFE68", "\uFF0F", "\uFF3C"]);
+var TAG_MAX_SLASHES = 2;
+var TAG_KEYWORDS = ["pairwire", "system", "channel", "function", "antml"];
+var MARKS = new RegExp("\\p{M}", "gu");
 var NAME_MAX_CHARS = 40;
 var ANONYMOUS = "anonymous";
 function sanitizeText(text) {
-  return text.replace(LONE_SURROGATE, "\uFFFD").normalize("NFC").replace(REMOVE, "").normalize("NFC").replace(TAG_LOOKALIKE, "\u2039");
+  const cleaned = text.replace(LONE_SURROGATE, "\uFFFD").normalize("NFC").replace(REMOVE, "").replace(STRAY_VARIATION_SELECTOR, "").normalize("NFC");
+  return neutralizeTags(cleaned);
+}
+function neutralizeTags(text) {
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(TAG_OPENER)) {
+    if (!opensTag(text, m.index + 1)) continue;
+    out += text.slice(last, m.index) + "\u2039";
+    last = m.index + 1;
+  }
+  return last === 0 ? text : out + text.slice(last);
+}
+function opensTag(text, from) {
+  let letters = "";
+  let slashes = 0;
+  let i = from;
+  while (i < text.length) {
+    const ch = String.fromCodePoint(text.codePointAt(i));
+    i += ch.length;
+    if (TAG_SKIP.test(ch)) continue;
+    if (letters === "" && slashes < TAG_MAX_SLASHES && TAG_SLASHES.has(ch)) {
+      slashes++;
+      continue;
+    }
+    const folded = ch.toLowerCase().normalize("NFKD").replace(MARKS, "");
+    if (folded === "") continue;
+    letters += folded;
+    if (TAG_KEYWORDS.some((k) => letters.startsWith(k))) return true;
+    if (!TAG_KEYWORDS.some((k) => k.startsWith(letters))) return false;
+  }
+  return false;
 }
 function sanitizeAttr(value) {
   return escapeAttr(collapse(sanitizeText(value)));
@@ -23037,7 +23077,12 @@ var RELAY_LIMITS = {
   offlineBufferBytes: 1024 * 1024,
   bufferedFrameLifetimeMs: 72 * HOUR,
   idleExpiryMs: 72 * HOUR,
-  maxAgeMs: 7 * 24 * HOUR
+  maxAgeMs: 7 * 24 * HOUR,
+  /** Sockets that upgraded but haven't joined; one more closes the oldest (4008). */
+  unjoinedSocketsPerRoom: 8,
+  /** Replies the relay writes back to one socket itself (pong, error). */
+  relayRepliesPerMinute: 60,
+  relayReplyBurst: 10
 };
 var CLIENT_LIMITS = {
   maxFrameBytes: 32 * 1024,
@@ -23050,6 +23095,7 @@ var CLIENT_LIMITS = {
 
 // packages/core/src/relay-room.ts
 var REFILL_PER_MS = RELAY_LIMITS.binaryFramesPerMinute / 6e4;
+var REPLY_REFILL_PER_MS = RELAY_LIMITS.relayRepliesPerMinute / 6e4;
 var controlSchema = external_exports.discriminatedUnion("t", [
   external_exports.strictObject({ t: external_exports.literal("join"), v: external_exports.number(), token: external_exports.string().nullable() }),
   external_exports.strictObject({ t: external_exports.literal("leave") }),
@@ -23131,15 +23177,15 @@ var NAME_CHAR = /[A-Za-z0-9_.-]/;
 var VALUE_STOP = /[\s"'`,;]/;
 var MAX_NAME = 64;
 var MAX_VALUE = 256;
-var SPLITTERS = /[\p{Cf}\u{E0000}-\u{E007F}]/u;
+var SPLITTER = /^[\p{Cf}\p{M}\p{Default_Ignorable_Code_Point}\u{E0000}-\u{E007F}\u0000-\u0008\u000B-\u001F\u007F-\u009F]$/u;
+var PLAIN = /^[\n\t\x20-\x7E]*$/;
 function scanSecrets(text) {
   const found = scanPlain(text);
-  if (SPLITTERS.test(text)) {
-    const { stripped, map: map2 } = stripSplitters(text);
-    for (const f of scanPlain(stripped)) {
-      const start = map2[f.offset];
-      const lastUnit = f.offset + f.length - 1;
-      found.push({ rule: f.rule, offset: start, length: map2[lastUnit] + 1 - start });
+  if (!PLAIN.test(text)) {
+    const { view, starts, ends } = peerView(text);
+    for (const f of scanPlain(view)) {
+      const start = starts[f.offset];
+      found.push({ rule: f.rule, offset: start, length: ends[f.offset + f.length - 1] - start });
     }
   }
   return dedupe(found);
@@ -23194,18 +23240,23 @@ function dedupe(findings) {
   }
   return kept.sort((a, b) => a.offset - b.offset);
 }
-function stripSplitters(text) {
-  let stripped = "";
-  const map2 = [];
+function peerView(text) {
+  let view = "";
+  const starts = [];
+  const ends = [];
   let offset = 0;
   for (const ch of text) {
-    if (!SPLITTERS.test(ch)) {
-      stripped += ch;
-      for (let i = 0; i < ch.length; i++) map2.push(offset + i);
+    if (!SPLITTER.test(ch)) {
+      const folded = ch.normalize("NFKC");
+      view += folded;
+      for (let i = 0; i < folded.length; i++) {
+        starts.push(offset);
+        ends.push(offset + ch.length);
+      }
     }
     offset += ch.length;
   }
-  return { stripped, map: map2 };
+  return { view, starts, ends };
 }
 function isHighEntropy(value) {
   if (value.length < 16 || !/[A-Za-z]/.test(value) || !/[0-9]/.test(value)) return false;

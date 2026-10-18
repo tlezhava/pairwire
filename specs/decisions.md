@@ -777,11 +777,75 @@ text or the protocol.
   sent no reply led `ctl continue` to write `state.json` behind a live owner. It now falls
   back only when nothing accepts the connection (or the owner pid is dead).
 
+## ADR-030 Sanitizer and scanner hardening after the internal review
+
+Status: proposed (2026-10-18), from the internal pre-1.0 security review (`inject` area).
+Spec text: `04-client.md` section 3 (Peer identity), section 5 (steps 2 and 3, the test
+vectors, Hold mode) and section 7 step 3; `02-protocol.md` §6.3 (inline content);
+`05-security.md` residual risks 13 and 14; `06-agent-guide.md` section 2; `07-testing.md`.
+No INV-* text changes: these bring the code into line with INV-3 and INV-5 as written and
+tighten their mechanisms.
+
+1. **Tag look-alikes hidden by joining characters (high).** Step 3 allowed only
+   whitespace between `<`, `/` and the keyword, and step 2 deliberately keeps ZWJ, so
+   `</\u200Dpairwire_message>` survived and closed the wrapper; so did a CGJ, a variation
+   selector, a Hangul filler or a combining mark there. The same worked for a display
+   name closing `<pairwire_notice>`, for inline contract content (which passed the
+   invariance check) and for `<pairwire_transcript>`. Decision: step 3 matches a
+   skeleton. After each `<` (and U+FE64, U+FF1C and U+226E, which NFC makes of `<` and
+   U+0338) it skips
+   whitespace, combining marks and default-ignorable code points anywhere, allows a
+   slash or two (`/`, `\` or a listed look-alike; two for JSON's `<\/`), folds the other characters by NFKD without
+   marks and lowercased, and checks whether they begin with one of the keywords. Matching
+   anywhere in the name (not only after `<` and `/`) closes `pair\u200Dwire_message` too;
+   the folding closes fullwidth letters, ligatures and U+212A. It is a hand-written scan
+   rather than a regex: it stops at the first character that is neither skippable, the
+   slash, nor the next keyword letter, and `<` is never one of those, so each character is
+   examined for at most one `<` and the step is linear without a fixed look-ahead bound.
+   The keyword list is unchanged; `pairwire` already covers every element pairwire emits.
+   More text now has its `<` turned into `‹` (for example `<s y s t e m`), which is
+   harmless; the cost of a false negative is a forged harness tag. Removing ZWJ outside
+   emoji sequences was the alternative; it would still leave the other joiners and marks.
+2. **The scanner and the sanitizer disagreed (medium).** The scanner's de-splitting copy
+   removed Cf and the tag block only, while the receiving sanitizer also removes C0/C1
+   controls and DEL and applies NFC, so `ghp_` + `\u0001` + … or a share string with
+   U+212A passed the scan and reached the peer's agent intact (`parseShareString` even
+   accepts the Kelvin form). Decision: the scanner checks the body as the peer's agent
+   reads it: every character the sanitizer removes, plus combining marks and every
+   default-ignorable code point, is taken out, and each remaining character is replaced
+   by its NFKC form, with offsets mapped back to the original. `redact()` uses the same
+   scan, so the logging backstop covers these forms too. Printable-ASCII text skips the
+   copy. Rejecting outbound controls outright was the simpler alternative, but it would
+   change the envelope rules for every sender and still miss the NFKC look-alikes.
+3. **Invisible characters outside Cf survived (low).** Variation selectors (including the
+   256-character supplement, one byte each), CGJ and the Hangul fillers carry a hidden
+   payload as well as the tag block did, and the human sees only an emoji in hold-mode
+   review or the transcript. Decision: step 2 removes U+E0100–U+E01EF, U+034F, U+115F,
+   U+1160, U+3164, U+FFA0 and U+180B–U+180D, U+180F, and keeps U+FE00–U+FE0F only
+   directly after a base character (General Category L, N, P or S), one per base, which
+   is all emoji presentation and standardized variation sequences need. Inline contract
+   content containing any of these now fails the invariance check and is unreadable
+   (§6.3.5) to an updated client; a 0.2.0 client still accepts it. Paths keep their
+   schema; the sanitizer removes these characters when they are rendered.
+4. **`peer_changed` notices were unbounded (low).** Every HELLO with a new name queued a
+   notice, local notices are never held and every notice wakes an idle session, so a peer
+   reconnecting under new names had an unreviewed 40-character channel and a wake flood in
+   hold mode. Decision: a `peer_changed` notice is queued only when no earlier one for the
+   room is undelivered, like `held`. The transcript still gets a warning for every change
+   (it now comes from the connection's `peerChanged` event rather than the notice), so the
+   human's record is complete. Residual risk 13 documents the display-name channel.
+5. **The guide overstated `author="human"` (low).** `author` is set by the sender's
+   client, and the renderer copies it, but the guide told the agent the collaborator typed
+   such a message. Decision: `06` section 2 says it is the collaborator's client's claim,
+   which pairwire can't verify, and that it carries no more authority than other peer
+   messages; residual risk 14. This changes the text agents receive (SKILL.md), so it
+   needs the human's approval with this ADR.
+
 ## ADR-031 Client robustness against a hostile relay and local races
 
 Status: proposed (2026-10-18), from the internal pre-1.0 security review (areas "crypto"
 and "local"). Spec text: `02-protocol.md` §4.1 and §5, `04-client.md` section 3 (lock
-details, `epoch`) and section 10 (Codex install), `05-security.md` residual risk 13. No
+details, `epoch`) and section 10 (Codex install), `05-security.md` residual risk 15. No
 INV-* text changes; this brings the client in line with the existing rule that every
 external input is validated, and tightens ADR-012's epoch binding.
 
@@ -824,7 +888,7 @@ external input is validated, and tightens ADR-012's epoch binding.
      or recreated room, or an in-memory relay-node restart, never reaches this check: the
      token no longer matches, the relay answers 4002 and the room ends locally.
    - The floor can't help when the relay never showed the client an epoch at all; that and
-     plain frame dropping are documented as residual risk 13 (denial of service only).
+     plain frame dropping are documented as residual risk 15 (denial of service only).
 3. **The mkdir lock breaks and releases atomically.** The stale verdict and the `rmdir`
    were separate steps, so two processes that found the same stale lock could both enter,
    and a holder's `finally` could remove a newer holder's lock. The review suggested an
@@ -854,6 +918,115 @@ external input is validated, and tightens ADR-012's epoch binding.
    besides the new one, so a reinstall over 0.2.0 replaces the old entries instead of
    doubling them. The path comes only from `PAIRWIRE_HOME`/`HOME`, which the user controls,
    so this fixes broken installs, not an attack.
+
+## ADR-032 Relay resource limits after the internal review
+
+Status: accepted (2026-10-18), pending review on `fix/relay-limits`. Spec text: `03-relay.md`
+Limits, Room state machine (host hooks), Cloudflare implementation (attachments, resource
+limits), Node implementation (relay-wide limits); `02-protocol.md` §5 (close 4008, error
+replies); `07-testing.md`. No invariant changes: none of these limits is an INV, and
+`00-product.md` is untouched.
+
+Context. An internal pre-1.0 security review found three relay problems. (1) relay-node
+never looked at its outbound queue: a socket that stops reading while it sends pings (each
+answered with a pong), oversized frames (each answered with `too_large`) or rate-limited
+frames, or a member that never reads what its peer forwards, made the relay queue without
+bound; the reviewer reached 469 MB of heap in 18 s over loopback, and an out-of-memory
+relay loses every room it holds in memory. (2) Nothing capped the relay as a whole: room
+ids need no secret, so a client can open any number of rooms, pin 2 MiB of offline buffer
+in each for 72 h, and open any number of sockets, including unjoined ones in one room. (3)
+A Durable Object rebuilt after hibernation gave every unjoined socket a fresh 10 s join
+deadline, because the attachment did not record when the socket connected.
+
+Decisions and why:
+
+1. **A per-socket reply limit in the shared room (60 per minute, burst 10),** counting the
+   frames the relay itself writes back: `pong` and `error`. Beyond it the reply is not sent;
+   the frame that caused it is handled as before (an oversized frame is still dropped). One
+   bucket for both, because an attacker would just switch between them. A compliant client
+   pings every 30 s and never draws an `error`, so it never meets this. It doesn't apply to
+   pings Cloudflare's auto-response answers, which never reach the room.
+2. **relay-node closes a socket whose outbound queue would pass 2 MiB** (`bufferedAmount`
+   plus the frame), with a new close code **4008 `overloaded`**, and treats it as a
+   disconnect. 2 MiB is twice the largest burst a compliant client is sent at once (a
+   rejoin's 1 MiB of buffered frames). The frame not sent is lost at the relay; the peer
+   never acked it, so the sender's client resends it (`02` §6.2). A new code rather than
+   1008: 4000-4999 is the range RFC 6455 leaves to applications, a named code tells the
+   client (and whoever reads its log) what happened, and the same code serves decision 3 in
+   both relays. Clients already retry any code they don't know with backoff, so no client
+   change is needed. The cap is a constant,
+   not a setting: nothing a compliant client does depends on it.
+3. **At most 8 unjoined sockets per room; a ninth closes the oldest with 4008.** Closing the
+   oldest instead of refusing the newest means sockets parked in a room cannot lock out a
+   member who connects now and joins within a round trip. A legitimate room rarely has more
+   than one or two sockets in this state. Added to `RELAY_LIMITS`, with the reply limit, so
+   both are reported at `/v1/info` and shared by both relays.
+4. **relay-node gets relay-wide caps, set by environment variables with defaults:** 1024
+   sockets, 50000 rooms, 256 MiB of buffered frames across all rooms, and a per-address
+   socket cap that is **off by default**. Sockets and rooms beyond a cap are refused at the
+   upgrade with HTTP 503, which the client treats as a network error. The byte cap goes
+   through a new optional room hook, `admitBuffered(bytes)`, and is answered with
+   `buffer_full` like a full slot buffer, so the room logic stays shared and pure. Refusals
+   are logged at most once a minute per cap, so the log can't be flooded either.
+   *Why tombstones are evicted:* a room without buffered frames costs about 2 KB (measured:
+   100000 idle rooms took 213 MB of heap), and ending a room is as cheap as opening one, so
+   a plain room cap would let one client fill it with tombstones that last 7 days and lock
+   out every new room for that long. A new room therefore evicts the oldest tombstone that
+   has no open socket; an evicted tombstone behaves like one past max age (a join with its
+   token gets 4002, which clients already treat like 4003). Live rooms are never evicted,
+   since that would end real pairs, so a client that opens live rooms can still fill the cap
+   for up to 72 h (idle expiry); see "For the reviewer" below.
+   *Why the per-address cap is off:* relay-node is meant to sit behind a TLS proxy, where
+   every connection's TCP peer is the proxy. A default-on cap would cap the whole relay at
+   that number. `PAIRWIRE_RELAY_TRUST_PROXY=1` takes the address from the last
+   `X-Forwarded-For` entry instead, for operators whose proxy sets it. The address is kept
+   in memory to count and never logged (03 Logging). *Why these numbers:* they keep a small
+   VM's worst case near 1.3 GB while leaving room for hundreds of pairs: 256 MiB of
+   buffers, plus up to 2 MiB in the outbound queue of each socket that receives forwarded
+   frames (with replies limited, only a peer's frames can fill a queue, so at most half the
+   socket cap). Operators with more or less memory change them; 0 turns a cap off.
+5. **The Durable Object stores each socket's connect time in its attachment** and passes
+   it to the room, which computes the deadline from it, so a rebuild never extends the
+   deadline; a socket already past it is closed at the next alarm. Attachments without the
+   field (written by the previous version) read as connected at the rebuild, which is
+   today's behavior.
+6. **Cloudflare gets no outbound cap and no relay-wide caps, by necessity or by choice.**
+   Workers WebSockets expose no `bufferedAmount`, so decision 2 can't be ported; the room
+   limits, the reply limit and the platform's per-isolate memory limit (which resets the
+   object, dropping that room's sockets but keeping its storage) are what bound it. A
+   per-address limit on room creation would need a Rate Limiting binding in `wrangler.toml`
+   and a deploy, which is the maintainer's decision; the hosted relay's residual (filling
+   free-plan quotas, failing closed for everyone for up to 72 h) is written down in `03`
+   instead.
+
+Not done:
+
+- **SQLite still rewrites the whole room for each buffered frame** (up to about 2.7 MB of
+  JSON at `synchronous = FULL`). Storing frames in their own table needs a schema
+  migration (version 2), a frame identity the store can diff against, and its own restart
+  tests: not a contained change. The byte cap bounds the file meanwhile; the rate at which
+  an attacker can make the relay rewrite rooms is bounded by the per-member rate limit
+  times the socket cap. Follow-up.
+- **A smaller combined buffer per room** (the reviewer's suggestion) would change a
+  limit clients and docs rely on (100 frames or 1 MiB per member); left as is.
+- Unverified, for the maintainer: a Durable Object whose two offline buffers are both full
+  stores about 2 MiB under one key. If that exceeds the storage backend's per-value limit,
+  the `put` would fail. Worth a check before the hosted relay sees heavy offline use.
+
+For the reviewer:
+
+- **Room cap trade-off.** Once live rooms fill the room cap, new rooms are refused for up
+  to 72 h; without the cap, the same client could run the relay out of memory (about 2 KB
+  per room, so roughly a million rooms per 2 GB), taking existing rooms down too. The cap
+  protects existing pairs at the expense of new ones. A per-address limit on room creation
+  would address the fill, but on a proxied relay it depends on trusting the proxy's
+  header, like the per-address socket cap. Whether 50000 is the right default, and whether
+  room creation should be rate-limited per address, is a product decision.
+
+Consequences. `/v1/info` reports three new limits (`unjoinedSocketsPerRoom`,
+`relayRepliesPerMinute`, `relayReplyBurst`), so `npm run test:live` against the hosted relay
+fails its limits check until the relay is redeployed with this change. relay-node operators
+get five environment variables, documented in the README.
 
 ## Spike findings
 
