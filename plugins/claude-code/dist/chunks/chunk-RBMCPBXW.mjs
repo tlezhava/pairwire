@@ -478,6 +478,33 @@ var PassiveSessionError = class extends Error {
   name = "PassiveSessionError";
 };
 var bindingPath = (home, projectDir) => join2(bindingsDir(home), `${projectHash(projectDir)}.json`);
+var harnessPidSchema = external_exports.strictObject({
+  owner_pid: external_exports.number().int().positive(),
+  harness_pid: external_exports.number().int().min(2)
+});
+var sidecarPath = (path) => path.replace(/\.json$/, ".harness-pid");
+var harnessPidPath = (home, projectDir) => sidecarPath(bindingPath(home, projectDir));
+function readHarnessPid(home, projectDir, binding) {
+  let text;
+  try {
+    text = readFileSync2(harnessPidPath(home, projectDir), "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = harnessPidSchema.safeParse(safeJson(text));
+  return parsed.success && parsed.data.owner_pid === binding.owner_pid ? parsed.data.harness_pid : null;
+}
+function safeJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+function removeBindingFile(path) {
+  removeFile(path);
+  removeFile(sidecarPath(path));
+}
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -518,13 +545,13 @@ function claimProject(home, projectDir, me, alive = isProcessAlive) {
     const binding = readBindingFile(path);
     if (!binding) return { kind: "idle" };
     if (!roomIsOpen(home, binding.room_id)) {
-      removeFile(path);
+      removeBindingFile(path);
       return { kind: "idle" };
     }
     if (binding.owner_pid === me.pid) return { kind: "owner", roomId: binding.room_id, tookOver: false };
     if (alive(binding.owner_pid)) return { kind: "passive", ownerPid: binding.owner_pid, roomId: binding.room_id };
     const { owner_harness: _previous, ...rest } = binding;
-    writeBinding(path, { ...rest, ...owner(me) });
+    writeBinding(path, { ...rest, ...owner(me) }, me.harnessPid);
     return { kind: "owner", roomId: binding.room_id, tookOver: true };
   });
 }
@@ -537,12 +564,16 @@ function bindProject(home, projectDir, roomId, me, alive = isProcessAlive) {
       throw new PassiveSessionError(existing.owner_pid);
     }
     const binding = { project_dir: projectDir, room_id: roomId, ...owner(me) };
-    writeBinding(path, binding);
+    writeBinding(path, binding, me.harnessPid);
     return binding;
   });
 }
-function writeBinding(path, binding) {
+function writeBinding(path, binding, harnessPid) {
   writeFileAtomic(path, JSON.stringify(bindingSchema.parse(binding), null, 2) + "\n");
+  const side = sidecarPath(path);
+  const record = harnessPidSchema.safeParse({ owner_pid: binding.owner_pid, harness_pid: harnessPid });
+  if (binding.owner_session === null && record.success) writeFileAtomic(side, JSON.stringify(record.data) + "\n");
+  else removeFile(side);
 }
 function bindingFiles(home) {
   try {
@@ -561,7 +592,7 @@ function bindingsForRoom(home, roomId) {
 function removeBindingFor(home, roomId) {
   for (const path of bindingFiles(home)) {
     withLock(path, () => {
-      if (readBindingFile(path)?.room_id === roomId) removeFile(path);
+      if (readBindingFile(path)?.room_id === roomId) removeBindingFile(path);
     });
   }
 }
@@ -693,6 +724,7 @@ export {
   writeSessionCaps,
   refreshActiveFlag,
   PassiveSessionError,
+  readHarnessPid,
   isProcessAlive,
   readBinding,
   claimProject,

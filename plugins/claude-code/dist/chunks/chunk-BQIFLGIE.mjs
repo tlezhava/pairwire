@@ -11,7 +11,7 @@ import {
   roomTag,
   withLock,
   writeFileAtomic
-} from "./chunk-V6BBUVLD.mjs";
+} from "./chunk-RBMCPBXW.mjs";
 import {
   hookErrorsPath,
   roomFile

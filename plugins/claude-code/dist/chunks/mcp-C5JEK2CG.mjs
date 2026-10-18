@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   transcriptEvents
-} from "./chunk-G6D7GQZL.mjs";
+} from "./chunk-GEHM5NBS.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -19,17 +19,17 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-BM7N4KKH.mjs";
+} from "./chunk-BQIFLGIE.mjs";
 import {
   assertStatePrivate
-} from "./chunk-OMHNOFXD.mjs";
+} from "./chunk-2FIQ5DRN.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-WJTGR6M6.mjs";
+} from "./chunk-A2PYUY3C.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -51,7 +51,7 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-V6BBUVLD.mjs";
+} from "./chunk-RBMCPBXW.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -27258,6 +27258,7 @@ var CLIENT_VERSION = "0.2.1";
 
 // packages/client/src/session.ts
 var WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";
+var CURSOR_APPROVAL_WARNING = "Approval: Cursor asks you before each message your agent sends, unless auto-run or an MCP allowlist covers the pairwire send tool; then messages go out without asking you first. pairwire cannot see that setting.";
 var SENDS_PER_MINUTE = 20;
 var MINUTE2 = 6e4;
 var ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -27572,6 +27573,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
         `Relay: ${state.relay ?? "default relay"}`,
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : [],
+        ...harnessOf(this.#o.env) === "cursor" && isOpen(state) ? [CURSOR_APPROVAL_WARNING] : [],
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
           peer: state.peer ? displayName(state.peer.name) : "your collaborator",
@@ -27649,7 +27651,7 @@ ${this.footer()}` };
     return this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession;
   }
   #claimant() {
-    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), now: this.#now() };
+    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), harnessPid: this.#o.ppid ?? process.ppid, now: this.#now() };
   }
   /**
    * Codex passes the session only as `_meta.sessionId` on tool calls (04 §10). The first one
