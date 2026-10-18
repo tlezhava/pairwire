@@ -141,9 +141,12 @@ export type HelloEvent =
 /**
  * Handshake state for one connection (02 §4.1). The client creates one per socket.
  * Only the latest epoch seen is kept; at most one HELLO is sent and one accepted per epoch.
+ * `floor` is the highest epoch seen on earlier connections (ADR-031): nothing at or below
+ * it is sent or accepted, so a relay can't replay a HELLO recorded for an old epoch.
  */
 export class Handshake {
-  #latest = -1;
+  readonly #floor: number;
+  #latest: number;
   #ephemeral: { epoch: number; priv: Uint8Array; pub: Uint8Array } | null = null;
   #acceptedEpoch = -1;
   #failures = 0;
@@ -152,8 +155,12 @@ export class Handshake {
     private readonly opts: {
       keys: Pick<RoomKeys, "roomIdBytes" | "helloKey" | "psk">;
       payload: HelloPayload;
+      floor?: number;
     },
-  ) {}
+  ) {
+    this.#floor = opts.floor ?? -1;
+    this.#latest = this.#floor;
+  }
 
   get decryptFailures(): number {
     return this.#failures;
@@ -172,6 +179,7 @@ export class Handshake {
    * or `null` if this epoch is not newer than one already handled.
    */
   startEpoch(epoch: number): Uint8Array | null {
+    if (epoch <= this.#floor) return null;
     if (epoch < this.#latest || (epoch === this.#latest && this.#ephemeral?.epoch === epoch)) return null;
     if (epoch === this.#latest && this.#acceptedEpoch === epoch) return null;
     this.#latest = epoch;
@@ -194,7 +202,7 @@ export class Handshake {
       reason,
       wrongKey: false,
     });
-    if (opened.epoch < this.#latest) return drop("stale_epoch");
+    if (opened.epoch <= this.#floor || opened.epoch < this.#latest) return drop("stale_epoch");
     if (opened.epoch > this.#latest) return drop("unseen_epoch");
     if (this.#acceptedEpoch === opened.epoch) return drop("duplicate");
     const eph = this.#ephemeral;
