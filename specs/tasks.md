@@ -146,9 +146,9 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [ ] Mixed-harness e2e (Claude Code ↔ Codex) and manual acceptance (REQ-X-1, REQ-X-2).
 - [ ] **S11 Gemini CLI and Cursor spike:** docs part done (`decisions.md`); hands-on part with
   `spikes/s11/` in a real session of each harness.
-- [ ] Gemini CLI adapter, `pairwire install --gemini` (ADR-033, proposed; needs approval).
-- [ ] Cursor adapter, `pairwire install --cursor` (ADR-033, proposed; needs approval).
-- [ ] Codex idle wake through `codex queue` with fixed text (ADR-033, proposed; needs approval).
+- [ ] Gemini CLI adapter, `pairwire install --gemini` (ADR-033).
+- [ ] Cursor adapter, `pairwire install --cursor` (ADR-033).
+- [ ] Codex idle wake through `codex queue` with fixed text (ADR-033).
 
 ## M7 — Hardening toward 1.0
 

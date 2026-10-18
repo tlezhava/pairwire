@@ -1405,9 +1405,9 @@ Differences from Claude Code that the client handles:
   terminal command instead of `/pairwire:accept` (section 5, Hold mode, "Hints").
   Hop budget resets also happen through Codex's UserPromptSubmit hook.
 
-### Proposed (ADR-033): Gemini CLI, Cursor, and a Codex idle wake
+### Gemini CLI, Cursor, and a Codex idle wake (ADR-033)
 
-Status: proposed, not built. The facts come from the harnesses' docs (spike S11, docs
+Status: accepted on 2026-10-19. The facts come from the harnesses' docs (spike S11, docs
 part, `decisions.md`); everything marked **[S11]** waits for the hands-on part of S11, which
 runs the probe in `spikes/s11/` in a real session of each harness.
 

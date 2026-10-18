@@ -1030,10 +1030,10 @@ get five environment variables, documented in the README.
 
 ## ADR-033 Gemini CLI and Cursor adapters; a fixed-text wake for Codex (M6)
 
-Status: proposed (2026-10-19); needs the human's approval before any code, and the hands-on
-part of spike S11 before the items marked [S11] in `04-client.md` section 10 are built. It
-would add REQ-X-3 (Gemini CLI) and REQ-X-4 (Cursor) to `00-product.md` on approval. No
-product code.
+Status: accepted (approved by the human on 2026-10-19). Built from the docs; the items
+marked [S11] in `04-client.md` section 10 are implemented on the documented behavior with a
+safe fallback (D1) and stay open until the hands-on part of spike S11. Adds REQ-X-3 (Gemini
+CLI) and REQ-X-4 (Cursor) to `00-product.md`.
 
 Context. The human asked for more harnesses after Codex. Spike S11 (docs part, below) found
 that Gemini CLI covers almost all of what Claude Code offers (MCP, hooks in the same output
