@@ -17,7 +17,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-C6UYZL3M.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-DEYK23TG.mjs");
     await runMcpServer();
     return -1;
   }
@@ -27,34 +27,34 @@ async function main(argv) {
     const opts = { home: pairwireHome(), env: process.env, cwd: process.cwd() };
     if (event === "stop-wait") {
       for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(sig, () => process.exit(0));
-      const { runStopWait } = await import("./chunks/waiter-MUOPJ4AL.mjs");
+      const { runStopWait } = await import("./chunks/waiter-QSRUMDCO.mjs");
       return runStopWait(stdin, { ...opts, stderr: process.stderr });
     }
-    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-LDCJK5M3.mjs");
+    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-6AXRQ4GW.mjs");
     if (!HOOK_EVENTS.includes(event ?? "")) return 0;
     const out = runHook(event, stdin, opts);
     if (out) process.stdout.write(out + "\n");
     if (event === "user-prompt-submit" || event === "post-tool-use") {
-      const { cancelWaiter } = await import("./chunks/waiter-MUOPJ4AL.mjs");
+      const { cancelWaiter } = await import("./chunks/waiter-QSRUMDCO.mjs");
       await cancelWaiter(stdin, opts);
     }
     return 0;
   }
   if (command === "ctl") {
-    const { runCtl } = await import("./chunks/ctl-KOBOBB2B.mjs");
+    const { runCtl } = await import("./chunks/ctl-VJBBOWYN.mjs");
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "doctor") {
-    const { runDoctor } = await import("./chunks/doctor-AJEYDUB2.mjs");
+    const { runDoctor } = await import("./chunks/doctor-657KMKU7.mjs");
     return runDoctor({ home: pairwireHome(), env: process.env, out: process.stdout });
   }
   if (command === "purge") {
-    const { runPurge } = await import("./chunks/doctor-AJEYDUB2.mjs");
+    const { runPurge } = await import("./chunks/doctor-657KMKU7.mjs");
     const flags = new Set(argv.slice(1));
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }
   if (command === "install") {
-    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-X7LFRKU7.mjs");
+    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-N5DPDTTH.mjs");
     const args = argv.slice(1);
     try {
       const printFor = args.indexOf("--print-config");
