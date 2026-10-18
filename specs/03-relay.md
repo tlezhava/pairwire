@@ -183,7 +183,8 @@ way Durable Object storage does, uses this pair (relay-node with SQLite).
 
 All rooms of a Node relay share one process, so on top of the per-room limits it caps the
 relay as a whole. Each cap is an environment variable read at startup; a value that isn't
-a non-negative integer is a startup error (exit status 1).
+a non-negative integer is a startup error (exit status 1), and 0 turns that cap off. The
+caps are logged at startup (`limits`, numbers only).
 
 | Variable | Default | Caps | On violation |
 |---|---|---|---|
@@ -191,7 +192,7 @@ a non-negative integer is a startup error (exit status 1).
 | `PAIRWIRE_RELAY_MAX_SOCKETS_PER_ADDRESS` | 0 (off) | open WebSockets from one client address | upgrade refused with HTTP 503 |
 | `PAIRWIRE_RELAY_MAX_ROOMS` | 10000 | rooms held by the relay (with state, sockets or a timer; tombstones count) | upgrade to a room the relay doesn't hold refused with HTTP 503 |
 | `PAIRWIRE_RELAY_MAX_BUFFERED_MIB` | 256 | offline-buffered frame bytes across all rooms, in MiB | `error buffer_full`, frame dropped |
-| `PAIRWIRE_RELAY_TRUST_PROXY` | unset | set to `1`: take the client address from the last `X-Forwarded-For` entry instead of the TCP peer | — |
+| `PAIRWIRE_RELAY_TRUST_PROXY` | unset | `1`: take the client address from the last `X-Forwarded-For` entry instead of the TCP peer (unset, empty or `0`: don't; anything else is a startup error) | — |
 
 - A refused upgrade looks like a network error to the client, which retries with backoff.
 - The client address is the TCP peer's address unless `PAIRWIRE_RELAY_TRUST_PROXY=1`.
@@ -206,7 +207,8 @@ a non-negative integer is a startup error (exit status 1).
   the relay checks the socket's `bufferedAmount`; a frame that would take it over 2 MiB
   is not sent, and the socket is closed with 4008 `overloaded` and treated as a
   disconnect (the peer gets `peer_left` `disconnected`, later frames are buffered). A
-  member that stops reading therefore costs the relay at most 2 MiB. The largest burst a
+  member that stops reading therefore costs the relay at most 2 MiB (for up to 30 s more
+  while the close completes). The largest burst a
   compliant client is sent at once is a rejoin's 1 MiB of buffered frames, well inside
   the cap. The frame that was not sent is lost at the relay; the sender's client resends
   it because the peer never acked it (`02` §6.2).

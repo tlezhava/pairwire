@@ -831,9 +831,10 @@ Decisions and why:
    that number. `PAIRWIRE_RELAY_TRUST_PROXY=1` takes the address from the last
    `X-Forwarded-For` entry instead, for operators whose proxy sets it. The address is kept
    in memory to count and never logged (03 Logging). *Why these numbers:* they keep a small
-   VM's worst case near a gigabyte (256 MiB of buffers, plus up to 2 MiB per socket only
-   while that socket is being closed) while leaving room for hundreds of pairs; operators
-   with more traffic raise them.
+   VM's worst case near 1.3 GB while leaving room for hundreds of pairs: 256 MiB of
+   buffers, plus up to 2 MiB in the outbound queue of each socket that receives forwarded
+   frames (with replies limited, only a peer's frames can fill a queue, so at most half the
+   socket cap). Operators with more or less memory change them; 0 turns a cap off.
 5. **The Durable Object stores each socket's connect time in its attachment** and passes
    it to the room, which computes the deadline from it, so a rebuild never extends the
    deadline; a socket already past it is closed at the next alarm. Attachments without the
