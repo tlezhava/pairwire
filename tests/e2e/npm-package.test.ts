@@ -65,6 +65,6 @@ describe("npm package", () => {
     const codex = await run(bin, ["install", "--codex"], { env, encoding: "utf8", shell: WIN });
     expect(codex.stdout).toContain("Run /hooks in Codex and trust the four pairwire hooks");
     for (const f of ["dist/pairwire.mjs", "hooks/run.sh"]) expect(existsSync(join(home, ".pairwire", "bin", f))).toBe(true);
-    expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toContain(JSON.stringify(join(home, ".pairwire", "bin", "dist", "pairwire.mjs")));
+    expect(readFileSync(join(home, ".codex", "config.toml"), "utf8")).toContain(`args = ['${join(home, ".pairwire", "bin", "dist", "pairwire.mjs")}', "mcp"]`);
   });
 });
