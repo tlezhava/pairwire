@@ -9,6 +9,7 @@ import { resolveProjectDir } from "./project.js";
 import { renderItemsFor } from "./coord.js";
 import { claimUndelivered } from "./room-files.js";
 import { isOpen, readState, updateState, type RoomState } from "./state.js";
+import { isHumanPrompt } from "./wake.js";
 
 export const HOOK_EVENTS = ["session-start", "user-prompt-submit", "post-tool-use", "stop"] as const;
 export type HookEvent = (typeof HOOK_EVENTS)[number];
@@ -22,8 +23,6 @@ const EVENT_NAME: Record<HookEvent, string> = {
 
 /** Permission modes in which `send` runs without an approval prompt (S6, ADR-017). */
 const UNPROMPTED_MODES = new Set(["bypassPermissions", "auto"]);
-/** Claude Code submits D3 wakes and other background results as such prompts (S3). */
-const TASK_NOTIFICATION = "<task-notification>";
 
 export const STOP_REASON_LEAD = "pairwire: new message(s) from your collaborator; handling them before stopping.";
 
@@ -84,7 +83,7 @@ function hook(event: HookEvent, input: HookInput, o: HookOptions): Record<string
     addContext(out, event, reminder(state));
     return out;
   }
-  if (event === "user-prompt-submit" && !(input.prompt ?? "").startsWith(TASK_NOTIFICATION)) {
+  if (event === "user-prompt-submit" && isHumanPrompt(input.prompt ?? "")) {
     updateState(o.home, roomId, (s) => ({ ...s, hop_count: 0 }));
   }
   if (config.delivery === "pull") return finish(out);

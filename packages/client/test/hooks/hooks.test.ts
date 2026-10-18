@@ -8,6 +8,7 @@ import { runHook, STOP_REASON_LEAD, type HookEvent } from "../../src/hooks.js";
 import { hookErrorsPath, roomFile } from "../../src/paths.js";
 import { appendInbox, hiddenBodies, inboxCounts, readDelivered } from "../../src/room-files.js";
 import { createRoom, readState, updateState } from "../../src/state.js";
+import { WAKE_PROMPT } from "../../src/wake.js";
 import { tempDir } from "../state/helpers.js";
 
 const ROOM = "abcdefghijklmnopqrstuvwxyz";
@@ -72,6 +73,16 @@ describe("hooks: delivery (D2)", () => {
     const h = setup();
     h.run("user-prompt-submit", "user-prompt-submit", { prompt: "<task-notification>\n<summary>Stop hook feedback</summary>\n</task-notification>" });
     expect(h.state().hop_count).toBe(5);
+  });
+
+  it("INV-6 the fixed wake text (ADR-033) is not human input and keeps the hop count", () => {
+    expect(WAKE_PROMPT).toBe("pairwire: new message(s) from your collaborator are waiting; call the pairwire inbox tool to read them.");
+    const h = setup();
+    h.run("user-prompt-submit", "user-prompt-submit", { prompt: WAKE_PROMPT });
+    h.run("user-prompt-submit", "user-prompt-submit", { prompt: `\n  ${WAKE_PROMPT}\n` });
+    expect(h.state().hop_count).toBe(5);
+    h.run("user-prompt-submit", "user-prompt-submit", { prompt: `${WAKE_PROMPT} Also, what about the tests?` });
+    expect(h.state().hop_count).toBe(0);
   });
 
   it("REQ-MSG-3 Stop blocks only for new messages, with a plain first line, so it cannot loop", () => {

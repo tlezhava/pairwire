@@ -19,3 +19,4 @@ export { nodeAdvice, runDoctor, runPurge } from "./doctor.js";
 export { HOOK_EVENTS, runHook, type HookEvent } from "./hooks.js";
 export { cancelWaiter, runStopWait } from "./waiter.js";
 export { Installer, InstallError, printConfig } from "./install.js";
+export { isHumanPrompt, WAKE_PROMPT } from "./wake.js";
