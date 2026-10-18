@@ -90,7 +90,7 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
 | `relay` | `PAIRWIRE_RELAY` | built-in default | Relay host for rooms this client **starts** |
 | `auto_continue` | — | `true` | Stop hook keeps the agent working when new messages arrive, and D3 wakes an idle session for them |
 | `hop_budget` | — | `8` | Max consecutive agent sends without human input (REQ-SAFE-4) |
-| `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `auto` = hooks inject messages; `pull` = agent must call `inbox` |
+| `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `auto` = hooks inject messages; `pull` = agent must call `inbox`; `wake` (environment only) = `auto` plus the Codex idle wake (section 10) |
 | `hold` | `PAIRWIRE_HOLD` (`1`/`0`/`true`/`false`) | `false` | Hold mode (M5, section 5): peer messages wait for the human's `/pairwire:accept` before any path shows them to the agent |
 | — | `PAIRWIRE_LOG` | `info` | Log level: `debug`, `info`, `warn` or `error` (section 1, Logging) |
 | `channels` | `PAIRWIRE_CHANNELS` | `false` | Later milestone, not in the MVP: use Claude Code Channels for push instead of hooks (section 6, D3) |
@@ -1384,8 +1384,9 @@ edits (`<file>.pairwire-backup-<UTC timestamp>`) before changing it.
    in the double-quoted form 0.2.0 wrote) are replaced.
    Codex runs a hook only after the user trusts it with `/hooks`; install prints this step.
    Codex has no `asyncRewake`, so there is no `stop-wait` hook and no D3 wake: Codex sessions
-   get D1 and D2. (`codex queue` can wake an idle thread [hands-on]; a later version may use it
-   to send a fixed "new pairwire message" notice, never peer text.)
+   get D1 and D2. With `PAIRWIRE_DELIVERY=wake` (opt-in, unverified hands-on) the MCP server
+   wakes an idle thread with `codex queue` and a fixed sentence, never peer text ("Codex idle
+   wake" below).
 4. **Skill** at `~/.agents/skills/pairwire/SKILL.md` (the same file as the plugin's).
 5. `pairwire install --codex --uninstall` removes the marked block, the pairwire hook entries
    and the skill (with backups); it leaves `~/.pairwire` alone.
@@ -1528,12 +1529,51 @@ and installs the guide [S11: Cursor's user-level skills or rules location].
 
 #### Codex idle wake
 
-When an inbound item arrives, the room has no undelivered wake outstanding, and the owner's
-binding records a Codex `_meta.threadId`, the MCP server runs
-`codex queue --thread <threadId> --message <WAKE_PROMPT>` with `execFile` (no shell, fixed
-arguments). At most one wake per room is outstanding; it clears when a hook or `inbox`
-delivers. Off by default (`PAIRWIRE_DELIVERY=wake` opts in) until [S11-codex] confirms that
-`queue` starts a turn in an idle thread and only queues in a busy one.
+Opt-in, off by default, until [S11-codex] confirms that `codex queue` starts a turn in an idle
+thread and only queues in a busy one, that `_meta.threadId` is the id `queue --thread` takes,
+and that Codex's `UserPromptSubmit` hook sees the queued text unchanged as its `prompt`.
+
+- **Turning it on.** `PAIRWIRE_DELIVERY=wake` means `auto` (sections 2 and 6) plus this wake;
+  in every harness other than Codex it is exactly `auto`. It is read from the environment
+  only: `config.json`'s `delivery` stays `auto` or `pull`, because 0.1.x and 0.2.x read that
+  file with a strict enum and would refuse to start on `"wake"` (and treat hold mode as on),
+  and the file is shared by every harness on the machine. For the same reason the README
+  tells the human to set the variable for Codex alone (`PAIRWIRE_DELIVERY=wake codex`): an
+  older Claude Code plugin started from the same shell rejects the value. Codex passes it to
+  the server through `env_vars` (install's block already lists it); hooks get the full
+  environment and treat `wake` as `auto`.
+- **The thread.** Each Codex tool call carries `_meta.threadId`. The MCP server keeps in
+  memory, never in a file, the first one it sees on a call whose `_meta.sessionId` is absent
+  or equal to the server's session ("Session id" above). It accepts only 1 to 200 characters
+  of `[A-Za-z0-9._:-]` starting with a letter or digit, so the value can never be read as an
+  option. A server that has seen none (for example after a restart, until the agent's next
+  pairwire tool call) does not wake.
+- **When.** On every inbound message or local notice (never an ack, as in D3 step 4), after
+  the D3 handoff (section 6), the server runs the wake when all of these hold: delivery is
+  `wake`, `auto_continue` is true, `PAIRWIRE_HARNESS` is `codex`, a thread is known, this
+  server owns the room and the room is open, the wake has not been turned off by a failure,
+  no wake is outstanding, and some undelivered item is not held (the filter every delivery
+  path uses, section 5). So held messages never wake; the one `held` notice per accept cycle
+  does, once, as with D3.
+- **Outstanding.** When a wake goes out, the server remembers in memory the ids of the
+  undelivered items at that moment. The wake is outstanding until any of them is in
+  `delivered.json`'s `ids`: until a hook, `inbox` or `ctl accept` has shown one (or
+  `ctl accept drop` dropped it). The server checks this when the next item arrives, so a hook
+  in another process clears it without any signal. A restart forgets it; at worst that costs
+  one extra wake.
+- **How.** `execFile("codex", ["queue", "--thread", <threadId>, "--message", WAKE_PROMPT])`
+  with no shell, a 10 s timeout, `windowsHide`, and the server's own environment (so `codex`
+  is found on its `PATH`). Output is discarded. The server logs `codex_wake` with the exit
+  status, never the message. Any failure (the spawn fails, for example because `codex` is not
+  on `PATH`; a nonzero exit; the timeout) is logged once, as the warning `codex_wake_failed`
+  with the exit or error code, and turns the wake off for the rest of that server's life;
+  messages then reach the agent through D2 and D1 as without the option. On native Windows
+  `codex` installed by npm is a `.cmd` shim, which Node does not start without a shell, so
+  there the spawn fails and the wake turns itself off [S11-codex].
+- **The prompt.** The queued message arrives as a user turn whose prompt is `WAKE_PROMPT`.
+  Codex's `UserPromptSubmit` hook sees it and leaves the hop budget alone (the rule at the
+  top of this section); the agent reads the messages with `inbox`, or a `PostToolUse` hook
+  delivers them.
 
 ### Any MCP harness
 

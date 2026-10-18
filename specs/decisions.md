@@ -1083,6 +1083,19 @@ Implementation notes (foundation, 2026-10-19; `04` §3 and §10 amended):
 - Cursor's `beforeSubmitPrompt` cannot show context, so in that dialect the prompt hook
   never claims items (a claim there would mark them delivered unseen).
 
+Implementation notes (Codex wake, 2026-10-19; `04` §2 and §10 amended):
+
+- `PAIRWIRE_DELIVERY=wake` is read from the environment only. 0.1.x and 0.2.x parse
+  `config.json`'s `delivery` with a strict `auto`/`pull` enum, so a `"wake"` there would stop
+  them (and make them treat hold mode as on) in every harness sharing the file.
+- The thread id and the outstanding wake live in the MCP server's memory, not in the binding
+  or `state.json` (strict schemas in older readers), and not in a sidecar: only the server
+  that owns the room's connection ever wakes.
+- "Cleared when a hook or inbox delivers" is checked through `delivered.json`: the wake
+  remembers the ids it announced and is cleared once any of them is delivered, so hooks in
+  other processes need no new signal.
+- The wake also requires `auto_continue`, which already governs Stop blocks and D3 wakes.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
