@@ -237,7 +237,7 @@ turns a cap off, an invalid value stops the relay at startup):
 |---|---|---|
 | `PAIRWIRE_RELAY_MAX_SOCKETS` | 1024 | open connections (beyond it: HTTP 503) |
 | `PAIRWIRE_RELAY_MAX_SOCKETS_PER_ADDRESS` | 0 (off) | open connections from one client address (HTTP 503) |
-| `PAIRWIRE_RELAY_MAX_ROOMS` | 10000 | rooms the relay holds, ended ones included (HTTP 503 for a new room) |
+| `PAIRWIRE_RELAY_MAX_ROOMS` | 50000 | rooms the relay holds; at the cap a new room replaces the oldest ended one, or gets HTTP 503 |
 | `PAIRWIRE_RELAY_MAX_BUFFERED_MIB` | 256 | encrypted frames waiting for offline members, all rooms together (`buffer_full`) |
 | `PAIRWIRE_RELAY_TRUST_PROXY` | unset | `1`: count addresses from the proxy's `X-Forwarded-For` |
 
