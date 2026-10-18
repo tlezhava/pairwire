@@ -33,7 +33,17 @@ import { monotonicFactory } from "ulid";
 import { WebSocket } from "ws";
 import { closeRoomLocally } from "./lifecycle.js";
 import type { Logger } from "./log.js";
-import { appendCoordSent, appendInbox, readCoordSent, readOutbox, unacked, updateOutbox, type InboxEntry, type OutboxEntry } from "./room-files.js";
+import {
+  appendCoordSent,
+  appendInbox,
+  hasUndeliveredNotice,
+  readCoordSent,
+  readOutbox,
+  unacked,
+  updateOutbox,
+  type InboxEntry,
+  type OutboxEntry,
+} from "./room-files.js";
 import { expiresAt, isOpen, readSessionCaps, readState, updateState, writeSessionCaps, type RoomState, type StoredSession } from "./state.js";
 
 // ---------------------------------------------------------------------------------------
@@ -129,7 +139,10 @@ export interface ConnectionEvents {
   sent?(envelope: Envelope): void;
   /** Our envelopes with these ids were acked (REQ-MSG-6). */
   delivered?(ids: string[]): void;
-  /** The peer's identity changed (04 §3, Peer identity). */
+  /**
+   * The peer's identity changed (04 §3, Peer identity). Fires for every change; the
+   * `peer_changed` notice is queued only when no earlier one is undelivered.
+   */
   peerChanged?(notice: Notice): void;
   /** Connection or session state changed. */
   status?(status: ConnectionStatus): void;
@@ -496,7 +509,8 @@ export class RoomConnection {
       const notice = noticePeerChanged(before.peer, peer);
       this.#o.log.warn("peer_changed");
       this.#o.events?.peerChanged?.(notice);
-      this.#notice(notice);
+      // A peer reconnecting under new names gets one unreviewed notice per delivery (ADR-030).
+      if (!hasUndeliveredNotice(this.#o.home, this.#roomId, "peer_changed")) this.#notice(notice);
     }
     this.#emitStatus();
     this.#resendUnacked();

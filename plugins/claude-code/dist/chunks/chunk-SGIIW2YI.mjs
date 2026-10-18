@@ -5,7 +5,7 @@ import {
   ensurePrivateDir,
   errorCode,
   removeFile
-} from "./chunk-2CDVSR5B.mjs";
+} from "./chunk-IQ4ZVMHA.mjs";
 import {
   isNamedPipePath,
   roomFile
@@ -14,7 +14,7 @@ import {
   CTL_KEY_BYTES,
   ctlProof,
   external_exports
-} from "./chunk-BPJTOOBW.mjs";
+} from "./chunk-2KWGILWH.mjs";
 import {
   bytesToHex,
   hexToBytes,

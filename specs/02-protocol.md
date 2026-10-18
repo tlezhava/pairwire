@@ -387,10 +387,11 @@ Contracts:
   `local_path`).
 - **Inline** (`content` non-null): at most 16 KiB of UTF-8. `sha256` must equal
   SHA-256(utf8(`content`)), and `content` must be unchanged by the sanitizer's text step
-  (`04` §5, steps 1 to 3: NFC, no Cf characters or controls other than `\n` and `\t`, no
-  tag look-alikes), so the bytes the receiving agent reads are exactly the hashed bytes. A
-  receiver checks both; failing either makes the envelope unreadable (§6.3.5). Its UTF-8
-  is counted in the 28 KiB envelope limit like every other field.
+  (`04` §5, steps 1 to 3: NFC, no Cf characters or controls other than `\n` and `\t`, none
+  of the other invisible characters step 2 removes, no tag look-alikes, ADR-030), so the
+  bytes the receiving agent reads are exactly the hashed bytes. A receiver checks both;
+  failing either makes the envelope unreadable (§6.3.5). Its UTF-8 is counted in the
+  28 KiB envelope limit like every other field.
 
 Examples (common fields shortened):
 

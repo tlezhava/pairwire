@@ -62,9 +62,19 @@ From then on it fails CI.
   characters, Unicode tag block (U+E0000–U+E007F), other Cf characters (U+00AD,
   U+2061–U+2064, U+FFF9–U+FFFB) removed while ZWJ emoji survive, attribute quote
   breaking, NFC normalization, 8,000-character hook threshold, hook total cap with "*n*
-  more waiting".
+  more waiting". Tag look-alikes with a ZWJ, CGJ, variation selector, Hangul filler,
+  soft hyphen or combining mark after `<` or `/` or between the keyword's letters, slash
+  look-alikes and JSON's `<\/`, fullwidth and compatibility letters and ligatures, for every element
+  pairwire emits (`pairwire_message`, `pairwire_notice`, `pairwire_transcript`,
+  `pairwire_contract_content`) and the harness tags; each `04` §5 vector; the Variation
+  Selectors Supplement, CGJ, Hangul fillers and Mongolian free variation selectors removed,
+  and U+FE00–U+FE0F kept only once after a base character; linear time on runs of
+  skippable characters after `<` (ADR-030).
 - Secret scanner (INV-5): at least 3 positive and 3 negative samples per rule; never
-  returns matched text.
+  returns matched text. A secret or share string split by a C0 control, DEL, a C1
+  control, a variation selector, CGJ or a combining mark, or written with U+212A KELVIN
+  SIGN or fullwidth letters, is found at its original offsets, and `redact()` removes it
+  (ADR-030).
 - Relay room state machine: full membership table from `02-protocol.md` section 5;
   buffering order; HELLO never buffered; every limit in `03-relay.md` (rate limit counts
   binary frames only); expiry and max age with a fake clock; unknown token with a free
@@ -105,7 +115,9 @@ From then on it fails CI.
 - HELLO epochs: a HELLO for an older epoch is ignored; a replaced socket (4007) does not
   reconnect; five bad HELLOs disconnect with the `wrong_key` notice and no
   auto-reconnect.
-- Peer `instance` change produces the transcript warning and the `peer_changed` notice.
+- Peer `instance` change produces the transcript warning and the `peer_changed` notice;
+  further changes while that notice is undelivered add transcript warnings but no notice,
+  and a change after it is delivered queues a new one (ADR-030).
 - Local notices: `peer_joined` reaches the starter's agent through hooks and `inbox`; an
   incoming ack never produces delivery or a Stop block.
 - 4002 on rejoin and reaching `expires_at` both remove the room locally.
@@ -270,6 +282,9 @@ ADR-027.
   (directly or through a symlink), a sensitive name, or a file with a secret, naming the
   rule, sending nothing and writing no `coord-sent.jsonl` line; the scan covers every new
   input field and the fallback body.
+- INV-3: injection-corpus samples (including the ADR-030 probes) placed in a body, a
+  display name, a notice, inline contract content and the transcript can't close any
+  pairwire element; inline content carrying one is rejected as not sanitizer-invariant.
 - INV-3: injection-corpus samples placed in a body, a path (where the schema allows the
   characters) and inline content can't close the wrapper, forge a `match` attribute or
   forge a `<pairwire_contract_content>` element; `status` lines with peer paths are
