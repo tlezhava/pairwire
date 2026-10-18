@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CLIENT_LIMITS, RELAY_LIMITS, relayInfo } from "../src/limits.js";
+import { parseRelayFrame } from "../src/relay-frames.js";
 import { RelayRoom, decodeRoomState, encodeRoomState, type Effect, type Output, type RoomState } from "../src/relay-room.js";
 
 const T0 = Date.UTC(2026, 9, 15, 12, 0, 0);
@@ -309,6 +310,19 @@ describe("forwarding and buffering (02 §5, 03)", () => {
     h.advance(1 * S);
     expect(sent(h.room.binary("s1", msg(22)), "s2")).toHaveLength(1);
     expect(json(h.room.binary("s1", msg(23)), "s1")[0]).toMatchObject({ code: "rate_limited" });
+  });
+
+  it("sends only text frames that the client's parser accepts (02 §5, ADR-031)", () => {
+    const h = harness();
+    const outs: Output[] = [h.join("s1"), h.join("s2"), h.room.text("s1", '{"t":"ping"}')];
+    outs.push(h.room.binary("s1", msg(1, 64 * 1024 + 1)));
+    for (let i = 0; i < 21; i++) outs.push(h.room.binary("s1", msg(i)));
+    outs.push(h.room.disconnect("s2"));
+    const token = tokenOf(outs[1]!, "s2");
+    outs.push(h.join("s3", token), h.room.text("s3", '{"t":"leave"}'));
+    const texts = outs.flatMap((o) => [...sent(o, "s1"), ...sent(o, "s2"), ...sent(o, "s3")]).filter((d): d is string => typeof d === "string");
+    expect(new Set(texts.map((d) => (JSON.parse(d) as { t: string }).t))).toEqual(new Set(["joined", "peer_joined", "pong", "error", "peer_left"]));
+    for (const d of texts) expect(parseRelayFrame(d)).toMatchObject({ ok: true });
   });
 
   it("does not count pings or control frames against the rate limit", () => {

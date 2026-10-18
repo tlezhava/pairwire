@@ -92,6 +92,7 @@ export {
   type Slot,
   type SocketId,
 } from "./relay-room.js";
+export { MAX_RETRY_AFTER_S, parseRelayFrame, relayFrameSchema, type RelayFrame, type RelayFrameResult } from "./relay-frames.js";
 export {
   acceptHint,
   CODEX_CTL,
