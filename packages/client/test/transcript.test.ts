@@ -39,6 +39,8 @@ describe("transcript", () => {
       envelope: env({ id: "01JPW0000000000000000000AC", kind: "answer", reply_to: "01JPW0000000000000000000AB", body: "Yes.\nA UUID v4." }),
     });
     ev.inbound!({ source: "local", id: "x", event: "peer_joined", text: "Nika (codex) joined the room.", received_at: AT });
+    ev.peerChanged!({ event: "peer_changed", text: "The peer reconnected as a different client." });
+    // The notice itself is not written again: peerChanged covers every change (ADR-030).
     ev.inbound!({ source: "local", id: "y", event: "peer_changed", text: "The peer reconnected as a different client.", received_at: AT });
     expect(read()).toBe(
       [

@@ -4,6 +4,7 @@ import { WebSocket } from "ws";
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { hexToBytes, randomBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { HELLO_TYPE, msgAad, MSG_TYPE } from "@pairwire/core";
+import { markDelivered } from "../../src/room-files.js";
 import { readSecret, updateState } from "../../src/state.js";
 import { makeClient, MAX_AGE, newSecret, shiftedClock, sleep, startRelay, until, wrongKeys, type Client } from "./harness.js";
 
@@ -48,6 +49,29 @@ describe("connection: handshake and identity", () => {
     other.conn.start();
     await until(() => notices(a).includes("peer_changed"), 5000, "peer_changed");
     expect(a.state().peer?.instance).toBe("a".repeat(26));
+  });
+
+  it("REQ-SAFE-6 queues at most one undelivered peer_changed notice however often the peer changes (ADR-030)", async () => {
+    const { a, b } = await pair();
+    const changes: string[] = [];
+    let current = b;
+    const changeTo = async (instance: string) => {
+      current.conn.stop();
+      updateState(b.home, b.keys.roomId, (s) => ({ ...s, instance }));
+      current = b.restart();
+      current.conn.start();
+      await until(() => a.state().peer?.instance === instance, 5000, `peer is ${instance[0]}`);
+      changes.push(instance);
+    };
+    for (const c of ["c", "d", "e"]) await changeTo(c.repeat(26));
+    await sleep(100);
+    const changed = () => a.inbox().filter((e) => e.source === "local" && e.event === "peer_changed");
+    expect(changes).toHaveLength(3);
+    expect(changed()).toHaveLength(1);
+
+    markDelivered(a.home, a.keys.roomId, changed().map((e) => e.id));
+    await changeTo("f".repeat(26));
+    await until(() => changed().length === 2, 5000, "a new notice after delivery");
   });
 });
 
