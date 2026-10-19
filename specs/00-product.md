@@ -137,6 +137,11 @@ client unless stated otherwise. Each requirement has at least one test (see
   carries no harness-specific data except the informational `harness` field.
 - **REQ-X-2** (M6) A Codex user SHALL be able to install pairwire with one command and pair
   with a Claude Code user.
+- **REQ-X-3** (M6, ADR-033) A Gemini CLI user SHALL be able to install pairwire with one
+  pairwire command plus the one `gemini extensions` command it prints, and pair with a user
+  of any other supported harness.
+- **REQ-X-4** (M6, ADR-033) A Cursor user SHALL be able to install pairwire with one command
+  and pair with a user of any other supported harness.
 
 ### Collaboration (M5)
 

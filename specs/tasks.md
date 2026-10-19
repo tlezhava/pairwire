@@ -144,6 +144,15 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] Codex adapter + `pairwire install --codex`.
 - [x] `pairwire install --print-config <harness>`.
 - [ ] Mixed-harness e2e (Claude Code ↔ Codex) and manual acceptance (REQ-X-1, REQ-X-2).
+- [ ] **S11 Gemini CLI and Cursor spike:** docs part done (`decisions.md`); hands-on part with
+  `spikes/s11/` in a real session of each harness.
+- [x] Gemini CLI adapter, `pairwire install --gemini` (ADR-033). Built from the docs; the
+  [S11] items in `04` §10 wait for the hands-on part of S11.
+- [x] Cursor adapter, `pairwire install --cursor` (ADR-033). Built from the docs; the [S11]
+  items in `04` §10 wait for the hands-on part of S11.
+- [x] Codex idle wake through `codex queue` with fixed text (ADR-033). Opt-in
+  (`PAIRWIRE_DELIVERY=wake`); `queue` behavior on idle and busy threads waits for the Codex
+  manual acceptance.
 
 ## M7 — Hardening toward 1.0
 

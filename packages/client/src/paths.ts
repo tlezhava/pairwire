@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 
 export const ROOM_ID_PATTERN = /^[a-z2-7]{26}$/;
 
-export type RoomFile = "secret" | "ctl.key" | "state.json" | "caps.json" | "inbox.jsonl" | "delivered.json" | "outbox.jsonl" | "coord-sent.jsonl" | "transcript.md";
+export type RoomFile = "secret" | "ctl.key" | "state.json" | "caps.json" | "inbox.jsonl" | "delivered.json" | "outbox.jsonl" | "coord-sent.jsonl" | "transcript.md" | "wake-prompted.json";
 
 /** `PAIRWIRE_HOME`, else `~/.pairwire`. */
 export function pairwireHome(env: NodeJS.ProcessEnv = process.env): string {

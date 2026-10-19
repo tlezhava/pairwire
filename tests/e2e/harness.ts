@@ -34,10 +34,10 @@ const withPlatform = (env: Record<string, string>) => (onWindows ? { ...platform
  * Runs a shell-form hook command string (Codex's, 04 §10) through a POSIX shell: `sh -c` on
  * macOS and Linux, Git Bash on Windows.
  */
-export function runShellCommand(command: string, o: { env: Record<string, string>; input: string }): string {
+export function runShellCommand(command: string, o: { env: Record<string, string>; input: string; cwd?: string }): string {
   const shell = onWindows ? findGitBash(process.env) : "sh";
   if (!shell) throw new Error("Git Bash not found; pairwire's hooks need it on Windows");
-  return execFileSync(shell, ["-c", command], { env: withPlatform(o.env), input: o.input, encoding: "utf8" });
+  return execFileSync(shell, ["-c", command], { env: withPlatform(o.env), input: o.input, encoding: "utf8", ...(o.cwd ? { cwd: o.cwd } : {}) });
 }
 
 /**

@@ -3,7 +3,7 @@
 // exits 2, which makes Claude Code start a turn in the idle session. Every other outcome exits 0
 // quietly. It has no timer of its own: a waiter that exits 0 is not replaced until a turn ends.
 import { isProcessAlive, readBinding, sessionOwnsBinding } from "./binding.js";
-import { loadConfig } from "./config.js";
+import { loadConfig, pushes } from "./config.js";
 import { ctlCall, ctlTarget, type CtlTarget } from "./ctl-client.js";
 import type { WaitFrame } from "./ctl-server.js";
 import { hookErrorLogger } from "./log.js";
@@ -42,7 +42,7 @@ function locate(stdin: string, o: Pick<WaiterOptions, "home" | "env" | "cwd">, f
   if (!state || !isOpen(state)) return null;
   if (forWaiting) {
     const { config } = loadConfig(o.home, o.env);
-    if (config.delivery !== "auto" || !config.autoContinue) return null;
+    if (!pushes(config.delivery) || !config.autoContinue) return null;
   }
   return { target: ctlTarget(o.home, binding!.room_id, state.ctl_path), session: input.session_id! };
 }

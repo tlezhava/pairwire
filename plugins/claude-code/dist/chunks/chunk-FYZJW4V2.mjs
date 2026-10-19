@@ -4,7 +4,7 @@ import {
   errorCode,
   listRooms,
   readState
-} from "./chunk-V6BBUVLD.mjs";
+} from "./chunk-LZ32DTQE.mjs";
 import {
   bindingsDir,
   roomsDir

@@ -6,8 +6,11 @@ import { pairwireHome } from "./paths.js";
 import { ClientSession, joinInputSchema, leaveInputSchema, sendInputSchema, startInputSchema, type ToolResult } from "./session.js";
 import { CLIENT_VERSION } from "./version.js";
 
-/** Every call: let the session learn its harness session id from `_meta` (Codex, 04 §10). */
-const meta = (session: ClientSession, extra: { _meta?: Record<string, unknown> }) => session.noteHarnessSession(extra._meta?.sessionId);
+/** Every call: let the session learn its harness session and thread ids from `_meta` (Codex, 04 §10). */
+const meta = (session: ClientSession, extra: { _meta?: Record<string, unknown> }) => {
+  session.noteHarnessSession(extra._meta?.sessionId);
+  session.noteHarnessThread(extra._meta?.sessionId, extra._meta?.threadId);
+};
 
 const content = (r: ToolResult) => ({ content: [{ type: "text" as const, text: r.text }], ...(r.isError ? { isError: true } : {}) });
 

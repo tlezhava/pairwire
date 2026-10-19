@@ -1,0 +1,8 @@
+{
+  "session_id": "4b0d6f3e-8a51-4c2e-9d7a-2f1c3e5a7b90",
+  "transcript_path": "/home/dev/.gemini/tmp/project/chats/session-4b0d6f3e.json",
+  "cwd": "/home/dev/project",
+  "hook_event_name": "BeforeAgent",
+  "timestamp": "2026-10-19T09:00:05.000Z",
+  "prompt": "Ask my collaborator whether POST /orders is idempotent."
+}

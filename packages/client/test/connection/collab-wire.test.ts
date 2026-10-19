@@ -113,10 +113,13 @@ describe("structured kinds on the wire (02 §6.3.6)", { timeout: 30_000 }, () =>
     drop.on = true;
     const first = a.conn.send(claim(["src/a.ts"]));
     expect(first.encoding).toBe("structured"); // the session it went out under had collab1
-    drop.on = false;
+    // Keep dropping until A holds the session with B's new caps: a resend under the previous
+    // session would still be readable by the restarted B and would carry the old encoding.
     b = b.restart({ caps: OLD });
     b.conn.start();
-    await until(() => peerEntries(b).some((e) => e.id === first.id), 5000, "resent after the downgrade");
+    await until(() => a.conn.status().peerConnected && !a.conn.peerHasCollab(), 10_000, "downgraded session");
+    drop.on = false;
+    await until(() => peerEntries(b).some((e) => e.id === first.id), 15_000, "resent after the downgrade");
     expect(peerEntries(b).find((e) => e.id === first.id)!.envelope).toMatchObject({ kind: "chat", seq: first.seq });
 
     b.conn.stop();
@@ -124,13 +127,14 @@ describe("structured kinds on the wire (02 §6.3.6)", { timeout: 30_000 }, () =>
     drop.on = true;
     const second = a.conn.send(claim(["src/b.ts"]));
     expect(second.encoding).toBe("chat");
-    drop.on = false;
     b = b.restart({ caps: NEW });
     b.conn.start();
-    await until(() => peerEntries(b).some((e) => e.id === second.id), 5000, "resent after the upgrade");
+    await until(() => a.conn.status().peerConnected && a.conn.peerHasCollab(), 10_000, "upgraded session");
+    drop.on = false;
+    await until(() => peerEntries(b).some((e) => e.id === second.id), 15_000, "resent after the upgrade");
     expect(peerEntries(b).find((e) => e.id === second.id)!.envelope).toMatchObject({ kind: "claim", seq: second.seq });
-    await until(() => a.outbox().every((e) => e.status === "delivered"), 5000, "acked");
-  });
+    await until(() => a.outbox().every((e) => e.status === "delivered"), 15_000, "acked");
+  }, 60_000);
 });
 
 describe("unreadable structured envelopes (02 §6.3.5, ADR-025)", { timeout: 30_000 }, () => {

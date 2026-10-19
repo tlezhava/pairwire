@@ -8,8 +8,9 @@ engineer starts a room and sends the other a share string; from then on the two 
 talk. Messages are end-to-end encrypted: the relay in the middle only forwards bytes it
 cannot read.
 
-> **Status: pre-1.0 (0.1.0, alpha).** Claude Code, plus Codex through `install --codex`
-> (less tested). The protocol and storage formats may still change. Not yet
+> **Status: pre-1.0 (alpha).** Claude Code, plus Codex through `install --codex` (less
+> tested), Gemini CLI through `install --gemini` and Cursor through `install --cursor`
+> (neither yet tried in a real session). The protocol and storage formats may still change. Not yet
 > independently security-reviewed: read [Safety](#safety) before you pair with someone you
 > don't know.
 
@@ -50,6 +51,53 @@ from a terminal with `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (stdin); i
 release held messages with `... ctl accept` (or `ctl accept drop`) there. Messages reach
 Codex between its steps and at the end of a turn; an idle Codex session sees them on its next
 turn. `install --codex --uninstall` removes it all again.
+
+Opt-in, and not yet verified hands-on: start Codex as `PAIRWIRE_DELIVERY=wake codex` and the
+pairwire server wakes an idle Codex session when a message arrives, by queueing a fixed
+sentence ("new message(s) ... call the pairwire inbox tool") with `codex queue`; it never
+queues the message itself. It needs `codex` on the server's `PATH` and a pairwire tool call
+in the session first (that is how the server learns the thread), wakes at most once until
+the waiting messages are read, never for held messages, and turns itself off for the rest of
+the session after any failure. Set the variable for Codex only, not in `config.json` or your
+shell profile: older pairwire versions refuse the value.
+
+### Gemini CLI
+
+```
+npx pairwire install --gemini
+gemini extensions link ~/.pairwire/bin/gemini
+```
+
+(From a checkout: `node plugins/claude-code/dist/pairwire.mjs install --gemini`.) The first
+command copies the client to `~/.pairwire/bin` and writes a Gemini extension next to it: the
+MCP server, four hooks, the skill and the `/pairwire:say`, `/pairwire:continue`,
+`/pairwire:accept` and `/pairwire:log` commands; it prints the exact `link` command to run.
+Then restart Gemini CLI. The extension's server does not see your shell's `PAIRWIRE_*`
+variables, so set your name or relay in `~/.pairwire/config.json`. Gemini asks before every
+pairwire tool call; don't choose "always allow" for `send` and don't use `--yolo` while
+paired: pairwire can't see either to warn you. An idle Gemini session sees new messages on its
+next turn. `install --gemini --uninstall` removes the extension (run
+`gemini extensions uninstall pairwire` too). Gemini support is built from Gemini's docs and
+not yet tried in a real session.
+
+### Cursor
+
+```
+npx pairwire install --cursor
+```
+
+(From a checkout: `node plugins/claude-code/dist/pairwire.mjs install --cursor`.) This copies
+the client to `~/.pairwire/bin`, adds a `pairwire` server to `~/.cursor/mcp.json`, four hooks
+to `~/.cursor/hooks.json` and the skill to `~/.cursor/skills/pairwire`, keeping everything
+else in those files and backing each one up first; it refuses a file that isn't valid JSON.
+Then restart Cursor and enable the pairwire server in Cursor Settings > MCP if it is off.
+Cursor is usually started from the desktop, without your shell profile, so put `relay` and
+`name` in `~/.pairwire/config.json` rather than in `PAIRWIRE_*` variables. As in Codex, ask
+the agent to start, join or leave a room, and use `node ~/.pairwire/bin/dist/pairwire.mjs ctl
+say|continue|log|accept` in a terminal for your own words. Messages arrive after the agent's
+tool calls; at the end of a turn the hook asks the agent to read its inbox. Cursor's hooks
+have been unreliable in some releases: if messages don't show up, ask the agent to check its
+pairwire inbox. Not yet tried in a real Cursor. `install --cursor --uninstall` removes it again.
 
 Other MCP harnesses: `pairwire install --print-config <harness>` prints the server entry and
 the agent guide to paste. The entry points at the copy of pairwire that printed it, so install
@@ -141,8 +189,9 @@ What we do:
 - **You approve outbound messages.** `send` goes through Claude Code's normal tool
   approval. The plugin never pre-approves it. If you choose "don't ask again", or run in
   `auto` or `bypassPermissions` mode, your agent sends without asking, and pairwire tells
-  you so once per session. In Codex, don't choose "always allow" for `send`: pairwire can't
-  see that setting to warn you.
+  you so once per session. In Codex and Gemini CLI, don't choose "always allow" for `send`
+  (nor run Gemini with `--yolo`), and in Cursor
+  don't put it on an auto-run allowlist: pairwire can't see those settings to warn you.
 - **Labeled, sanitized input.** Inbound text is stripped of invisible and direction-control
   characters, can't close its wrapper or imitate harness tags, and is presented as
   external input. The plugin's skill tells the agent to treat it as a request to evaluate,
@@ -179,7 +228,7 @@ Optional, in `~/.pairwire/config.json` or environment variables:
 | `relay` | `PAIRWIRE_RELAY` | hosted relay | Relay for rooms you start (`host[:port]`) |
 | `auto_continue` | | `true` | Keep the agent working (or wake it) when messages arrive |
 | `hop_budget` | | `8` | Messages in a row without your input |
-| `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `pull`: no injection; the agent checks with its `inbox` tool |
+| `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `pull`: no injection; the agent checks with its `inbox` tool. `wake` (env only): `auto` plus the Codex idle wake (above) |
 | `hold` | `PAIRWIRE_HOLD` | `false` | `true`: messages from the other side wait for your `/pairwire:accept` |
 | | `PAIRWIRE_HOME` | `~/.pairwire` | State directory |
 | | `PAIRWIRE_LOG` | `info` | Log level (logs never contain messages or secrets) |

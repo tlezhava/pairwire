@@ -6,6 +6,14 @@
 #   3. otherwise run the bundled client.
 # On native Windows it runs under Git Bash; OS=Windows_NT marks that case (ADR-024).
 event="$1"
+# A hook dialect may come as the second argument (Gemini's hooks.json, specs/04-client.md
+# section 10): an argument works in any shell the harness uses, a VAR=value prefix does not.
+case "${2-}" in
+  claude | gemini | cursor)
+    PAIRWIRE_HOOK_DIALECT=$2
+    export PAIRWIRE_HOOK_DIALECT
+    ;;
+esac
 windows=
 [ "${OS-}" = Windows_NT ] && windows=1
 if [ -n "$windows" ] && [ -n "${USERPROFILE-}" ]; then
@@ -44,6 +52,8 @@ fi
 if [ "$major" -lt 20 ]; then
   # SessionStart output isn't shown to the human (S1b) and the waiter's stdout is unused.
   case "$event" in session-start | stop-wait) exit 0 ;; esac
+  # Cursor's hooks have no systemMessage; its MCP settings show the server failing instead.
+  [ "${PAIRWIRE_HOOK_DIALECT-}" = cursor ] && exit 0
   marker="$home/hook-node-warned"
   [ -e "$marker" ] && exit 0
   : >"$marker" 2>/dev/null
@@ -56,4 +66,7 @@ if [ "$major" -lt 20 ]; then
   exit 0
 fi
 
+# The harness, for hooks that find their session by its pid (specs/04-client.md section 10).
+PAIRWIRE_HOOK_PPID=$PPID
+export PAIRWIRE_HOOK_PPID
 exec node "$root/dist/pairwire.mjs" hook "$event"

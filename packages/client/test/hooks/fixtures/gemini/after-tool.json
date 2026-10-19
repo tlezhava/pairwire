@@ -1,0 +1,10 @@
+{
+  "session_id": "4b0d6f3e-8a51-4c2e-9d7a-2f1c3e5a7b90",
+  "transcript_path": "/home/dev/.gemini/tmp/project/chats/session-4b0d6f3e.json",
+  "cwd": "/home/dev/project",
+  "hook_event_name": "AfterTool",
+  "timestamp": "2026-10-19T09:00:09.000Z",
+  "tool_name": "run_shell_command",
+  "tool_input": { "command": "git status" },
+  "tool_response": { "llmContent": "On branch main", "returnDisplay": "On branch main" }
+}

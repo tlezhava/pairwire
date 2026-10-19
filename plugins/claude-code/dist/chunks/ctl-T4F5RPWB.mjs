@@ -4,26 +4,26 @@ import {
   appendTranscript,
   noticeLine,
   transcriptTail
-} from "./chunk-G6D7GQZL.mjs";
+} from "./chunk-PTV3IA7V.mjs";
 import {
   dropHeld,
   hiddenBodies,
   releaseHeld,
   renderItemsFor
-} from "./chunk-BM7N4KKH.mjs";
+} from "./chunk-WSXVMMYZ.mjs";
 import {
   assertStatePrivate
-} from "./chunk-OMHNOFXD.mjs";
+} from "./chunk-FYZJW4V2.mjs";
 import {
   CTL_PROOF_FAILED_TEXT,
   CtlProofError,
   CtlUnreachableError,
   ctlCall,
   ctlTarget
-} from "./chunk-Q3M3SKV6.mjs";
+} from "./chunk-DYIPD6R3.mjs";
 import {
   CTL_MAX_REQUEST
-} from "./chunk-WJTGR6M6.mjs";
+} from "./chunk-BWDLZH46.mjs";
 import {
   holdMode,
   isOpen,
@@ -32,7 +32,7 @@ import {
   readState,
   resolveProjectDir,
   updateState
-} from "./chunk-V6BBUVLD.mjs";
+} from "./chunk-LZ32DTQE.mjs";
 import {
   pairwireHome
 } from "./chunk-GVGSGJLD.mjs";
@@ -43,7 +43,7 @@ import {
   renderForHook,
   renderItems,
   renderTranscript
-} from "./chunk-7VVD7K5U.mjs";
+} from "./chunk-O5I4E6QX.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/ctl.ts
@@ -114,7 +114,9 @@ async function runCtl(args, io) {
     print(`pairwire: ${e.message}`);
     return 0;
   }
-  const [op, arg] = args;
+  const [op, ...rest] = args;
+  const fromArgs = rest[0] === "--args" ? rest.slice(1).join(" ") : void 0;
+  const arg = fromArgs ?? rest[0];
   const binding = readBinding(home, resolveProjectDir(io.env, io.cwd));
   const state = binding ? readState(home, binding.room_id) : null;
   if (!binding || !state) {
@@ -160,12 +162,12 @@ async function runCtl(args, io) {
       return 0;
     }
     case "say": {
-      let text = await readAll(io.stdin);
+      let text = fromArgs ?? await readAll(io.stdin);
       if (text.length > CTL_MAX_REQUEST) {
         print("pairwire: that message is too long.");
         return 0;
       }
-      if (text.endsWith("\n")) text = text.slice(0, -1);
+      if (fromArgs === void 0 && text.endsWith("\n")) text = text.slice(0, -1);
       if (text.trim() === "") {
         print("pairwire: nothing to send. Usage: /pairwire:say <message>");
         return 0;

@@ -113,12 +113,31 @@ describe.skipIf(onWindows)("hooks/run.sh", () => {
     }
   });
 
+  it("prints no Node notice in the cursor dialect, which has no systemMessage (04 §10)", () => {
+    const n = fakeNode(null);
+    const home = tempDir();
+    writeFileSync(join(home, "active"), "");
+    const r = run("user-prompt-submit", { ...n.env, PAIRWIRE_HOME: home, PAIRWIRE_HOOK_DIALECT: "cursor" });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("");
+    expect(existsSync(join(home, "hook-node-warned"))).toBe(false);
+  });
+
   it("execs the bundled client with the event when Node is recent", () => {
     const n = fakeNode("v20.11.1");
     const home = tempDir();
     writeFileSync(join(home, "active"), "");
     expect(run("stop", { ...n.env, PAIRWIRE_HOME: home }).status).toBe(0);
     expect(n.calls()).toBe(`${BUNDLE} hook stop\n`);
+  });
+
+  it("passes its parent, the harness, to the client as PAIRWIRE_HOOK_PPID (ADR-033)", () => {
+    const n = fakeNode("v20.11.1");
+    writeFileSync(join(n.bin, "node"), `#!/bin/sh\nif [ "$1" = "--version" ]; then echo v20.11.1; exit 0; fi\necho "ppid=$PAIRWIRE_HOOK_PPID" >> "${join(n.bin, "calls")}"\n`);
+    const home = tempDir();
+    writeFileSync(join(home, "active"), "");
+    expect(run("post-tool-use", { ...n.env, PAIRWIRE_HOME: home, PAIRWIRE_HOOK_PPID: "1" }).status).toBe(0);
+    expect(n.calls()).toBe(`ppid=${process.pid}\n`);
   });
 
   it("remembers a Node that passed the version check, and checks again when that binary changes", () => {

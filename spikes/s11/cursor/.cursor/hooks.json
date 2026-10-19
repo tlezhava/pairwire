@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs cursor sessionStart",
+        "timeout": 10
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs cursor beforeSubmitPrompt",
+        "timeout": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs cursor postToolUse",
+        "timeout": 10
+      }
+    ],
+    "afterMCPExecution": [
+      {
+        "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs cursor afterMCPExecution",
+        "timeout": 10
+      }
+    ],
+    "stop": [
+      {
+        "command": "node /Users/tamazlezhava/Projects/pairwire/spikes/s11/hook.mjs cursor stop",
+        "timeout": 10
+      }
+    ]
+  }
+}

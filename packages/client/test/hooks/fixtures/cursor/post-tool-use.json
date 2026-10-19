@@ -1,0 +1,14 @@
+{
+  "conversation_id": "c0ffee00-1111-4222-8333-444455556666",
+  "generation_id": "9d8c7b6a-0000-4000-8000-000000000002",
+  "model": "default",
+  "hook_event_name": "postToolUse",
+  "cursor_version": "2.1.0",
+  "workspace_roots": ["/home/dev/project"],
+  "user_email": "dev@example.com",
+  "transcript_path": null,
+  "tool_name": "Shell",
+  "tool_input": { "command": "git status" },
+  "tool_output": "On branch main",
+  "duration": 412
+}

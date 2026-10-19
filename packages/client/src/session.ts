@@ -27,7 +27,7 @@ import {
 } from "@pairwire/core";
 import { z } from "zod";
 import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, PassiveSessionError } from "./binding.js";
-import { holdMode, loadConfig, resolveDisplayName, type Config } from "./config.js";
+import { holdMode, loadConfig, pushes, resolveDisplayName, type Config } from "./config.js";
 import { RoomConnection, type ConnectionEvents, type SendInput, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 import type { Logger } from "./log.js";
 import { chooseCtlPath, roomFile } from "./paths.js";
@@ -35,6 +35,7 @@ import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
 import { claimUndelivered, inboxCounts, readCoordSent, readOutbox, type InboxCounts, type InboxEntry } from "./room-files.js";
 import { createRoom, expiresAt, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
+import { CodexWake } from "./codex-wake.js";
 import { CollabSendError, planStructured, type CollabPlan } from "./collab-send.js";
 import { coordFooter, coordStatusLines, loadView, renderItemsFor } from "./coord.js";
 import { transcriptEvents } from "./transcript.js";
@@ -55,6 +56,8 @@ export interface SessionOptions {
   log: Logger;
   /** This MCP server's pid (tests run several sessions in one process). */
   pid?: number;
+  /** Its parent's pid, the harness (04 §10, harness-pid sidecar); default process.ppid. */
+  ppid?: number;
   isAlive?: (pid: number) => boolean;
   now?: () => number;
   /** How long `join` waits for the handshake (04 §4: 30 s). */
@@ -71,6 +74,14 @@ export interface SessionOptions {
 
 /** First line of a D3 wake (04 §6). */
 export const WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";
+
+/**
+ * REQ-SAFE-5 in Cursor (04 §10): its hooks have no channel to the human and can't see auto-run,
+ * so `status` says it.
+ */
+export const CURSOR_APPROVAL_WARNING =
+  "Approval: Cursor asks you before each message your agent sends, unless auto-run or an MCP allowlist covers the pairwire send tool; " +
+  "then messages go out without asking you first. pairwire cannot see that setting.";
 
 /** 04 §7 step 5. */
 const SENDS_PER_MINUTE = 20;
@@ -145,12 +156,15 @@ export class ClientSession {
   #sendTimes: number[] = [];
   /** A session id learned from a tool call's _meta (Codex), when the env gives none. */
   #learnedSession: string | null = null;
+  /** The Codex idle wake (04 §10): thread id and outstanding wake, in memory only. */
+  readonly #codex: CodexWake;
 
   constructor(options: SessionOptions) {
     this.#o = options;
     this.#pid = options.pid ?? process.pid;
     this.#now = options.now ?? (() => Date.now());
     this.projectDir = resolveProjectDir(options.env, options.cwd);
+    this.#codex = new CodexWake({ env: options.env, log: options.log });
   }
 
   /** Checks INV-9 and the config, then claims the project and reconnects an owned room (REQ-ROOM-6). */
@@ -222,7 +236,7 @@ export class ClientSession {
     const state = this.#roomState();
     const send = (frame: WaitFrame) => void socket.end(JSON.stringify(frame) + "\n");
     // Only the owning session waits, and only when messages are pushed at all.
-    if (!own || session !== own || this.#passiveOwner !== null || !config || config.delivery !== "auto" || !config.autoContinue || !state || !isOpen(state)) {
+    if (!own || session !== own || this.#passiveOwner !== null || !config || !pushes(config.delivery) || !config.autoContinue || !state || !isOpen(state)) {
       return send({ t: "refused" });
     }
     this.#endWaiter(session, { t: "superseded" });
@@ -255,6 +269,22 @@ export class ClientSession {
       this.#waiters.delete(session);
       socket.end(JSON.stringify({ t: "wake", text: `${WAKE_LEAD}\n\n${rendered}` } satisfies WaitFrame) + "\n");
       return;
+    }
+  }
+
+  /**
+   * The Codex idle wake (04 §10): after the D3 handoff, an item nothing took wakes the idle
+   * thread with WAKE_PROMPT, when PAIRWIRE_DELIVERY=wake and this server owns the open room.
+   */
+  #codexWake(): void {
+    const config = this.#config;
+    const roomId = this.#roomId;
+    if (!config || config.delivery !== "wake" || !config.autoContinue || harnessOf(this.#o.env) !== "codex") return;
+    if (this.#passiveOwner !== null || !roomId || !this.#roomOpen()) return;
+    try {
+      this.#codex.maybeWake(this.#o.home, roomId, this.#hold());
+    } catch (e) {
+      this.#o.log.error("codex_wake_check_failed", e);
     }
   }
 
@@ -435,6 +465,7 @@ export class ClientSession {
         `Relay: ${state.relay ?? "default relay"}`,
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...(hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : []),
+        ...(harnessOf(this.#o.env) === "cursor" && isOpen(state) ? [CURSOR_APPROVAL_WARNING] : []),
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
           peer: state.peer ? displayName(state.peer.name) : "your collaborator",
@@ -521,7 +552,7 @@ export class ClientSession {
   }
 
   #claimant() {
-    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), now: this.#now() };
+    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), harnessPid: this.#o.ppid ?? process.ppid, now: this.#now() };
   }
 
   /**
@@ -532,6 +563,15 @@ export class ClientSession {
     if (this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession || typeof id !== "string" || id === "" || id.length > 200) return;
     this.#learnedSession = id;
     if (this.#roomId && this.#passiveOwner === null) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
+  }
+
+  /**
+   * Codex's `_meta.threadId` (04 §10, Codex idle wake): the first one seen on a call from this
+   * server's own session (or one that names no session) is the thread a wake goes to.
+   */
+  noteHarnessThread(sessionId: unknown, threadId: unknown): void {
+    if (sessionId !== undefined && sessionId !== this.#session()) return;
+    this.#codex.noteThread(threadId);
   }
 
   #open(roomId: string): void {
@@ -557,8 +597,13 @@ export class ClientSession {
       hello,
       log: this.#o.log,
       events: mergeEvents(
-        // Messages and notices (never acks) wake an idle session (D3).
-        { inbound: () => this.#wake() },
+        // Messages and notices (never acks) wake an idle session (D3, or the Codex wake).
+        {
+          inbound: () => {
+            this.#wake();
+            this.#codexWake();
+          },
+        },
         transcriptEvents(
           this.#o.home,
           roomId,

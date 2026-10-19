@@ -1028,6 +1028,111 @@ Consequences. `/v1/info` reports three new limits (`unjoinedSocketsPerRoom`,
 fails its limits check until the relay is redeployed with this change. relay-node operators
 get five environment variables, documented in the README.
 
+## ADR-033 Gemini CLI and Cursor adapters; a fixed-text wake for Codex (M6)
+
+Status: accepted (approved by the human on 2026-10-19). Built from the docs; the items
+marked [S11] in `04-client.md` section 10 are implemented on the documented behavior with a
+safe fallback (D1) and stay open until the hands-on part of spike S11. Adds REQ-X-3 (Gemini
+CLI) and REQ-X-4 (Cursor) to `00-product.md`.
+
+Context. The human asked for more harnesses after Codex. Spike S11 (docs part, below) found
+that Gemini CLI covers almost all of what Claude Code offers (MCP, hooks in the same output
+format, skills, commands that run a confirmed shell line before the model sees the prompt),
+and that Cursor offers MCP and hooks with different field names but no pre-model command.
+Neither gives an MCP server a session id, and three wake channels (Gemini `AfterAgent`,
+Cursor `stop`, `codex queue`) deliver their text as a new prompt.
+
+Decisions and why:
+
+1. **Fixed wake text, never peer text, in prompt-like channels.** A peer's words in a user
+   turn would carry more authority than the labeled, sanitized `inbox` output, so these
+   channels say only that messages are waiting (`WAKE_PROMPT`). Claude Code's Stop reason and
+   hook context keep carrying rendered messages, as today. The prompt hook does not reset
+   the hop budget for `WAKE_PROMPT`, the same rule as for `<task-notification>` prompts.
+2. **Session by harness pid, stored beside the binding.** Comparing the MCP server's parent
+   with the hook's parent costs nothing (no `ps`), and the sidecar file keeps 0.1.x and
+   0.2.x readers of the strict binding schema working. If a harness starts the two from
+   different processes, D2 is off there and the room uses D1, which is safe.
+3. **Gemini as an extension, linked by the human.** The extension format carries everything
+   in one directory, and `extensions link` keeps it in step with `~/.pairwire/bin` updates.
+   pairwire writes the directory but does not run `gemini` itself.
+4. **Cursor through a hook dialect.** One flag maps Cursor's input and output fields, so the
+   hook logic stays shared.
+5. **Codex wake off by default.** It spawns `codex` from the MCP server, and its behavior on
+   a busy thread is unverified.
+
+Consequences. Two install targets, a hook dialect, a sidecar file, `WAKE_PROMPT` handling,
+an optional Codex wake, e2e tests like `tests/e2e/codex.test.ts` for each new harness, and a
+hands-on session per harness (S11), which needs Gemini CLI and Cursor installed and signed
+in.
+
+Implementation notes (foundation, 2026-10-19; `04` §3 and §10 amended):
+
+- The sidecar holds `{owner_pid, harness_pid}`, not the bare pid: a 0.1.x or 0.2.x server
+  that takes the binding over leaves an earlier owner's sidecar behind, and the `owner_pid`
+  lets hooks ignore it.
+- `run.sh` ends in `exec node`, so the hook's own parent equals `PAIRWIRE_HOOK_PPID` in the
+  normal case; the variable covers harnesses that wrap the command. A `ps` walk (4 levels,
+  POSIX only, one `ps -A` call) runs only when both comparisons fail, so it costs nothing
+  once a session is recorded. It can match a nested harness (a second session started from
+  the first one's shell tool); that session then delivers until the owner's server writes
+  the binding again.
+- A fixed-text `stop` cannot mark items delivered (they were not shown), so without a record
+  it would wake for the same items at every turn end. `rooms/<id>/wake-prompted.json` keeps
+  "blocks only for new items", the property Claude Code's Stop gets from marking delivered.
+- Cursor's `beforeSubmitPrompt` cannot show context, so in that dialect the prompt hook
+  never claims items (a claim there would mark them delivered unseen).
+
+Implementation notes (Codex wake, 2026-10-19; `04` §2 and §10 amended):
+
+- `PAIRWIRE_DELIVERY=wake` is read from the environment only. 0.1.x and 0.2.x parse
+  `config.json`'s `delivery` with a strict `auto`/`pull` enum, so a `"wake"` there would stop
+  them (and make them treat hold mode as on) in every harness sharing the file.
+- The thread id and the outstanding wake live in the MCP server's memory, not in the binding
+  or `state.json` (strict schemas in older readers), and not in a sidecar: only the server
+  that owns the room's connection ever wakes.
+- "Cleared when a hook or inbox delivers" is checked through `delivered.json`: the wake
+  remembers the ids it announced and is cleared once any of them is delivered, so hooks in
+  other processes need no new signal.
+- The wake also requires `auto_continue`, which already governs Stop blocks and D3 wakes.
+
+Implementation notes (`install --gemini`, 2026-10-19; `04` §8 and §10 "Gemini CLI" amended):
+
+- `PAIRWIRE_HARNESS` is `gemini-cli`, the handshake's id (`02` §4), not `gemini`, which the
+  peer would see as `other`.
+- No extension `settings`: S11 did not record their shape, Gemini asks for each one at link
+  time, and `config.json` already holds the relay, name, delivery and hold mode. A
+  non-default PAIRWIRE_HOME is pinned in the server's `env` instead.
+- The hook dialect is `run.sh`'s second argument, not a `PAIRWIRE_HOOK_DIALECT=gemini` prefix:
+  Gemini may run hook commands through PowerShell or cmd on Windows, where the prefix is not
+  valid syntax.
+- `ctl … --args`: Gemini shell-escapes `{{args}}` into one word, possibly empty, and an empty
+  word can be dropped by Windows PowerShell 5, which would leave `ctl log` or `ctl accept`
+  reading stdin; `--args` never reads stdin.
+- Install refuses `{`, `}` (Gemini's `!{…}` needs balanced braces) and, on Windows, `'` in the
+  path, because the quoting of `'` differs between sh and PowerShell.
+- The commands' instruction text is a copy of the Claude Code commands' text kept in the
+  installer (the npm package ships no `commands/`); a unit test keeps the two equal.
+
+Implementation notes (`install --cursor`, 2026-10-19; `04` §10 "Cursor" amended):
+
+- The guide goes to `~/.cursor/skills/pairwire/SKILL.md`: cursor.com/docs (Agent Skills) lists
+  `~/.cursor/skills/` as a user-level skills directory, so no User Rule step is needed.
+- No `${env:NAME}` in `mcp.json`: Cursor's docs don't say what an unset name expands to, and
+  every value but an empty one would break the server. The server inherits Cursor's
+  environment [S11]; a non-default PAIRWIRE_HOME is written as an absolute path into the MCP
+  `env` and the hook commands instead, so server, hooks and bundle agree even when Cursor was
+  started without the shell profile.
+- `PAIRWIRE_PROJECT_DIR: "${workspaceFolder}"` is passed because `resolveProjectDir()` already
+  ignores an unexpanded or empty value; it can only help, unless S11 finds it expands to the
+  home directory.
+- `run.sh` prints no Node-missing notice in the cursor dialect: a `systemMessage` is not part
+  of any Cursor hook's output schema.
+- Hooks get `CLAUDE_PROJECT_DIR` from Cursor (docs, hooks page), which `resolveProjectDir()`
+  takes as is, so they key the binding on the same directory as the server's
+  `${workspaceFolder}`; `04` §10 says so. `--print-config cursor` prints the same server entry
+  as the install (Cursor's docs make `type: "stdio"` required).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
@@ -1243,3 +1348,35 @@ changes from S10 (the grant ignores `<task-notification>` prompts and must match
 start; a terminal counts as presence only as a speed bump, stated as residual risk). The
 human deferred it on 2026-10-18 until after the external security review: it defends only
 against an attacker holding both the share string and the relay, and it is a large change.
+
+### S11 Gemini CLI and Cursor integration, docs part (2026-10-19)
+
+Question: can pairwire run in Gemini CLI and Cursor the way it runs in Codex? Method: read
+the current docs (geminicli.com hooks reference, MCP servers, custom commands and extension
+reference; cursor.com hooks and MCP pages). The hands-on part uses `spikes/s11/`: a
+recorder MCP server and hook script, wired as a Gemini extension (`spikes/s11/gemini`) and
+as a Cursor project config (`spikes/s11/cursor/.cursor`).
+
+Answer (docs):
+- Gemini CLI: MCP servers in `settings.json` or an extension's `gemini-extension.json`
+  (`command`, `args`, `env` with `$VAR` expansion, `cwd`, `trust`; tools named
+  `mcp_<server>_<tool>`). Calls prompt unless the server is trusted or the tool or server is
+  allowlisted; extensions cannot set `trust`. Hooks: `SessionStart`, `BeforeAgent`,
+  `AfterTool`, `AfterAgent` and more, input with `session_id`, `cwd`, `prompt`; output
+  `hookSpecificOutput.additionalContext`, `decision` `deny`/`block` with `reason`,
+  `systemMessage`; timeouts in milliseconds; exit 2 blocks. Extensions bundle MCP servers,
+  `hooks/hooks.json`, `skills/`, `commands/` (TOML; `!{...}` runs after a confirmation
+  dialog, before the model sees the prompt, with `{{args}}` shell-escaped inside it), and
+  get `${extensionPath}` and `${workspacePath}`. No asynchronous wake.
+- Cursor: `~/.cursor/mcp.json` or `.cursor/mcp.json` (`command`, `args`, `env`, `envFile`;
+  `${workspaceFolder}`, `${env:NAME}`, `${userHome}`); MCP tools ask for approval by default.
+  `~/.cursor/hooks.json` or `.cursor/hooks.json`, `"version": 1`; context only from
+  `sessionStart` (fire-and-forget), `postToolUse` and `postToolUseFailure`
+  (`additional_context`); `stop` returns `followup_message`, sent as a new user message and
+  capped by `loop_limit` (default 5); `beforeSubmitPrompt` can only allow or block. Input
+  has `conversation_id`, `workspace_roots`, `transcript_path` (no `session_id` or `cwd` in
+  most events). Forum reports describe unreliable hooks in several 2.x releases.
+- Neither documents a session id or project directory given to an MCP server.
+
+Open for the hands-on part: the items marked [S11] in `04-client.md` section 10.
+

@@ -66,12 +66,26 @@ async function main(argv: string[]): Promise<number> {
         printConfig(args[printFor + 1] ?? "", root, process.stdout);
         return 0;
       }
-      if (args.includes("--codex")) {
+      const target = args.includes("--codex") ? "codex" : args.includes("--gemini") ? "gemini" : null;
+      if (target) {
         const opts = defaultInstallOptions(process.env, process.stdout, pairwireHome());
         if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
         const installer = new Installer(opts);
-        if (args.includes("--uninstall")) installer.uninstallCodex();
-        else installer.installCodex();
+        const uninstall = args.includes("--uninstall");
+        if (target === "codex") {
+          if (uninstall) installer.uninstallCodex();
+          else installer.installCodex();
+        } else if (uninstall) installer.uninstallGemini();
+        else installer.installGemini();
+        return 0;
+      }
+      if (args.includes("--cursor")) {
+        const { CursorInstaller, defaultCursorOptions } = await import("./install-cursor.js");
+        const opts = defaultCursorOptions(process.env, process.stdout, pairwireHome());
+        if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
+        const installer = new CursorInstaller(opts);
+        if (args.includes("--uninstall")) installer.uninstall();
+        else installer.install();
         return 0;
       }
     } catch (e) {
@@ -79,7 +93,7 @@ async function main(argv: string[]): Promise<number> {
       process.stderr.write(`pairwire install: ${e.message}\n`);
       return 1;
     }
-    process.stderr.write("usage: pairwire install --codex [--uninstall] | --print-config <harness>\n");
+    process.stderr.write("usage: pairwire install --codex|--gemini|--cursor [--uninstall] | --print-config <harness>\n");
     return 2;
   }
   process.stderr.write("usage: pairwire <mcp|hook|ctl|doctor|purge|install> ...\n");

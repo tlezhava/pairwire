@@ -17,7 +17,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-5HIKH4J2.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-LVXI266L.mjs");
     await runMcpServer();
     return -1;
   }
@@ -27,34 +27,34 @@ async function main(argv) {
     const opts = { home: pairwireHome(), env: process.env, cwd: process.cwd() };
     if (event === "stop-wait") {
       for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(sig, () => process.exit(0));
-      const { runStopWait } = await import("./chunks/waiter-JQMRBZEZ.mjs");
+      const { runStopWait } = await import("./chunks/waiter-CAF3IA7T.mjs");
       return runStopWait(stdin, { ...opts, stderr: process.stderr });
     }
-    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-3VSMYSAS.mjs");
+    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-4VTLWKU2.mjs");
     if (!HOOK_EVENTS.includes(event ?? "")) return 0;
     const out = runHook(event, stdin, opts);
     if (out) process.stdout.write(out + "\n");
     if (event === "user-prompt-submit" || event === "post-tool-use") {
-      const { cancelWaiter } = await import("./chunks/waiter-JQMRBZEZ.mjs");
+      const { cancelWaiter } = await import("./chunks/waiter-CAF3IA7T.mjs");
       await cancelWaiter(stdin, opts);
     }
     return 0;
   }
   if (command === "ctl") {
-    const { runCtl } = await import("./chunks/ctl-VWN54YT3.mjs");
+    const { runCtl } = await import("./chunks/ctl-T4F5RPWB.mjs");
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "doctor") {
-    const { runDoctor } = await import("./chunks/doctor-7WAOY57E.mjs");
+    const { runDoctor } = await import("./chunks/doctor-JAHSOTZO.mjs");
     return runDoctor({ home: pairwireHome(), env: process.env, out: process.stdout });
   }
   if (command === "purge") {
-    const { runPurge } = await import("./chunks/doctor-7WAOY57E.mjs");
+    const { runPurge } = await import("./chunks/doctor-JAHSOTZO.mjs");
     const flags = new Set(argv.slice(1));
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }
   if (command === "install") {
-    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-RDZP5FOW.mjs");
+    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-B7ADHJUG.mjs");
     const args = argv.slice(1);
     try {
       const printFor = args.indexOf("--print-config");
@@ -64,12 +64,26 @@ async function main(argv) {
         printConfig(args[printFor + 1] ?? "", root, process.stdout);
         return 0;
       }
-      if (args.includes("--codex")) {
+      const target = args.includes("--codex") ? "codex" : args.includes("--gemini") ? "gemini" : null;
+      if (target) {
         const opts = defaultInstallOptions(process.env, process.stdout, pairwireHome());
         if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
         const installer = new Installer(opts);
-        if (args.includes("--uninstall")) installer.uninstallCodex();
-        else installer.installCodex();
+        const uninstall = args.includes("--uninstall");
+        if (target === "codex") {
+          if (uninstall) installer.uninstallCodex();
+          else installer.installCodex();
+        } else if (uninstall) installer.uninstallGemini();
+        else installer.installGemini();
+        return 0;
+      }
+      if (args.includes("--cursor")) {
+        const { CursorInstaller, defaultCursorOptions } = await import("./chunks/install-cursor-WIWAGSJW.mjs");
+        const opts = defaultCursorOptions(process.env, process.stdout, pairwireHome());
+        if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
+        const installer = new CursorInstaller(opts);
+        if (args.includes("--uninstall")) installer.uninstall();
+        else installer.install();
         return 0;
       }
     } catch (e) {
@@ -78,7 +92,7 @@ async function main(argv) {
 `);
       return 1;
     }
-    process.stderr.write("usage: pairwire install --codex [--uninstall] | --print-config <harness>\n");
+    process.stderr.write("usage: pairwire install --codex|--gemini|--cursor [--uninstall] | --print-config <harness>\n");
     return 2;
   }
   process.stderr.write("usage: pairwire <mcp|hook|ctl|doctor|purge|install> ...\n");

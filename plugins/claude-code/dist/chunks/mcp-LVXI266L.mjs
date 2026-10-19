@@ -1,8 +1,11 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
+  WAKE_PROMPT
+} from "./chunk-S42T2JTL.mjs";
+import {
   transcriptEvents
-} from "./chunk-G6D7GQZL.mjs";
+} from "./chunk-PTV3IA7V.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -12,24 +15,27 @@ import {
   coordStatusLines,
   hasUndeliveredNotice,
   inboxCounts,
+  isHeld,
   loadView,
   readContractFile,
   readCoordSent,
+  readInbox,
+  readLedger,
   readOutbox,
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-BM7N4KKH.mjs";
+} from "./chunk-WSXVMMYZ.mjs";
 import {
   assertStatePrivate
-} from "./chunk-OMHNOFXD.mjs";
+} from "./chunk-FYZJW4V2.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-WJTGR6M6.mjs";
+} from "./chunk-BWDLZH46.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -42,6 +48,7 @@ import {
   isOpen,
   isProcessAlive,
   loadConfig,
+  pushes,
   readSecret,
   readSessionCaps,
   readState,
@@ -51,12 +58,15 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-V6BBUVLD.mjs";
+} from "./chunk-LZ32DTQE.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
   roomFile
 } from "./chunk-GVGSGJLD.mjs";
+import {
+  CLIENT_VERSION
+} from "./chunk-H5DVJTAM.mjs";
 import {
   $ZodObject,
   $ZodType,
@@ -137,7 +147,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-7VVD7K5U.mjs";
+} from "./chunk-O5I4E6QX.mjs";
 import {
   __commonJS,
   __require,
@@ -27111,6 +27121,80 @@ var RoomConnection = class {
   }
 };
 
+// packages/client/src/codex-wake.ts
+import { execFile } from "node:child_process";
+var THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+var CODEX_WAKE_TIMEOUT_MS = 1e4;
+function codexWakeArgs(threadId) {
+  return ["queue", "--thread", threadId, "--message", WAKE_PROMPT];
+}
+var CodexWake = class {
+  #o;
+  #thread = null;
+  /** The ids undelivered when the last wake went out; cleared once any of them is delivered. */
+  #outstanding = null;
+  /** Set by the first failure, for the rest of this server's life. */
+  #off = false;
+  constructor(options) {
+    this.#o = options;
+  }
+  /** Keeps the first valid thread id seen; later ones are ignored. */
+  noteThread(threadId) {
+    if (this.#thread !== null || typeof threadId !== "string" || !THREAD_ID.test(threadId)) return;
+    this.#thread = threadId;
+  }
+  get thread() {
+    return this.#thread;
+  }
+  /**
+   * Called on each inbound item once the caller has checked delivery, harness and ownership.
+   * Wakes when a thread is known, no earlier wake is outstanding, and some undelivered item is
+   * not held. Returns whether a wake went out.
+   */
+  maybeWake(home, roomId, hold) {
+    if (this.#off || this.#thread === null) return false;
+    const ledger = readLedger(home, roomId);
+    const prior = this.#outstanding;
+    if (prior && prior.roomId === roomId && !prior.ids.some((id) => ledger.ids.has(id))) return false;
+    this.#outstanding = null;
+    const pending = readInbox(home, roomId).filter((e) => !ledger.ids.has(e.id) && !isHeld(e, ledger, hold)).map((e) => e.id);
+    if (pending.length === 0) return false;
+    this.#outstanding = { roomId, ids: pending };
+    this.#run(this.#thread);
+    return true;
+  }
+  #run(thread) {
+    try {
+      execFile(
+        "codex",
+        codexWakeArgs(thread),
+        { env: this.#o.env, timeout: CODEX_WAKE_TIMEOUT_MS, windowsHide: true, shell: false, maxBuffer: 1024 * 1024 },
+        (err) => {
+          if (!err) {
+            this.#o.log.info("codex_wake", { exit_code: 0 });
+            return;
+          }
+          this.#fail(err);
+        }
+      );
+    } catch (e) {
+      this.#fail(e);
+    }
+  }
+  /** Output is never logged: only how it ended. */
+  #fail(err) {
+    if (this.#off) return;
+    this.#off = true;
+    this.#o.log.warn("codex_wake_failed", {
+      exit_code: typeof err.code === "number" ? err.code : null,
+      error_code: typeof err.code === "string" ? err.code : null,
+      signal: typeof err.signal === "string" ? err.signal : null,
+      timed_out: err.killed === true,
+      action: "codex wakes are off until this MCP server restarts"
+    });
+  }
+};
+
 // packages/client/src/collab-send.ts
 var CollabSendError = class extends Error {
   name = "CollabSendError";
@@ -27253,11 +27337,9 @@ function planStructured(input, ctx) {
   return { kind: input.kind, data, body, reply_to: replyTo, fallbackBody: fallback, scan, lines, ...localPath ? { localPath } : {} };
 }
 
-// packages/client/src/version.ts
-var CLIENT_VERSION = "0.2.1";
-
 // packages/client/src/session.ts
 var WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";
+var CURSOR_APPROVAL_WARNING = "Approval: Cursor asks you before each message your agent sends, unless auto-run or an MCP allowlist covers the pairwire send tool; then messages go out without asking you first. pairwire cannot see that setting.";
 var SENDS_PER_MINUTE = 20;
 var MINUTE2 = 6e4;
 var ULID = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/;
@@ -27310,11 +27392,14 @@ var ClientSession = class {
   #sendTimes = [];
   /** A session id learned from a tool call's _meta (Codex), when the env gives none. */
   #learnedSession = null;
+  /** The Codex idle wake (04 §10): thread id and outstanding wake, in memory only. */
+  #codex;
   constructor(options) {
     this.#o = options;
     this.#pid = options.pid ?? process.pid;
     this.#now = options.now ?? (() => Date.now());
     this.projectDir = resolveProjectDir(options.env, options.cwd);
+    this.#codex = new CodexWake({ env: options.env, log: options.log });
   }
   /** Checks INV-9 and the config, then claims the project and reconnects an owned room (REQ-ROOM-6). */
   init() {
@@ -27376,7 +27461,7 @@ var ClientSession = class {
     const config = this.#config;
     const state = this.#roomState();
     const send = (frame) => void socket.end(JSON.stringify(frame) + "\n");
-    if (!own2 || session !== own2 || this.#passiveOwner !== null || !config || config.delivery !== "auto" || !config.autoContinue || !state || !isOpen(state)) {
+    if (!own2 || session !== own2 || this.#passiveOwner !== null || !config || !pushes(config.delivery) || !config.autoContinue || !state || !isOpen(state)) {
       return send({ t: "refused" });
     }
     this.#endWaiter(session, { t: "superseded" });
@@ -27410,6 +27495,21 @@ var ClientSession = class {
 
 ${rendered}` }) + "\n");
       return;
+    }
+  }
+  /**
+   * The Codex idle wake (04 §10): after the D3 handoff, an item nothing took wakes the idle
+   * thread with WAKE_PROMPT, when PAIRWIRE_DELIVERY=wake and this server owns the open room.
+   */
+  #codexWake() {
+    const config = this.#config;
+    const roomId = this.#roomId;
+    if (!config || config.delivery !== "wake" || !config.autoContinue || harnessOf(this.#o.env) !== "codex") return;
+    if (this.#passiveOwner !== null || !roomId || !this.#roomOpen()) return;
+    try {
+      this.#codex.maybeWake(this.#o.home, roomId, this.#hold());
+    } catch (e) {
+      this.#o.log.error("codex_wake_check_failed", e);
     }
   }
   /** Hold mode, read afresh for every delivery decision (04 §2). */
@@ -27572,6 +27672,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
         `Relay: ${state.relay ?? "default relay"}`,
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : [],
+        ...harnessOf(this.#o.env) === "cursor" && isOpen(state) ? [CURSOR_APPROVAL_WARNING] : [],
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
           peer: state.peer ? displayName(state.peer.name) : "your collaborator",
@@ -27649,7 +27750,7 @@ ${this.footer()}` };
     return this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession;
   }
   #claimant() {
-    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), now: this.#now() };
+    return { pid: this.#pid, session: this.#session(), harness: harnessOf(this.#o.env), harnessPid: this.#o.ppid ?? process.ppid, now: this.#now() };
   }
   /**
    * Codex passes the session only as `_meta.sessionId` on tool calls (04 §10). The first one
@@ -27659,6 +27760,14 @@ ${this.footer()}` };
     if (this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession || typeof id !== "string" || id === "" || id.length > 200) return;
     this.#learnedSession = id;
     if (this.#roomId && this.#passiveOwner === null) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
+  }
+  /**
+   * Codex's `_meta.threadId` (04 §10, Codex idle wake): the first one seen on a call from this
+   * server's own session (or one that names no session) is the thread a wake goes to.
+   */
+  noteHarnessThread(sessionId, threadId) {
+    if (sessionId !== void 0 && sessionId !== this.#session()) return;
+    this.#codex.noteThread(threadId);
   }
   #open(roomId) {
     this.#conn?.stop();
@@ -27683,8 +27792,13 @@ ${this.footer()}` };
       hello,
       log: this.#o.log,
       events: mergeEvents(
-        // Messages and notices (never acks) wake an idle session (D3).
-        { inbound: () => this.#wake() },
+        // Messages and notices (never acks) wake an idle session (D3, or the Codex wake).
+        {
+          inbound: () => {
+            this.#wake();
+            this.#codexWake();
+          }
+        },
         transcriptEvents(
           this.#o.home,
           roomId,
@@ -27811,7 +27925,10 @@ function harnessOf(env) {
 }
 
 // packages/client/src/mcp.ts
-var meta2 = (session, extra) => session.noteHarnessSession(extra._meta?.sessionId);
+var meta2 = (session, extra) => {
+  session.noteHarnessSession(extra._meta?.sessionId);
+  session.noteHarnessThread(extra._meta?.sessionId, extra._meta?.threadId);
+};
 var content = (r) => ({ content: [{ type: "text", text: r.text }], ...r.isError ? { isError: true } : {} });
 function createMcpServer(session) {
   const server = new McpServer({ name: "pairwire", version: CLIENT_VERSION });
