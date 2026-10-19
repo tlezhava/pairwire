@@ -612,6 +612,7 @@ function adoptOwnerSession(home, projectDir, roomId, pid, session) {
 // packages/client/src/config.ts
 import { spawnSync } from "node:child_process";
 import { readFileSync as readFileSync3 } from "node:fs";
+var pushes = (delivery) => delivery !== "pull";
 var DEFAULT_CONFIG = {
   name: null,
   relay: null,
@@ -681,8 +682,8 @@ function normalizeRelay(value, where) {
 }
 function parseDelivery(value) {
   const v = value.trim().toLowerCase();
-  if (v === "auto" || v === "pull") return v;
-  throw new ConfigError('PAIRWIRE_DELIVERY must be "auto" or "pull".');
+  if (v === "auto" || v === "pull" || v === "wake") return v;
+  throw new ConfigError('PAIRWIRE_DELIVERY must be "auto", "pull" or "wake".');
 }
 function parseFlag(value, name) {
   const v = value.trim().toLowerCase();
@@ -733,6 +734,7 @@ export {
   removeBindingFor,
   sessionOwnsBinding,
   adoptOwnerSession,
+  pushes,
   DEFAULT_CONFIG,
   loadConfig,
   holdMode,

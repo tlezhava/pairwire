@@ -3,18 +3,19 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   ctlCall,
   ctlTarget
-} from "./chunk-R7LLG6ZY.mjs";
-import "./chunk-A2PYUY3C.mjs";
+} from "./chunk-RGL4DM7Z.mjs";
+import "./chunk-67VZJV77.mjs";
 import {
   hookErrorLogger,
   isOpen,
   isProcessAlive,
   loadConfig,
+  pushes,
   readBinding,
   readState,
   resolveProjectDir,
   sessionOwnsBinding
-} from "./chunk-RBMCPBXW.mjs";
+} from "./chunk-4NNITFK4.mjs";
 import "./chunk-GVGSGJLD.mjs";
 import "./chunk-7VVD7K5U.mjs";
 import "./chunk-KARZWXGF.mjs";
@@ -34,7 +35,7 @@ function locate(stdin, o, forWaiting) {
   if (!state || !isOpen(state)) return null;
   if (forWaiting) {
     const { config } = loadConfig(o.home, o.env);
-    if (config.delivery !== "auto" || !config.autoContinue) return null;
+    if (!pushes(config.delivery) || !config.autoContinue) return null;
   }
   return { target: ctlTarget(o.home, binding.room_id, state.ctl_path), session: input.session_id };
 }

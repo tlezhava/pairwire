@@ -11,7 +11,7 @@ import {
   roomTag,
   withLock,
   writeFileAtomic
-} from "./chunk-RBMCPBXW.mjs";
+} from "./chunk-4NNITFK4.mjs";
 import {
   hookErrorsPath,
   roomFile
@@ -376,10 +376,13 @@ function coordFooter(view) {
 }
 
 export {
+  readInbox,
   appendInbox,
   readOutbox,
   updateOutbox,
   unacked,
+  readLedger,
+  isHeld,
   hasUndeliveredNotice,
   inboxCounts,
   claimUndelivered,

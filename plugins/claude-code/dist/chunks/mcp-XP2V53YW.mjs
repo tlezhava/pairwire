@@ -1,8 +1,11 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
+  WAKE_PROMPT
+} from "./chunk-QFOVLATS.mjs";
+import {
   transcriptEvents
-} from "./chunk-GEHM5NBS.mjs";
+} from "./chunk-3SXTTIEU.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -12,24 +15,27 @@ import {
   coordStatusLines,
   hasUndeliveredNotice,
   inboxCounts,
+  isHeld,
   loadView,
   readContractFile,
   readCoordSent,
+  readInbox,
+  readLedger,
   readOutbox,
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-BQIFLGIE.mjs";
+} from "./chunk-KTPG7IL3.mjs";
 import {
   assertStatePrivate
-} from "./chunk-2FIQ5DRN.mjs";
+} from "./chunk-HEDLQJRT.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-A2PYUY3C.mjs";
+} from "./chunk-67VZJV77.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -42,6 +48,7 @@ import {
   isOpen,
   isProcessAlive,
   loadConfig,
+  pushes,
   readSecret,
   readSessionCaps,
   readState,
@@ -51,7 +58,7 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-RBMCPBXW.mjs";
+} from "./chunk-4NNITFK4.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
@@ -27111,6 +27118,80 @@ var RoomConnection = class {
   }
 };
 
+// packages/client/src/codex-wake.ts
+import { execFile } from "node:child_process";
+var THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
+var CODEX_WAKE_TIMEOUT_MS = 1e4;
+function codexWakeArgs(threadId) {
+  return ["queue", "--thread", threadId, "--message", WAKE_PROMPT];
+}
+var CodexWake = class {
+  #o;
+  #thread = null;
+  /** The ids undelivered when the last wake went out; cleared once any of them is delivered. */
+  #outstanding = null;
+  /** Set by the first failure, for the rest of this server's life. */
+  #off = false;
+  constructor(options) {
+    this.#o = options;
+  }
+  /** Keeps the first valid thread id seen; later ones are ignored. */
+  noteThread(threadId) {
+    if (this.#thread !== null || typeof threadId !== "string" || !THREAD_ID.test(threadId)) return;
+    this.#thread = threadId;
+  }
+  get thread() {
+    return this.#thread;
+  }
+  /**
+   * Called on each inbound item once the caller has checked delivery, harness and ownership.
+   * Wakes when a thread is known, no earlier wake is outstanding, and some undelivered item is
+   * not held. Returns whether a wake went out.
+   */
+  maybeWake(home, roomId, hold) {
+    if (this.#off || this.#thread === null) return false;
+    const ledger = readLedger(home, roomId);
+    const prior = this.#outstanding;
+    if (prior && prior.roomId === roomId && !prior.ids.some((id) => ledger.ids.has(id))) return false;
+    this.#outstanding = null;
+    const pending = readInbox(home, roomId).filter((e) => !ledger.ids.has(e.id) && !isHeld(e, ledger, hold)).map((e) => e.id);
+    if (pending.length === 0) return false;
+    this.#outstanding = { roomId, ids: pending };
+    this.#run(this.#thread);
+    return true;
+  }
+  #run(thread) {
+    try {
+      execFile(
+        "codex",
+        codexWakeArgs(thread),
+        { env: this.#o.env, timeout: CODEX_WAKE_TIMEOUT_MS, windowsHide: true, shell: false, maxBuffer: 1024 * 1024 },
+        (err) => {
+          if (!err) {
+            this.#o.log.info("codex_wake", { exit_code: 0 });
+            return;
+          }
+          this.#fail(err);
+        }
+      );
+    } catch (e) {
+      this.#fail(e);
+    }
+  }
+  /** Output is never logged: only how it ended. */
+  #fail(err) {
+    if (this.#off) return;
+    this.#off = true;
+    this.#o.log.warn("codex_wake_failed", {
+      exit_code: typeof err.code === "number" ? err.code : null,
+      error_code: typeof err.code === "string" ? err.code : null,
+      signal: typeof err.signal === "string" ? err.signal : null,
+      timed_out: err.killed === true,
+      action: "codex wakes are off until this MCP server restarts"
+    });
+  }
+};
+
 // packages/client/src/collab-send.ts
 var CollabSendError = class extends Error {
   name = "CollabSendError";
@@ -27311,11 +27392,14 @@ var ClientSession = class {
   #sendTimes = [];
   /** A session id learned from a tool call's _meta (Codex), when the env gives none. */
   #learnedSession = null;
+  /** The Codex idle wake (04 §10): thread id and outstanding wake, in memory only. */
+  #codex;
   constructor(options) {
     this.#o = options;
     this.#pid = options.pid ?? process.pid;
     this.#now = options.now ?? (() => Date.now());
     this.projectDir = resolveProjectDir(options.env, options.cwd);
+    this.#codex = new CodexWake({ env: options.env, log: options.log });
   }
   /** Checks INV-9 and the config, then claims the project and reconnects an owned room (REQ-ROOM-6). */
   init() {
@@ -27377,7 +27461,7 @@ var ClientSession = class {
     const config = this.#config;
     const state = this.#roomState();
     const send = (frame) => void socket.end(JSON.stringify(frame) + "\n");
-    if (!own2 || session !== own2 || this.#passiveOwner !== null || !config || config.delivery !== "auto" || !config.autoContinue || !state || !isOpen(state)) {
+    if (!own2 || session !== own2 || this.#passiveOwner !== null || !config || !pushes(config.delivery) || !config.autoContinue || !state || !isOpen(state)) {
       return send({ t: "refused" });
     }
     this.#endWaiter(session, { t: "superseded" });
@@ -27411,6 +27495,21 @@ var ClientSession = class {
 
 ${rendered}` }) + "\n");
       return;
+    }
+  }
+  /**
+   * The Codex idle wake (04 §10): after the D3 handoff, an item nothing took wakes the idle
+   * thread with WAKE_PROMPT, when PAIRWIRE_DELIVERY=wake and this server owns the open room.
+   */
+  #codexWake() {
+    const config = this.#config;
+    const roomId = this.#roomId;
+    if (!config || config.delivery !== "wake" || !config.autoContinue || harnessOf(this.#o.env) !== "codex") return;
+    if (this.#passiveOwner !== null || !roomId || !this.#roomOpen()) return;
+    try {
+      this.#codex.maybeWake(this.#o.home, roomId, this.#hold());
+    } catch (e) {
+      this.#o.log.error("codex_wake_check_failed", e);
     }
   }
   /** Hold mode, read afresh for every delivery decision (04 §2). */
@@ -27662,6 +27761,14 @@ ${this.footer()}` };
     this.#learnedSession = id;
     if (this.#roomId && this.#passiveOwner === null) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
   }
+  /**
+   * Codex's `_meta.threadId` (04 §10, Codex idle wake): the first one seen on a call from this
+   * server's own session (or one that names no session) is the thread a wake goes to.
+   */
+  noteHarnessThread(sessionId, threadId) {
+    if (sessionId !== void 0 && sessionId !== this.#session()) return;
+    this.#codex.noteThread(threadId);
+  }
   #open(roomId) {
     this.#conn?.stop();
     const secret = readSecret(this.#o.home, roomId);
@@ -27685,8 +27792,13 @@ ${this.footer()}` };
       hello,
       log: this.#o.log,
       events: mergeEvents(
-        // Messages and notices (never acks) wake an idle session (D3).
-        { inbound: () => this.#wake() },
+        // Messages and notices (never acks) wake an idle session (D3, or the Codex wake).
+        {
+          inbound: () => {
+            this.#wake();
+            this.#codexWake();
+          }
+        },
         transcriptEvents(
           this.#o.home,
           roomId,
@@ -27813,7 +27925,10 @@ function harnessOf(env) {
 }
 
 // packages/client/src/mcp.ts
-var meta2 = (session, extra) => session.noteHarnessSession(extra._meta?.sessionId);
+var meta2 = (session, extra) => {
+  session.noteHarnessSession(extra._meta?.sessionId);
+  session.noteHarnessThread(extra._meta?.sessionId, extra._meta?.threadId);
+};
 var content = (r) => ({ content: [{ type: "text", text: r.text }], ...r.isError ? { isError: true } : {} });
 function createMcpServer(session) {
   const server = new McpServer({ name: "pairwire", version: CLIENT_VERSION });
