@@ -1097,6 +1097,10 @@ Implementation notes (`install --cursor`, 2026-10-19; `04` §10 "Cursor" amended
   home directory.
 - `run.sh` prints no Node-missing notice in the cursor dialect: a `systemMessage` is not part
   of any Cursor hook's output schema.
+- Hooks get `CLAUDE_PROJECT_DIR` from Cursor (docs, hooks page), which `resolveProjectDir()`
+  takes as is, so they key the binding on the same directory as the server's
+  `${workspaceFolder}`; `04` §10 says so. `--print-config cursor` prints the same server entry
+  as the install (Cursor's docs make `type: "stdio"` required).
 
 ## Spike findings
 

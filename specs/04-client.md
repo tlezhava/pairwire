@@ -20,7 +20,7 @@ Bundled by esbuild into a single file `dist/pairwire.mjs`, run with Node >= 20.
 | `pairwire hook <session-start\|user-prompt-submit\|post-tool-use\|stop\|stop-wait>` | Hook entrypoints. Read hook JSON on stdin, print hook JSON on stdout. `stop-wait` is the D3 waiter (section 6). |
 | `pairwire ctl <continue\|say\|log\|accept>` | Human-side control, used by slash commands through `!` execution (section 8, verified in S8). `say` and `continue` talk to the MCP server over the room's `ctl.sock`; `log` and `accept` work on the room's files. |
 | `pairwire doctor` | Checks Node version, config, state permissions, relay reachability, plugin wiring. |
-| `pairwire install [--codex\|--print-config <harness>]` | M6. Non-plugin installs. |
+| `pairwire install [--codex\|--cursor [--uninstall]\|--print-config <harness>]` | M6. Non-plugin installs. |
 | `pairwire purge [--all]` | Deletes left rooms' transcripts and inboxes, or all local state. |
 
 ### `doctor` and `purge`
@@ -1534,7 +1534,13 @@ changing any file, a state directory whose path has a control character or a lon
    single-quoted as for Codex. Earlier pairwire entries, recognized by the run.sh path, are
    replaced. The command needs a POSIX shell; which shell Cursor runs it with, notably on
    Windows, is [S11]. User hooks run with `~/.cursor` as their cwd, so the cursor dialect takes
-   the project from `workspace_roots[0]`.
+   the project from `workspace_roots[0]`. Cursor's docs also give every hook
+   `CLAUDE_PROJECT_DIR` (and `CURSOR_PROJECT_DIR`), the workspace root, which
+   `resolveProjectDir()` uses first, without a git-root walk; that is the same directory the
+   server gets from `${workspaceFolder}`, so server and hooks agree on the binding even when
+   the workspace is a subdirectory of a repository. Only if `${workspaceFolder}` is not
+   expanded does the server fall back to its cwd's git root, and then a workspace below the
+   repository root stays on D1 [S11].
 4. **Guide** at `~/.cursor/skills/pairwire/SKILL.md` (the plugin's file). Cursor's docs list
    `~/.cursor/skills/` as a user-level Agent Skills directory (it also reads `~/.agents/skills/`
    and `~/.claude/skills/`, so a machine that also has the Codex install sees the same skill
@@ -1586,6 +1592,6 @@ delivers. Off by default (`PAIRWIRE_DELIVERY=wake` opts in) until [S11-codex] co
 ### Any MCP harness
 
 `pairwire install --print-config <harness>` prints the MCP server entry for that harness
-(TOML for `codex`, an `mcpServers` JSON object otherwise) pointing at the bundle it runs
-from, plus the agent-guide text to paste into the harness's instructions. Delivery is D1
+(TOML for `codex`; for `cursor` the `mcpServers.pairwire` entry `install --cursor` writes,
+without hooks; an `mcpServers` JSON object otherwise) pointing at the bundle it runs from, plus the agent-guide text to paste into the harness's instructions. Delivery is D1
 only (the `inbox` tool and the status footer).
