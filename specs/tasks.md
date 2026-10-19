@@ -148,8 +148,11 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   `spikes/s11/` in a real session of each harness.
 - [x] Gemini CLI adapter, `pairwire install --gemini` (ADR-033). Built from the docs; the
   [S11] items in `04` §10 wait for the hands-on part of S11.
-- [ ] Cursor adapter, `pairwire install --cursor` (ADR-033).
-- [ ] Codex idle wake through `codex queue` with fixed text (ADR-033).
+- [x] Cursor adapter, `pairwire install --cursor` (ADR-033). Built from the docs; the [S11]
+  items in `04` §10 wait for the hands-on part of S11.
+- [x] Codex idle wake through `codex queue` with fixed text (ADR-033). Opt-in
+  (`PAIRWIRE_DELIVERY=wake`); `queue` behavior on idle and busy threads waits for the Codex
+  manual acceptance.
 
 ## M7 — Hardening toward 1.0
 

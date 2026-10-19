@@ -8,8 +8,9 @@ engineer starts a room and sends the other a share string; from then on the two 
 talk. Messages are end-to-end encrypted: the relay in the middle only forwards bytes it
 cannot read.
 
-> **Status: pre-1.0 (0.1.0, alpha).** Claude Code, plus Codex through `install --codex`
-> (less tested), Gemini CLI through `install --gemini` and Cursor through `install --cursor` (neither yet tried in a real session). The protocol and storage formats may still change. Not yet
+> **Status: pre-1.0 (alpha).** Claude Code, plus Codex through `install --codex` (less
+> tested), Gemini CLI through `install --gemini` and Cursor through `install --cursor`
+> (neither yet tried in a real session). The protocol and storage formats may still change. Not yet
 > independently security-reviewed: read [Safety](#safety) before you pair with someone you
 > don't know.
 
