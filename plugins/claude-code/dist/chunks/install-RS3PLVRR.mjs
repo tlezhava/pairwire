@@ -14,8 +14,8 @@ import {
   runningPluginRoot,
   shellQuote,
   tomlPath
-} from "./chunk-PVJUK5ZE.mjs";
-import "./chunk-YQH5643R.mjs";
+} from "./chunk-BJDTC27K.mjs";
+import "./chunk-Q6V7YHA7.mjs";
 import "./chunk-HDMYU3UC.mjs";
 import "./chunk-O5I4E6QX.mjs";
 import "./chunk-KARZWXGF.mjs";
