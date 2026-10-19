@@ -9,7 +9,7 @@ talk. Messages are end-to-end encrypted: the relay in the middle only forwards b
 cannot read.
 
 > **Status: pre-1.0 (0.1.0, alpha).** Claude Code, plus Codex through `install --codex`
-> (less tested). The protocol and storage formats may still change. Not yet
+> and Cursor through `install --cursor` (less tested). The protocol and storage formats may still change. Not yet
 > independently security-reviewed: read [Safety](#safety) before you pair with someone you
 > don't know.
 
@@ -50,6 +50,25 @@ from a terminal with `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (stdin); i
 release held messages with `... ctl accept` (or `ctl accept drop`) there. Messages reach
 Codex between its steps and at the end of a turn; an idle Codex session sees them on its next
 turn. `install --codex --uninstall` removes it all again.
+
+### Cursor
+
+```
+npx pairwire install --cursor
+```
+
+(From a checkout: `node plugins/claude-code/dist/pairwire.mjs install --cursor`.) This copies
+the client to `~/.pairwire/bin`, adds a `pairwire` server to `~/.cursor/mcp.json`, four hooks
+to `~/.cursor/hooks.json` and the skill to `~/.cursor/skills/pairwire`, keeping everything
+else in those files and backing each one up first; it refuses a file that isn't valid JSON.
+Then restart Cursor and enable the pairwire server in Cursor Settings > MCP if it is off.
+Cursor is usually started from the desktop, without your shell profile, so put `relay` and
+`name` in `~/.pairwire/config.json` rather than in `PAIRWIRE_*` variables. As in Codex, ask
+the agent to start, join or leave a room, and use `node ~/.pairwire/bin/dist/pairwire.mjs ctl
+say|continue|log|accept` in a terminal for your own words. Messages arrive after the agent's
+tool calls; at the end of a turn the hook asks the agent to read its inbox. Cursor's hooks
+have been unreliable in some releases: if messages don't show up, ask the agent to check its
+pairwire inbox. Not yet tried in a real Cursor. `install --cursor --uninstall` removes it again.
 
 Other MCP harnesses: `pairwire install --print-config <harness>` prints the server entry and
 the agent guide to paste. The entry points at the copy of pairwire that printed it, so install
@@ -141,8 +160,8 @@ What we do:
 - **You approve outbound messages.** `send` goes through Claude Code's normal tool
   approval. The plugin never pre-approves it. If you choose "don't ask again", or run in
   `auto` or `bypassPermissions` mode, your agent sends without asking, and pairwire tells
-  you so once per session. In Codex, don't choose "always allow" for `send`: pairwire can't
-  see that setting to warn you.
+  you so once per session. In Codex, don't choose "always allow" for `send`, and in Cursor
+  don't put it on an auto-run allowlist: pairwire can't see those settings to warn you.
 - **Labeled, sanitized input.** Inbound text is stripped of invisible and direction-control
   characters, can't close its wrapper or imitate harness tags, and is presented as
   external input. The plugin's skill tells the agent to treat it as a request to evaluate,
