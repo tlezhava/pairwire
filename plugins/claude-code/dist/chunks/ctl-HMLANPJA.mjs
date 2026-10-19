@@ -114,7 +114,9 @@ async function runCtl(args, io) {
     print(`pairwire: ${e.message}`);
     return 0;
   }
-  const [op, arg] = args;
+  const [op, ...rest] = args;
+  const fromArgs = rest[0] === "--args" ? rest.slice(1).join(" ") : void 0;
+  const arg = fromArgs ?? rest[0];
   const binding = readBinding(home, resolveProjectDir(io.env, io.cwd));
   const state = binding ? readState(home, binding.room_id) : null;
   if (!binding || !state) {
@@ -160,12 +162,12 @@ async function runCtl(args, io) {
       return 0;
     }
     case "say": {
-      let text = await readAll(io.stdin);
+      let text = fromArgs ?? await readAll(io.stdin);
       if (text.length > CTL_MAX_REQUEST) {
         print("pairwire: that message is too long.");
         return 0;
       }
-      if (text.endsWith("\n")) text = text.slice(0, -1);
+      if (fromArgs === void 0 && text.endsWith("\n")) text = text.slice(0, -1);
       if (text.trim() === "") {
         print("pairwire: nothing to send. Usage: /pairwire:say <message>");
         return 0;

@@ -17,7 +17,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-C5JEK2CG.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-VYLKHGIQ.mjs");
     await runMcpServer();
     return -1;
   }
@@ -41,7 +41,7 @@ async function main(argv) {
     return 0;
   }
   if (command === "ctl") {
-    const { runCtl } = await import("./chunks/ctl-I434NHAT.mjs");
+    const { runCtl } = await import("./chunks/ctl-HMLANPJA.mjs");
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "doctor") {
@@ -54,7 +54,7 @@ async function main(argv) {
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }
   if (command === "install") {
-    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-RDZP5FOW.mjs");
+    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-ATO4ZMMH.mjs");
     const args = argv.slice(1);
     try {
       const printFor = args.indexOf("--print-config");
@@ -64,12 +64,17 @@ async function main(argv) {
         printConfig(args[printFor + 1] ?? "", root, process.stdout);
         return 0;
       }
-      if (args.includes("--codex")) {
+      const target = args.includes("--codex") ? "codex" : args.includes("--gemini") ? "gemini" : null;
+      if (target) {
         const opts = defaultInstallOptions(process.env, process.stdout, pairwireHome());
         if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
         const installer = new Installer(opts);
-        if (args.includes("--uninstall")) installer.uninstallCodex();
-        else installer.installCodex();
+        const uninstall = args.includes("--uninstall");
+        if (target === "codex") {
+          if (uninstall) installer.uninstallCodex();
+          else installer.installCodex();
+        } else if (uninstall) installer.uninstallGemini();
+        else installer.installGemini();
         return 0;
       }
     } catch (e) {
@@ -78,7 +83,7 @@ async function main(argv) {
 `);
       return 1;
     }
-    process.stderr.write("usage: pairwire install --codex [--uninstall] | --print-config <harness>\n");
+    process.stderr.write("usage: pairwire install --codex|--gemini [--uninstall] | --print-config <harness>\n");
     return 2;
   }
   process.stderr.write("usage: pairwire <mcp|hook|ctl|doctor|purge|install> ...\n");

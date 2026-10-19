@@ -58,6 +58,9 @@ import {
   roomFile
 } from "./chunk-GVGSGJLD.mjs";
 import {
+  CLIENT_VERSION
+} from "./chunk-H5DVJTAM.mjs";
+import {
   $ZodObject,
   $ZodType,
   $constructor,
@@ -27252,9 +27255,6 @@ function planStructured(input, ctx) {
   scan.push(["the chat fallback", fallback]);
   return { kind: input.kind, data, body, reply_to: replyTo, fallbackBody: fallback, scan, lines, ...localPath ? { localPath } : {} };
 }
-
-// packages/client/src/version.ts
-var CLIENT_VERSION = "0.2.1";
 
 // packages/client/src/session.ts
 var WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";
