@@ -415,7 +415,7 @@ export class Installer {
     for (const [rel, text] of Object.entries(files)) this.#write(join(this.geminiDir, rel), text);
     this.#say(`wrote the pairwire Gemini extension to ${this.geminiDir}`);
 
-    const dir = /^[\w./:\\-]+$/.test(this.geminiDir) ? this.geminiDir : shellQuote(this.geminiDir);
+    const dir = /^[\w./:\\-][\w./:\\~-]*$/.test(this.geminiDir) ? this.geminiDir : shellQuote(this.geminiDir);
     this.#say(
       [
         "",
