@@ -1574,7 +1574,7 @@ changing any file, a state directory whose path has a control character or a lon
    the bundle path is not pairwire's install: install stops and says so.
 3. **Hooks**, merged into `~/.cursor/hooks.json` (`"version": 1` when the file has none; other
    keys, events and entries are kept): `sessionStart`, `beforeSubmitPrompt`, `postToolUse` and
-   `stop`, each `{"command": "PAIRWIRE_HOOK_DIALECT=cursor sh '<home>/.pairwire/bin/hooks/run.sh' <event>", "timeout": 10}`
+   `stop`, each `{"command": "sh '<home>/.pairwire/bin/hooks/run.sh' <event> cursor", "timeout": 10}`
    (seconds) with `session-start`, `user-prompt-submit`, `post-tool-use` and `stop`, the path
    single-quoted as for Codex. Earlier pairwire entries, recognized by the run.sh path, are
    replaced. The command needs a POSIX shell; which shell Cursor runs it with, notably on
@@ -1605,7 +1605,7 @@ Behavior in a Cursor session:
 
 - MCP server: Cursor gives it no session id, so hooks find it through the harness-pid sidecar
   (above). Whether Cursor starts hooks and MCP servers from the same process is [S11].
-- Hooks, through `PAIRWIRE_HOOK_DIALECT=cursor` set in each hook command, because Cursor's
+- Hooks, through the `cursor` dialect (`run.sh`'s second argument), because Cursor's
   fields differ: input `conversation_id` and `workspace_roots[0]` stand in for `session_id`
   and `cwd`; output `additional_context` replaces `hookSpecificOutput.additionalContext`.
   Events: `sessionStart` and `postToolUse` inject context (`sessionStart` is

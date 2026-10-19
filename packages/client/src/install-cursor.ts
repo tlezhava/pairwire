@@ -155,11 +155,12 @@ export class CursorInstaller {
     return cursorServer(this.bundle, this.#o.pinHome ? this.#o.pairwireHome : undefined);
   }
 
-  /** Cursor event → the shell command for it. */
+  /** Cursor event → the shell command for it. The dialect is run.sh's second argument, which
+   * works in any shell Cursor uses (04 §10); only a non-default state directory needs a prefix. */
   hookCommands(): Record<string, string> {
     const home = this.#o.pinHome ? `PAIRWIRE_HOME=${shellQuote(this.#o.pairwireHome)} ` : "";
     return Object.fromEntries(
-      Object.entries(CURSOR_HOOK_EVENTS).map(([event, arg]) => [event, `${home}PAIRWIRE_HOOK_DIALECT=cursor sh ${shellQuote(this.runSh)} ${arg}`]),
+      Object.entries(CURSOR_HOOK_EVENTS).map(([event, arg]) => [event, `${home}sh ${shellQuote(this.runSh)} ${arg} cursor`]),
     );
   }
 

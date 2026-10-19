@@ -57,7 +57,7 @@ describe("pairwire install --cursor", () => {
     });
     const hooks = m.json<HooksFile>("hooks.json");
     expect(Object.keys(hooks.hooks).sort()).toEqual(["beforeSubmitPrompt", "postToolUse", "sessionStart", "stop"]);
-    expect(hooks.hooks.stop).toEqual([{ command: "./audit.sh" }, { command: `PAIRWIRE_HOOK_DIALECT=cursor sh '${join(bin, "hooks", "run.sh")}' stop`, timeout: 10 }]);
+    expect(hooks.hooks.stop).toEqual([{ command: "./audit.sh" }, { command: `sh '${join(bin, "hooks", "run.sh")}' stop cursor`, timeout: 10 }]);
     expect(readFileSync(join(m.home, ".cursor/skills/pairwire/SKILL.md"), "utf8")).toContain("name: pairwire");
     expect(readdirSync(join(m.home, ".cursor")).filter((f) => f.includes(".pairwire-backup-"))).toHaveLength(2);
 

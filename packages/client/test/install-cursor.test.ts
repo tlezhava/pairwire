@@ -29,7 +29,7 @@ function source(): string {
   mkdirSync(join(root, "hooks"));
   mkdirSync(join(root, "skills", "pairwire"), { recursive: true });
   writeFileSync(join(root, "dist", "pairwire.mjs"), "");
-  writeFileSync(join(root, "hooks", "run.sh"), 'printf "ran:%s:%s:%s" "$1" "$PAIRWIRE_HOOK_DIALECT" "${PAIRWIRE_HOME-}"\n');
+  writeFileSync(join(root, "hooks", "run.sh"), 'printf "ran:%s:%s:%s" "$1" "${PAIRWIRE_HOOK_DIALECT:-${2-}}" "${PAIRWIRE_HOME-}"\n');
   writeFileSync(join(root, "skills", "pairwire", "SKILL.md"), "---\nname: pairwire\n---\n<!-- Generated from specs/06-agent-guide.md -->\n");
   return root;
 }
@@ -72,7 +72,7 @@ describe("install --cursor (04 §10)", () => {
     const hooks = json<Hooks>(inst.hooksPath);
     expect(hooks.version).toBe(1);
     expect(Object.keys(hooks.hooks)).toEqual(Object.keys(CURSOR_HOOK_EVENTS));
-    expect(hooks.hooks.stop).toEqual([{ command: `PAIRWIRE_HOOK_DIALECT=cursor sh ${shellQuote(inst.runSh)} stop`, timeout: 10 }]);
+    expect(hooks.hooks.stop).toEqual([{ command: `sh ${shellQuote(inst.runSh)} stop cursor`, timeout: 10 }]);
     expect(readFileSync(join(home, ".cursor/skills/pairwire/SKILL.md"), "utf8")).toContain("name: pairwire");
     expect(existsSync(inst.bundle)).toBe(true);
     expect(log.text()).toContain("Restart Cursor");
@@ -93,7 +93,7 @@ describe("install --cursor (04 §10)", () => {
     const hooks = json<Hooks>(inst.hooksPath);
     expect(hooks.extra).toBe(1);
     expect(hooks.hooks.afterFileEdit).toEqual([{ command: "prettier" }]);
-    expect(hooks.hooks.stop!.map((h) => h.command)).toEqual(["./audit.sh", `PAIRWIRE_HOOK_DIALECT=cursor sh ${shellQuote(inst.runSh)} stop`]);
+    expect(hooks.hooks.stop!.map((h) => h.command)).toEqual(["./audit.sh", `sh ${shellQuote(inst.runSh)} stop cursor`]);
     expect(backups(inst.cursorDir).sort()).toHaveLength(2);
     expect(JSON.parse(readFileSync(join(inst.cursorDir, backups(inst.cursorDir).find((f) => f.startsWith("mcp.json"))!), "utf8"))).toEqual(USER_MCP);
   });
@@ -119,7 +119,7 @@ describe("install --cursor (04 §10)", () => {
     const { inst } = installer();
     writeFileSync(inst.hooksPath, JSON.stringify({ version: 1, hooks: { stop: [{ command: `sh ${inst.runSh} stop` }, { command: "./audit.sh" }] } }));
     inst.install();
-    expect(json<Hooks>(inst.hooksPath).hooks.stop!.map((h) => h.command)).toEqual(["./audit.sh", `PAIRWIRE_HOOK_DIALECT=cursor sh ${shellQuote(inst.runSh)} stop`]);
+    expect(json<Hooks>(inst.hooksPath).hooks.stop!.map((h) => h.command)).toEqual(["./audit.sh", `sh ${shellQuote(inst.runSh)} stop cursor`]);
   });
 
   it("refuses a file that isn't valid JSON, and changes nothing", () => {
@@ -172,7 +172,7 @@ describe("install --cursor (04 §10)", () => {
     inst.install();
     expect(json<Mcp>(inst.mcpPath).mcpServers.pairwire!.env.PAIRWIRE_HOME).toBe(pairwireHome);
     const stop = json<Hooks>(inst.hooksPath).hooks.stop!.at(-1)!.command;
-    expect(stop).toBe(`PAIRWIRE_HOME=${shellQuote(pairwireHome)} PAIRWIRE_HOOK_DIALECT=cursor sh ${shellQuote(inst.runSh)} stop`);
+    expect(stop).toBe(`PAIRWIRE_HOME=${shellQuote(pairwireHome)} sh ${shellQuote(inst.runSh)} stop cursor`);
     if (shell) expect(execFileSync(shell, ["-c", stop], { encoding: "utf8" })).toBe(`ran:stop:cursor:${pairwireHome}`);
     inst.uninstall();
     expect(json<Hooks>(inst.hooksPath).hooks).toEqual({});
