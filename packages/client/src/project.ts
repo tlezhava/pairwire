@@ -1,6 +1,6 @@
 // Project directory and its hash, shared by the MCP server and every hook (04 §3).
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 
@@ -26,15 +26,33 @@ export function gitRoot(dir: string): string | null {
   }
 }
 
-function canonical(dir: string): string {
+function canonical(dir: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== "win32") {
+    try {
+      return realpathSync(dir);
+    } catch {
+      return resolve(dir);
+    }
+  }
+  const d = windowsPath(dir);
   try {
-    return realpathSync(dir);
+    return windowsPath(realpathSync(d));
   } catch {
-    return resolve(dir);
+    return d;
   }
 }
 
+/**
+ * One spelling of a Windows folder (ADR-034): harnesses write the same one as `C:\x`, `c:/x/`
+ * or, from a file URI, `/c:/x`. Becomes `C:\x`: no leading slash, backslashes, no trailing
+ * separator, upper-case drive letter.
+ */
+export function windowsPath(dir: string): string {
+  const p = win32.resolve(/^\/[A-Za-z]:([\\/]|$)/.test(dir) ? dir.slice(1) : dir);
+  return /^[a-z]:/.test(p) ? p.charAt(0).toUpperCase() + p.slice(1) : p;
+}
+
 /** First 16 hex characters of SHA-256(realpath(project_dir)). */
-export function projectHash(projectDir: string): string {
-  return bytesToHex(sha256(utf8ToBytes(canonical(projectDir)))).slice(0, 16);
+export function projectHash(projectDir: string, platform: NodeJS.Platform = process.platform): string {
+  return bytesToHex(sha256(utf8ToBytes(canonical(projectDir, platform)))).slice(0, 16);
 }

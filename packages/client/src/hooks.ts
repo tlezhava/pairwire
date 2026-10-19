@@ -6,7 +6,9 @@ import { displayName, renderForHook } from "@pairwire/core";
 import { adoptOwnerSession, readBinding, readHarnessPid, sessionOwnsBinding, type Binding } from "./binding.js";
 import { DEFAULT_CONFIG, loadConfig, pushes, type Config } from "./config.js";
 import { hookDialect, type HookDialect, type HookInput, type HookOutcome } from "./hook-dialect.js";
+import { writeFileAtomic } from "./fs-util.js";
 import { hookErrorLogger } from "./log.js";
+import { cursorMissPath } from "./paths.js";
 import { isHarnessProcess, type HookProcess } from "./process-tree.js";
 import { resolveProjectDir } from "./project.js";
 import { renderItemsFor } from "./coord.js";
@@ -53,8 +55,9 @@ function parseInput(stdin: string): Record<string, unknown> {
 function hook(event: HookEvent, input: HookInput, dialect: HookDialect, o: HookOptions): HookOutcome | null {
   const project = resolveProjectDir(o.env, input.cwd ?? o.cwd);
   const binding = readBinding(o.home, project);
+  if (!binding && dialect.name === "cursor") recordCursorMiss(o.home, project);
   // Only the owning session's hooks act, so a passive session never takes the owner's mail.
-  if (!ownsBinding(binding, input.session_id, project, o)) return null;
+  if (!ownsBinding(binding, input.session_id, project, dialect, o)) return null;
   const roomId = binding!.room_id;
   const state = readState(o.home, roomId);
   if (!state || !isOpen(state)) return null;
@@ -102,9 +105,12 @@ function hook(event: HookEvent, input: HookInput, dialect: HookDialect, o: HookO
 /**
  * The owning session's id matches (04 §3); or the binding has none and this hook runs in the
  * harness that started the owning server (04 §10, ADR-033), and then its session id becomes
- * `owner_session`, so later hooks take the first path.
+ * `owner_session`, so later hooks take the first path. A Cursor hook instead owns a binding
+ * that a Cursor server holds for its workspace (ADR-034): the folder is open in one window
+ * only, whose one server serves all its chats, so no session or process is compared.
  */
-function ownsBinding(binding: Binding | null, session: string | undefined, project: string, o: HookOptions): boolean {
+function ownsBinding(binding: Binding | null, session: string | undefined, project: string, dialect: HookDialect, o: HookOptions): boolean {
+  if (dialect.name === "cursor") return binding?.owner_harness === "cursor";
   if (sessionOwnsBinding(binding, session)) return true;
   if (!binding || binding.owner_session !== null) return false;
   const harnessPid = readHarnessPid(o.home, project, binding);
@@ -113,6 +119,15 @@ function ownsBinding(binding: Binding | null, session: string | undefined, proje
     adoptOwnerSession(o.home, project, binding.room_id, binding.owner_pid, session);
   }
   return true;
+}
+
+/** Overwrites the diagnosis file; never throws (a hook must not fail on it). */
+function recordCursorMiss(home: string, project: string): void {
+  try {
+    writeFileAtomic(cursorMissPath(home), JSON.stringify({ project_dir: project, at: Date.now() }) + "\n");
+  } catch {
+    // diagnosis only
+  }
 }
 
 function finish(out: HookOutcome): HookOutcome | null {

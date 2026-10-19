@@ -16,6 +16,8 @@ export function pairwireHome(env: NodeJS.ProcessEnv = process.env): string {
 export const configPath = (home: string) => join(home, "config.json");
 export const activeFlagPath = (home: string) => join(home, "active");
 export const hookErrorsPath = (home: string) => join(home, "hook-errors.log");
+/** The folder of the last Cursor hook that found no room (ADR-034), for diagnosis. */
+export const cursorMissPath = (home: string) => join(home, "hook-cursor-miss.json");
 export const bindingsDir = (home: string) => join(home, "bindings");
 export const roomsDir = (home: string) => join(home, "rooms");
 

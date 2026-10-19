@@ -3,7 +3,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   pairwireHome
-} from "./chunks/chunk-GVGSGJLD.mjs";
+} from "./chunks/chunk-H3AY57FF.mjs";
 import "./chunks/chunk-KARZWXGF.mjs";
 
 // packages/client/src/main.ts
@@ -17,7 +17,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-HIQJX4NF.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-K2GUMBIA.mjs");
     await runMcpServer();
     return -1;
   }
@@ -27,29 +27,29 @@ async function main(argv) {
     const opts = { home: pairwireHome(), env: process.env, cwd: process.cwd() };
     if (event === "stop-wait") {
       for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(sig, () => process.exit(0));
-      const { runStopWait } = await import("./chunks/waiter-CAF3IA7T.mjs");
+      const { runStopWait } = await import("./chunks/waiter-2C2XS27U.mjs");
       return runStopWait(stdin, { ...opts, stderr: process.stderr });
     }
-    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-4VTLWKU2.mjs");
+    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-7HFGQSYG.mjs");
     if (!HOOK_EVENTS.includes(event ?? "")) return 0;
     const out = runHook(event, stdin, opts);
     if (out) process.stdout.write(out + "\n");
     if (event === "user-prompt-submit" || event === "post-tool-use") {
-      const { cancelWaiter } = await import("./chunks/waiter-CAF3IA7T.mjs");
+      const { cancelWaiter } = await import("./chunks/waiter-2C2XS27U.mjs");
       await cancelWaiter(stdin, opts);
     }
     return 0;
   }
   if (command === "ctl") {
-    const { runCtl } = await import("./chunks/ctl-T4F5RPWB.mjs");
+    const { runCtl } = await import("./chunks/ctl-GJTJZFI3.mjs");
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "doctor") {
-    const { runDoctor } = await import("./chunks/doctor-JAHSOTZO.mjs");
+    const { runDoctor } = await import("./chunks/doctor-DPHYM2SR.mjs");
     return runDoctor({ home: pairwireHome(), env: process.env, out: process.stdout });
   }
   if (command === "purge") {
-    const { runPurge } = await import("./chunks/doctor-JAHSOTZO.mjs");
+    const { runPurge } = await import("./chunks/doctor-DPHYM2SR.mjs");
     const flags = new Set(argv.slice(1));
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }

@@ -22,7 +22,9 @@ function setup(dialect: "gemini" | "cursor", opts: { config?: object; session?: 
   createRoom(home, { roomId: ROOM, secret: new Uint8Array(32), relay: null, name: "Tazo", now: Date.now() }, {});
   updateState(home, ROOM, (s) => ({ ...s, status: "active", hop_count: 5, peer: { name: "Nika", harness: "claude-code", instance: "b".repeat(26) } }));
   const session = dialect === "gemini" ? String(fixture("gemini", "after-tool").session_id) : String(fixture("cursor", "stop").conversation_id);
-  bindProject(home, project, ROOM, { pid: process.pid, session: opts.session === undefined ? session : opts.session, harnessPid: 31337, now: Date.now() });
+  // A Cursor server has no session id; its hooks find it by workspace (ADR-034).
+  const owner = dialect === "gemini" ? { session: opts.session === undefined ? session : opts.session } : { session: null, harness: "cursor" };
+  bindProject(home, project, ROOM, { pid: process.pid, ...owner, harnessPid: 31337, now: Date.now() });
   if (opts.config) writeFileSync(join(home, "config.json"), JSON.stringify(opts.config));
   let n = 0;
   const message = (body = PEER_TEXT) => {
@@ -118,7 +120,7 @@ describe("hook dialect: cursor", () => {
     expect(h.run("post-tool-use", "post-tool-use", { workspace_roots: [], cwd: h.project })).toMatchObject({ additional_context: expect.stringContaining("two") });
     h.message("three");
     expect(h.run("post-tool-use", "post-tool-use", { workspace_roots: undefined }, { cwd: h.project })).toMatchObject({ additional_context: expect.stringContaining("three") });
-    expect(h.run("post-tool-use", "post-tool-use", { conversation_id: "another-chat" })).toBeNull();
+    expect(h.run("post-tool-use", "post-tool-use", { workspace_roots: [tempDir()] })).toBeNull();
   });
 
   it("REQ-MSG-2 postToolUse and sessionStart answer with additional_context only", () => {
@@ -142,7 +144,7 @@ describe("hook dialect: cursor", () => {
     expect(h.state().hop_count).toBe(0);
     expect(readDelivered(h.home, ROOM).size).toBe(0);
     // Also when the hook does nothing: no room for this conversation, or unreadable input.
-    expect(h.run("user-prompt-submit", "before-submit-prompt", { conversation_id: "another-chat" })).toEqual({ continue: true });
+    expect(h.run("user-prompt-submit", "before-submit-prompt", { workspace_roots: [tempDir()] })).toEqual({ continue: true });
     expect(runHook("user-prompt-submit", "{torn", { home: h.home, env: h.env, cwd: "/" })).toBe('{"continue":true}');
   });
 
@@ -168,12 +170,11 @@ describe("hook dialect: cursor", () => {
     expect(h.state().bypass_warned_sessions).toEqual([]);
   });
 
-  it("finds its session by harness pid and records the conversation id", () => {
-    const h = setup("cursor", { session: null });
+  it("finds its room by workspace, whatever its parent process, and records no conversation id (ADR-034)", () => {
+    const h = setup("cursor");
     h.message();
-    expect(h.run("post-tool-use", "post-tool-use", {}, { ppid: 999 })).toBeNull();
-    expect(h.run("post-tool-use", "post-tool-use", {}, { ppid: 31337 })).toMatchObject({ additional_context: expect.any(String) });
-    expect(readBinding(h.home, h.project)?.owner_session).toBe(fixture("cursor", "stop").conversation_id);
+    expect(h.run("post-tool-use", "post-tool-use", {}, { ppid: 999 })).toMatchObject({ additional_context: expect.any(String) });
+    expect(readBinding(h.home, h.project)?.owner_session).toBeNull();
   });
 });
 
