@@ -5,8 +5,7 @@ import {
 } from "./chunk-HDMYU3UC.mjs";
 import {
   HARNESSES
-} from "./chunk-7VVD7K5U.mjs";
-import "./chunk-KARZWXGF.mjs";
+} from "./chunk-O5I4E6QX.mjs";
 
 // packages/client/src/install.ts
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -216,12 +215,26 @@ ${MARK_END}
     this.#say(`left ${this.#o.pairwireHome} in place; \`pairwire purge --all\` deletes it.`);
   }
 };
+function cursorServer(bundle, pinnedHome) {
+  return {
+    type: "stdio",
+    command: "node",
+    args: [bundle, "mcp"],
+    env: {
+      PAIRWIRE_HARNESS: "cursor",
+      // resolveProjectDir() ignores it when Cursor leaves it unexpanded or empty.
+      PAIRWIRE_PROJECT_DIR: "${workspaceFolder}",
+      ...pinnedHome ? { PAIRWIRE_HOME: pinnedHome } : {}
+    }
+  };
+}
 function printConfig(harness, sourceRoot, out) {
   if (!HARNESSES.includes(harness) || harness === "other") {
     throw new InstallError(`Unknown harness "${harness}". Use one of: ${HARNESSES.filter((h) => h !== "other").join(", ")}.`);
   }
   const bundle = join(sourceRoot, "dist", "pairwire.mjs");
-  const entry = harness === "codex" ? codexToml(bundle) : JSON.stringify({ mcpServers: { pairwire: { command: "node", args: [bundle, "mcp"], env: { PAIRWIRE_HARNESS: harness } } } }, null, 2);
+  const server = harness === "cursor" ? cursorServer(bundle) : { command: "node", args: [bundle, "mcp"], env: { PAIRWIRE_HARNESS: harness } };
+  const entry = harness === "codex" ? codexToml(bundle) : JSON.stringify({ mcpServers: { pairwire: server } }, null, 2);
   const skill = readFileSync(join(sourceRoot, "skills", "pairwire", "SKILL.md"), "utf8").replace(/^---\n[\s\S]*?\n---\n/, "").replace(/<!-- Generated from [^\n]*-->\n/, "").trim();
   out.write(
     [
@@ -236,15 +249,17 @@ function printConfig(harness, sourceRoot, out) {
     ].join("\n")
   );
 }
+
 export {
-  InstallError,
-  Installer,
   MARK_BEGIN,
   MARK_END,
-  defaultInstallOptions,
-  pathProblem,
-  printConfig,
+  InstallError,
   runningPluginRoot,
+  defaultInstallOptions,
   shellQuote,
-  tomlPath
+  tomlPath,
+  pathProblem,
+  Installer,
+  cursorServer,
+  printConfig
 };

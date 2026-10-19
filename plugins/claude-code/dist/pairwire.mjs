@@ -17,7 +17,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-C5JEK2CG.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-HCGU5BCW.mjs");
     await runMcpServer();
     return -1;
   }
@@ -27,34 +27,34 @@ async function main(argv) {
     const opts = { home: pairwireHome(), env: process.env, cwd: process.cwd() };
     if (event === "stop-wait") {
       for (const sig of ["SIGTERM", "SIGINT", "SIGHUP"]) process.once(sig, () => process.exit(0));
-      const { runStopWait } = await import("./chunks/waiter-HYDMZCWT.mjs");
+      const { runStopWait } = await import("./chunks/waiter-WUEAIE75.mjs");
       return runStopWait(stdin, { ...opts, stderr: process.stderr });
     }
-    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-7YX6POV7.mjs");
+    const { HOOK_EVENTS, runHook } = await import("./chunks/hooks-FJAS2DY5.mjs");
     if (!HOOK_EVENTS.includes(event ?? "")) return 0;
     const out = runHook(event, stdin, opts);
     if (out) process.stdout.write(out + "\n");
     if (event === "user-prompt-submit" || event === "post-tool-use") {
-      const { cancelWaiter } = await import("./chunks/waiter-HYDMZCWT.mjs");
+      const { cancelWaiter } = await import("./chunks/waiter-WUEAIE75.mjs");
       await cancelWaiter(stdin, opts);
     }
     return 0;
   }
   if (command === "ctl") {
-    const { runCtl } = await import("./chunks/ctl-I434NHAT.mjs");
+    const { runCtl } = await import("./chunks/ctl-KGJ224FS.mjs");
     return runCtl(argv.slice(1), { stdin: process.stdin, stdout: process.stdout, env: process.env, cwd: process.cwd() });
   }
   if (command === "doctor") {
-    const { runDoctor } = await import("./chunks/doctor-WAFDUERW.mjs");
+    const { runDoctor } = await import("./chunks/doctor-VVLRFYC7.mjs");
     return runDoctor({ home: pairwireHome(), env: process.env, out: process.stdout });
   }
   if (command === "purge") {
-    const { runPurge } = await import("./chunks/doctor-WAFDUERW.mjs");
+    const { runPurge } = await import("./chunks/doctor-VVLRFYC7.mjs");
     const flags = new Set(argv.slice(1));
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }
   if (command === "install") {
-    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-RDZP5FOW.mjs");
+    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-EXULWHDX.mjs");
     const args = argv.slice(1);
     try {
       const printFor = args.indexOf("--print-config");
@@ -72,13 +72,22 @@ async function main(argv) {
         else installer.installCodex();
         return 0;
       }
+      if (args.includes("--cursor")) {
+        const { CursorInstaller, defaultCursorOptions } = await import("./chunks/install-cursor-3NB3ZYBC.mjs");
+        const opts = defaultCursorOptions(process.env, process.stdout, pairwireHome());
+        if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
+        const installer = new CursorInstaller(opts);
+        if (args.includes("--uninstall")) installer.uninstall();
+        else installer.install();
+        return 0;
+      }
     } catch (e) {
       if (!(e instanceof InstallError)) throw e;
       process.stderr.write(`pairwire install: ${e.message}
 `);
       return 1;
     }
-    process.stderr.write("usage: pairwire install --codex [--uninstall] | --print-config <harness>\n");
+    process.stderr.write("usage: pairwire install --codex|--cursor [--uninstall] | --print-config <harness>\n");
     return 2;
   }
   process.stderr.write("usage: pairwire <mcp|hook|ctl|doctor|purge|install> ...\n");
