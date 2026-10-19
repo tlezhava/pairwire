@@ -2,10 +2,10 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   WAKE_PROMPT
-} from "./chunk-QFOVLATS.mjs";
+} from "./chunk-S42T2JTL.mjs";
 import {
   transcriptEvents
-} from "./chunk-3SXTTIEU.mjs";
+} from "./chunk-PTV3IA7V.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -25,17 +25,17 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-KTPG7IL3.mjs";
+} from "./chunk-WSXVMMYZ.mjs";
 import {
   assertStatePrivate
-} from "./chunk-HEDLQJRT.mjs";
+} from "./chunk-FYZJW4V2.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-67VZJV77.mjs";
+} from "./chunk-BWDLZH46.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -58,12 +58,15 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-4NNITFK4.mjs";
+} from "./chunk-LZ32DTQE.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
   roomFile
 } from "./chunk-GVGSGJLD.mjs";
+import {
+  CLIENT_VERSION
+} from "./chunk-H5DVJTAM.mjs";
 import {
   $ZodObject,
   $ZodType,
@@ -144,7 +147,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-7VVD7K5U.mjs";
+} from "./chunk-O5I4E6QX.mjs";
 import {
   __commonJS,
   __require,
@@ -27333,9 +27336,6 @@ function planStructured(input, ctx) {
   scan.push(["the chat fallback", fallback]);
   return { kind: input.kind, data, body, reply_to: replyTo, fallbackBody: fallback, scan, lines, ...localPath ? { localPath } : {} };
 }
-
-// packages/client/src/version.ts
-var CLIENT_VERSION = "0.2.1";
 
 // packages/client/src/session.ts
 var WAKE_LEAD = "pairwire: new message(s) from your collaborator arrived while you were idle.";

@@ -4,11 +4,11 @@ import {
   WAKE_PROMPT,
   announceWake,
   isHumanPrompt
-} from "./chunk-QFOVLATS.mjs";
+} from "./chunk-S42T2JTL.mjs";
 import {
   claimUndelivered,
   renderItemsFor
-} from "./chunk-KTPG7IL3.mjs";
+} from "./chunk-WSXVMMYZ.mjs";
 import {
   DEFAULT_CONFIG,
   adoptOwnerSession,
@@ -22,12 +22,12 @@ import {
   resolveProjectDir,
   sessionOwnsBinding,
   updateState
-} from "./chunk-4NNITFK4.mjs";
+} from "./chunk-LZ32DTQE.mjs";
 import "./chunk-GVGSGJLD.mjs";
 import {
   displayName,
   renderForHook
-} from "./chunk-7VVD7K5U.mjs";
+} from "./chunk-O5I4E6QX.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/hook-dialect.ts
