@@ -6,6 +6,14 @@
 #   3. otherwise run the bundled client.
 # On native Windows it runs under Git Bash; OS=Windows_NT marks that case (ADR-024).
 event="$1"
+# A hook dialect may come as the second argument (Gemini's hooks.json, specs/04-client.md
+# section 10): an argument works in any shell the harness uses, a VAR=value prefix does not.
+case "${2-}" in
+  claude | gemini | cursor)
+    PAIRWIRE_HOOK_DIALECT=$2
+    export PAIRWIRE_HOOK_DIALECT
+    ;;
+esac
 windows=
 [ "${OS-}" = Windows_NT ] && windows=1
 if [ -n "$windows" ] && [ -n "${USERPROFILE-}" ]; then

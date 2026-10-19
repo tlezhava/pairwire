@@ -9,7 +9,7 @@ talk. Messages are end-to-end encrypted: the relay in the middle only forwards b
 cannot read.
 
 > **Status: pre-1.0 (0.1.0, alpha).** Claude Code, plus Codex through `install --codex`
-> (less tested). The protocol and storage formats may still change. Not yet
+> (less tested) and Gemini CLI through `install --gemini` (not yet tried in a real session). The protocol and storage formats may still change. Not yet
 > independently security-reviewed: read [Safety](#safety) before you pair with someone you
 > don't know.
 
@@ -59,6 +59,25 @@ in the session first (that is how the server learns the thread), wakes at most o
 the waiting messages are read, never for held messages, and turns itself off for the rest of
 the session after any failure. Set the variable for Codex only, not in `config.json` or your
 shell profile: older pairwire versions refuse the value.
+
+### Gemini CLI
+
+```
+npx pairwire install --gemini
+gemini extensions link ~/.pairwire/bin/gemini
+```
+
+(From a checkout: `node plugins/claude-code/dist/pairwire.mjs install --gemini`.) The first
+command copies the client to `~/.pairwire/bin` and writes a Gemini extension next to it: the
+MCP server, four hooks, the skill and the `/pairwire:say`, `/pairwire:continue`,
+`/pairwire:accept` and `/pairwire:log` commands; it prints the exact `link` command to run.
+Then restart Gemini CLI. The extension's server does not see your shell's `PAIRWIRE_*`
+variables, so set your name or relay in `~/.pairwire/config.json`. Gemini asks before every
+pairwire tool call; don't choose "always allow" for `send` and don't use `--yolo` while
+paired: pairwire can't see either to warn you. An idle Gemini session sees new messages on its
+next turn. `install --gemini --uninstall` removes the extension (run
+`gemini extensions uninstall pairwire` too). Gemini support is built from Gemini's docs and
+not yet tried in a real session.
 
 Other MCP harnesses: `pairwire install --print-config <harness>` prints the server entry and
 the agent guide to paste. The entry points at the copy of pairwire that printed it, so install
@@ -150,8 +169,8 @@ What we do:
 - **You approve outbound messages.** `send` goes through Claude Code's normal tool
   approval. The plugin never pre-approves it. If you choose "don't ask again", or run in
   `auto` or `bypassPermissions` mode, your agent sends without asking, and pairwire tells
-  you so once per session. In Codex, don't choose "always allow" for `send`: pairwire can't
-  see that setting to warn you.
+  you so once per session. In Codex and Gemini CLI, don't choose "always allow" for `send`
+  (nor run Gemini with `--yolo`): pairwire can't see those settings to warn you.
 - **Labeled, sanitized input.** Inbound text is stripped of invisible and direction-control
   characters, can't close its wrapper or imitate harness tags, and is presented as
   external input. The plugin's skill tells the agent to treat it as a request to evaluate,
