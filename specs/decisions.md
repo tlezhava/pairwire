@@ -1133,6 +1133,52 @@ Implementation notes (`install --cursor`, 2026-10-19; `04` §10 "Cursor" amended
   `${workspaceFolder}`; `04` §10 says so. `--print-config cursor` prints the same server entry
   as the install (Cursor's docs make `type: "stdio"` required).
 
+## ADR-034 Cursor hooks find their room by workspace folder (M6)
+
+Status: accepted (2026-10-19). Follows the first hands-on Cursor session (S11, Cursor 3.17.8
+on Windows); changes `04-client.md` sections 3 and 10. No invariant changes.
+
+Context. In the first real Cursor session (Windows 11, Cursor paired with Claude Code on
+macOS), messages reached the Cursor agent only when it called `inbox`, even in the middle of
+a turn. `node-ok` existed, so Cursor ran the hooks through Git Bash's `sh`; there was no
+`hook-errors.log`; the binding's `owner_session` stayed `null`, so no hook ever matched the
+owning server. The process list showed why: the sidecar's `harness_pid` is a Cursor helper
+whose only child is the pairwire server, under Cursor's main process, while Cursor's other
+helpers (the extension host among them) sit beside it. The only process the server and a
+hook share is Cursor's main process, which every Cursor window shares too. The pid rule of
+ADR-033 cannot tell windows apart in Cursor, on any OS. On Windows it also never gets past
+`sh.exe`, which always stands between harness and hook, and Windows never lists processes.
+
+Decisions and why:
+
+1. **Workspace rule for Cursor.** A `cursor`-dialect hook acts for the binding of its own
+   workspace folder when that binding's `owner_harness` is `cursor`, with no session or
+   process comparison, and records no `owner_session`. Cursor opens a folder in one window
+   at most, and the MCP server it starts there serves all of that window's chats, so the
+   folder names the server; a recorded conversation id would stop delivery as soon as the
+   human opened a second chat. The binding is found under the folder the hook resolves
+   (`CLAUDE_PROJECT_DIR`, else `workspace_roots[0]`), the server's is `${workspaceFolder}`;
+   in the session above the binding's `project_dir` equalled the workspace path exactly.
+   A binding owned by another harness in the same folder (Claude Code in Cursor's terminal)
+   stays that harness's.
+2. **One spelling of a Windows folder.** Before hashing, a Windows path loses a leading `/`
+   before its drive letter (file-URI form), gets `\` separators and no trailing one, and an
+   upper-case drive letter, before and after the realpath. Hooks and server can receive the
+   same folder from different sources (`${workspaceFolder}`, `CLAUDE_PROJECT_DIR`,
+   `workspace_roots`), and a different spelling would be a different binding. A Windows
+   binding written under another spelling (a lower-case drive letter) is no longer found
+   after the upgrade, and that project has to start or join its room again. Native Windows
+   support is still unverified (M7), so this is acceptable.
+3. **A diagnosis file.** A Cursor hook that finds no binding writes its resolved folder to
+   `~/.pairwire/hook-cursor-miss.json` (overwritten, never failing the hook). The first
+   session took four round trips with the other person to learn what one file now shows.
+
+Trade-offs. A second window that opens a multi-root workspace whose first root is the same
+folder also passes the rule; its chats could receive the room's messages. That is the same
+human in the same project, the messages stay labeled and sanitized, and nothing is sent
+without approval, so no invariant is touched. Gemini CLI keeps the pid rule (unverified,
+[S11]); on Windows it cannot match, and Gemini there stays on D1.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
@@ -1379,4 +1425,12 @@ Answer (docs):
 - Neither documents a session id or project directory given to an MCP server.
 
 Open for the hands-on part: the items marked [S11] in `04-client.md` section 10.
+
+Hands-on, Cursor 3.17.8 on Windows 11 (2026-10-19), paired with Claude Code on macOS:
+install, MCP server start, `start`/`join` from the agent and `inbox` all worked; Git Bash's
+`sh` was on `PATH` and Cursor ran the hooks through it. `${workspaceFolder}` expanded in the
+user-level `mcp.json` (the binding's `project_dir` was the workspace path). Cursor starts the
+MCP server from a dedicated helper process, beside the extension host, so the pid rule never
+matched and hooks did nothing: ADR-034. Idle Cursor chats are never woken (no channel), as
+designed.
 

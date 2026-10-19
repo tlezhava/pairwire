@@ -113,6 +113,8 @@ it cannot tell whether the human asked for it, so it fails closed.
 │                                          owner_harness?, updated_at}
 ├── bindings/<project_hash>.harness-pid   {owner_pid, harness_pid}: the owning server's parent,
 │                                         while owner_session is null (section 10, ADR-033)
+├── hook-cursor-miss.json                 {project_dir, at}: the folder of the last Cursor hook
+│                                         that found no binding, for diagnosis (ADR-034)
 └── rooms/<room_id>/                      0700
     ├── secret                            raw 32 bytes; deleted on leave
     ├── ctl.key                           32 random bytes, the control channel's proof key
@@ -147,7 +149,11 @@ it cannot tell whether the human asked for it, so it fails closed.
   deleted with `secret` (leave, end, expiry) and by `purge`; a room that is past its expiry
   when a server opens it is ended before any key is created, and gets no control channel. Rooms opened only by 0.1.x servers have none, and their clients talk
   without the proof (section 8, "Control-channel server proof").
-- `project_hash` = first 16 hex chars of `SHA-256(realpath(project_dir))`.
+- `project_hash` = first 16 hex chars of `SHA-256(realpath(project_dir))`. On Windows the
+  folder is first brought to one spelling, before and after the realpath, because harnesses
+  write the same folder as `C:\x`, `c:/x/` or (from a file URI) `/c:/x`: a leading `/` before a
+  drive letter is dropped, separators become `\`, a trailing one is dropped, and the drive
+  letter is upper-case (ADR-034).
 - **Project directory** comes from one shared function, `resolveProjectDir()`, used by the
   MCP server and every hook: `PAIRWIRE_PROJECT_DIR`, else `CLAUDE_PROJECT_DIR`, else the
   git root of the cwd (hooks use the hook input's `cwd`), else that cwd. The plugin sets
@@ -1438,7 +1444,14 @@ others the owning server records its parent process (the harness) in a sidecar f
 bindings with a strict schema; `run.sh` passes its own parent as `PAIRWIRE_HOOK_PPID`. A hook whose binding has no
 `owner_session` acts when the two pids are equal, and on its first action records its
 session id as `owner_session`, exactly as `_meta` does for Codex. If the harness starts
-hooks and MCP servers from different processes [S11], the room stays on D1 there.
+hooks and MCP servers from different processes, the room stays on D1 there. Cursor does
+(S11, below), so Cursor hooks use the workspace rule instead (ADR-034): a `cursor`-dialect
+hook acts for the binding of its own workspace folder when that binding's `owner_harness` is
+`cursor`, compares no session or process, and records nothing. Cursor opens a folder in one
+window at most, and that window's one MCP server serves all of its chats, so the folder names
+the server. The pid rule stays for Gemini CLI, where it is unverified [S11]; on native
+Windows it cannot match there, because `sh.exe` always stands between the harness and the
+hook, so Gemini on Windows stays on D1.
 
 Details (implementation, ADR-033 notes):
 
@@ -1464,7 +1477,7 @@ section 6 is shared. Any other value is `claude`. Claude Code output is unchange
 
 | | `claude` | `gemini` | `cursor` |
 |---|---|---|---|
-| session id, cwd | `session_id`, `cwd` | `session_id`, `cwd` | `conversation_id`; `workspace_roots[0]`, else `cwd`, else the process cwd |
+| session id, cwd | `session_id`, `cwd` | `session_id`, `cwd` | `conversation_id` (unused for ownership, ADR-034); `workspace_roots[0]`, else `cwd`, else the process cwd |
 | context | `hookSpecificOutput` (Claude event names) | `hookSpecificOutput` with `hookEventName` `SessionStart`, `BeforeAgent`, `AfterTool` [S11: whether the name is needed] | `{"additional_context": …}` from `session-start` and `post-tool-use` |
 | `user-prompt-submit` | hop reset, context | hop reset, context | hop reset only; always answers `{"continue": true}` (also when it does nothing) and never marks an item delivered, since nothing can be shown |
 | `stop` with undelivered items | `decision: "block"`, rendered items, marked delivered | `decision: "block"`, `reason` = `WAKE_PROMPT` | `{"followup_message": WAKE_PROMPT}` |
@@ -1603,8 +1616,12 @@ the agent to check its pairwire inbox when messages don't show up on their own.
 
 Behavior in a Cursor session:
 
-- MCP server: Cursor gives it no session id, so hooks find it through the harness-pid sidecar
-  (above). Whether Cursor starts hooks and MCP servers from the same process is [S11].
+- MCP server: Cursor gives it no session id, and it starts MCP servers from a helper process
+  that is not an ancestor of its hooks (S11, Windows), so hooks find the server by workspace
+  folder (the workspace rule, above, ADR-034), on every OS. A Cursor hook that finds no
+  binding for its folder writes that folder to `hook-cursor-miss.json` (overwritten each
+  time, never fails the hook), so a mismatch between the server's `${workspaceFolder}` and
+  the hook's folder can be diagnosed.
 - Hooks, through the `cursor` dialect (`run.sh`'s second argument), because Cursor's
   fields differ: input `conversation_id` and `workspace_roots[0]` stand in for `session_id`
   and `cwd`; output `additional_context` replaces `hookSpecificOutput.additionalContext`.
