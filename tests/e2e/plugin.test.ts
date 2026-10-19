@@ -113,6 +113,16 @@ describe.skipIf(onWindows)("hooks/run.sh", () => {
     }
   });
 
+  it("prints no Node notice in the cursor dialect, which has no systemMessage (04 §10)", () => {
+    const n = fakeNode(null);
+    const home = tempDir();
+    writeFileSync(join(home, "active"), "");
+    const r = run("user-prompt-submit", { ...n.env, PAIRWIRE_HOME: home, PAIRWIRE_HOOK_DIALECT: "cursor" });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("");
+    expect(existsSync(join(home, "hook-node-warned"))).toBe(false);
+  });
+
   it("execs the bundled client with the event when Node is recent", () => {
     const n = fakeNode("v20.11.1");
     const home = tempDir();

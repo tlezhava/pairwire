@@ -74,12 +74,21 @@ async function main(argv: string[]): Promise<number> {
         else installer.installCodex();
         return 0;
       }
+      if (args.includes("--cursor")) {
+        const { CursorInstaller, defaultCursorOptions } = await import("./install-cursor.js");
+        const opts = defaultCursorOptions(process.env, process.stdout, pairwireHome());
+        if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
+        const installer = new CursorInstaller(opts);
+        if (args.includes("--uninstall")) installer.uninstall();
+        else installer.install();
+        return 0;
+      }
     } catch (e) {
       if (!(e instanceof InstallError)) throw e;
       process.stderr.write(`pairwire install: ${e.message}\n`);
       return 1;
     }
-    process.stderr.write("usage: pairwire install --codex [--uninstall] | --print-config <harness>\n");
+    process.stderr.write("usage: pairwire install --codex|--cursor [--uninstall] | --print-config <harness>\n");
     return 2;
   }
   process.stderr.write("usage: pairwire <mcp|hook|ctl|doctor|purge|install> ...\n");
