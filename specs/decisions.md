@@ -1083,6 +1083,24 @@ Implementation notes (foundation, 2026-10-19; `04` §3 and §10 amended):
 - Cursor's `beforeSubmitPrompt` cannot show context, so in that dialect the prompt hook
   never claims items (a claim there would mark them delivered unseen).
 
+Implementation notes (`install --gemini`, 2026-10-19; `04` §8 and §10 "Gemini CLI" amended):
+
+- `PAIRWIRE_HARNESS` is `gemini-cli`, the handshake's id (`02` §4), not `gemini`, which the
+  peer would see as `other`.
+- No extension `settings`: S11 did not record their shape, Gemini asks for each one at link
+  time, and `config.json` already holds the relay, name, delivery and hold mode. A
+  non-default PAIRWIRE_HOME is pinned in the server's `env` instead.
+- The hook dialect is `run.sh`'s second argument, not a `PAIRWIRE_HOOK_DIALECT=gemini` prefix:
+  Gemini may run hook commands through PowerShell or cmd on Windows, where the prefix is not
+  valid syntax.
+- `ctl … --args`: Gemini shell-escapes `{{args}}` into one word, possibly empty, and an empty
+  word can be dropped by Windows PowerShell 5, which would leave `ctl log` or `ctl accept`
+  reading stdin; `--args` never reads stdin.
+- Install refuses `{`, `}` (Gemini's `!{…}` needs balanced braces) and, on Windows, `'` in the
+  path, because the quoting of `'` differs between sh and PowerShell.
+- The commands' instruction text is a copy of the Claude Code commands' text kept in the
+  installer (the npm package ships no `commands/`); a unit test keeps the two equal.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

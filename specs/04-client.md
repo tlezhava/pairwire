@@ -1008,6 +1008,10 @@ Nor is a server that accepts (and proves itself) but gives no reply: it may stil
 `hop_count` in memory, so `ctl continue` prints "pairwire: your agent session did not
 answer, so the hop budget was not reset; try again." and changes nothing.
 `ctl say` removes exactly one trailing newline (the heredoc's) and refuses empty text.
+`ctl say`, `ctl log` and `ctl accept` also take `--args [word…]` (Gemini's commands, section
+10): the argument is the remaining words joined with one space, possibly none, and stdin is
+not read; no trailing newline is removed. Without `--args`, `say` reads stdin, and `log` and
+`accept` take their one argument from the command line, else from stdin, as above.
 Expected failures are printed as `pairwire: …` on stdout with exit code 0, so the human
 sees them in the prompt.
 
@@ -1474,28 +1478,68 @@ records the undelivered ids there. The cursor dialect never records a session in
 
 #### Gemini CLI
 
-`pairwire install --gemini` writes a Gemini extension to `~/.pairwire/bin/gemini/` and
-prints the one command the human runs, `gemini extensions link ~/.pairwire/bin/gemini`
-[S11: `link` versus `install <path>`]. The extension holds:
+`pairwire install --gemini` copies the client to `~/.pairwire/bin/` exactly as `--codex` does
+(step 1 there), writes a Gemini extension to `~/.pairwire/bin/gemini/` and prints the one
+command the human runs, `gemini extensions link ~/.pairwire/bin/gemini` [S11: `link` versus
+`install <path>`]. Before changing any file it refuses unsafe paths: control characters and
+lone surrogates as `--codex` does, a `{` or `}` (a command's `!{…}` must hold balanced braces,
+and the bundle path goes inside it), and on Windows a `'`, which POSIX sh and PowerShell
+escape differently inside single quotes [S11: which shell Gemini runs hooks and `!{…}` with
+there]. It writes a file only when its content changes, backs up a file it replaces
+(`<file>.pairwire-backup-<UTC timestamp>`), and is idempotent. Every path in the extension is
+absolute, since the bundle lives outside the extension directory. The extension holds:
 
-- `gemini-extension.json` with the MCP server (`node <bundle> mcp`,
-  `env: {PAIRWIRE_HARNESS: "gemini", PAIRWIRE_PROJECT_DIR: "${workspacePath}"}`). Extension
-  servers start with only HOME, PATH and similar variables plus declared settings, so the
-  other `PAIRWIRE_*` variables become extension `settings` [S11]. Extensions cannot set
-  `trust`, so every pairwire tool call prompts: INV-4 holds by default. "Always allow" and
-  `--yolo` remove the prompt; whether the hook input names the mode is [S11], and until it
-  does the README states the risk as it does for Codex.
-- `hooks/hooks.json`: `SessionStart`, `BeforeAgent`, `AfterTool` and `AfterAgent`, mapped
-  to pairwire's `session-start`, `user-prompt-submit`, `post-tool-use` and `stop`. Gemini's
-  output format matches Claude Code's (`hookSpecificOutput.additionalContext`,
-  `decision: "block"` with a `reason`, `systemMessage`), so D2 works unchanged except that the
-  `AfterAgent` reason is `WAKE_PROMPT`, because Gemini sends it as a new prompt.
-- `skills/pairwire/SKILL.md` (the same file as the plugin's) and `GEMINI.md` pointing at it.
-- `commands/pairwire/{say,continue,accept,log}.toml`, each `!{node <bundle> ctl … {{args}}}`.
-  Gemini shell-escapes `{{args}}` inside `!{…}` and shows the exact command for confirmation
-  before running it, before the model sees the prompt, so these are human-only paths like
-  the Claude Code commands [S11: that the model cannot run a custom command itself, and the
-  hook-before-command order S10 found in Claude Code].
+- `gemini-extension.json`: `name` `"pairwire"`, `version` the client version, and
+  `mcpServers.pairwire` = `{"command": "node", "args": ["<bundle>", "mcp"], "env":
+  {"PAIRWIRE_HARNESS": "gemini-cli", "PAIRWIRE_PROJECT_DIR": "${workspacePath}"}}`.
+  `gemini-cli` is the handshake's id for Gemini CLI (`02-protocol.md`, `harness`); any other
+  value reaches the peer as `other`. When the state directory is not the default
+  `~/.pairwire`, `env` also holds `PAIRWIRE_HOME` with its absolute path. Extension servers
+  start with only HOME, PATH and similar variables plus `env` and declared settings [S11].
+  pairwire declares no `settings`: Gemini asks the human for every declared setting when the
+  extension is installed or linked [S11], and `config.json` (section 2) already covers the
+  relay, name, delivery and hold mode, so in Gemini those come from the file, not from
+  `PAIRWIRE_RELAY` and the like. Extensions cannot set `trust`, so every pairwire tool call
+  prompts: INV-4 holds by default. "Always allow" and `--yolo` remove the prompt; whether the
+  hook input names the mode is [S11], and until it does the README states the risk as it
+  does for Codex.
+- `hooks/hooks.json`: `{"hooks": {...}}` with `SessionStart`, `BeforeAgent`, `AfterTool`
+  (matcher `"*"`) and `AfterAgent`, mapped to pairwire's `session-start`,
+  `user-prompt-submit`, `post-tool-use` and `stop`. Each is one group holding
+  `{"name": "pairwire-<event>", "type": "command", "command": "sh '<home>/.pairwire/bin/hooks/run.sh' <event> gemini", "timeout": 10000}`
+  (milliseconds), the path single-quoted as for Codex. The dialect is passed as `run.sh`'s
+  second argument, which `run.sh` exports as `PAIRWIRE_HOOK_DIALECT` when it is a dialect
+  name, rather than as a `PAIRWIRE_HOOK_DIALECT=gemini` prefix: Gemini runs hook commands
+  through its own shell, PowerShell on Windows [S11], where a `VAR=value` prefix is not
+  valid syntax and an argument is. Gemini's output format matches Claude Code's
+  (`hookSpecificOutput.additionalContext`, `decision: "block"` with a `reason`,
+  `systemMessage`), so D2 works unchanged except that the `AfterAgent` reason is
+  `WAKE_PROMPT`, because Gemini sends it as a new prompt. Hooks find the project through
+  `resolveProjectDir()`: Gemini's hook environment carries a `CLAUDE_PROJECT_DIR` alias of
+  its project directory [S11], the same directory as `${workspacePath}`; without it the hook
+  input's `cwd` (its git root) is used, which agrees when Gemini starts at the repository
+  root. So does `ctl` run from a command (the git root of its working directory, the
+  workspace); a Gemini started in a subdirectory still gets the tools and D1 there, while the
+  commands answer that there is no room.
+- `skills/pairwire/SKILL.md` (the same file as the plugin's) and `GEMINI.md`, the extension's
+  context file, which says in a few lines that pairwire is installed and that the `pairwire`
+  skill is its guide.
+- `commands/pairwire/{say,continue,accept,log}.toml` (`/pairwire:say` and so on), each a
+  `description` and a `prompt` that starts with `!{node '<bundle>' ctl <sub> --args {{args}}}`
+  (`continue`: `!{node '<bundle>' ctl continue}`), followed by the same instruction text as
+  the Claude Code command. The bundle path is single-quoted as in the hooks, and the prompt
+  is a TOML multi-line basic string with `\` and `"` escaped. Gemini shell-escapes `{{args}}`
+  inside `!{…}` into one word and shows the exact command for confirmation before running
+  it, before the model sees the prompt, so these are human-only paths like the Claude Code
+  commands [S11: that the model cannot run a custom command itself, and the
+  hook-before-command order S10 found in Claude Code]. `--args` (section 8) makes `ctl` take
+  the argument from its command line and never read stdin, so a word the shell drops (an
+  empty argument in Windows PowerShell 5) cannot leave it waiting on stdin.
+
+`pairwire install --gemini --uninstall` prints `gemini extensions uninstall pairwire` for the
+human, removes `~/.pairwire/bin/gemini/` and leaves the rest of `~/.pairwire` alone.
+`pairwire install --print-config gemini-cli` (or `gemini`) prints a `settings.json`
+`mcpServers` entry with `PAIRWIRE_HARNESS` `gemini-cli`, for a setup without the extension.
 
 No D3: Gemini has no asynchronous wake.
 
