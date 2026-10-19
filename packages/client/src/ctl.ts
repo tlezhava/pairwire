@@ -105,7 +105,11 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
     print(`pairwire: ${(e as Error).message}`);
     return 0;
   }
-  const [op, arg] = args;
+  const [op, ...rest] = args;
+  // `--args [word…]` (Gemini's commands, 04 §8): the argument is on the command line, possibly
+  // empty, and stdin is never read.
+  const fromArgs = rest[0] === "--args" ? rest.slice(1).join(" ") : undefined;
+  const arg = fromArgs ?? rest[0];
   const binding = readBinding(home, resolveProjectDir(io.env, io.cwd));
   const state = binding ? readState(home, binding.room_id) : null;
   if (!binding || !state) {
@@ -164,12 +168,12 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
       return 0;
     }
     case "say": {
-      let text = await readAll(io.stdin);
+      let text = fromArgs ?? (await readAll(io.stdin));
       if (text.length > CTL_MAX_REQUEST) {
         print("pairwire: that message is too long.");
         return 0;
       }
-      if (text.endsWith("\n")) text = text.slice(0, -1); // the heredoc's own newline
+      if (fromArgs === undefined && text.endsWith("\n")) text = text.slice(0, -1); // the heredoc's own newline
       if (text.trim() === "") {
         print("pairwire: nothing to send. Usage: /pairwire:say <message>");
         return 0;

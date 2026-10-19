@@ -115,6 +115,32 @@ describe("pairwire ctl", () => {
     expect(out).toContain("Nika (claude-code, agent)");
   });
 
+  it("REQ-MSG-7 --args takes the argument from the command line and never reads stdin (Gemini's commands)", async () => {
+    const { a, b } = await paired();
+    await a.session.ctlReady();
+    // A stdin that never ends: reading it would hang the test.
+    const run = async (args: string[]) => {
+      let out = "";
+      const stdout = new Writable({
+        write(chunk, _enc, cb) {
+          out += String(chunk);
+          cb();
+        },
+      });
+      expect(await runCtl(args, { stdin: new Readable({ read() {} }), stdout, env: { PAIRWIRE_HOME: a.home }, cwd: a.project })).toBe(0);
+      return out;
+    };
+    expect(await run(["say", "--args", "use", "port 8080\n"])).toMatch(/^pairwire: sent your message to Nika as you/);
+    await until(() => readInbox(b.home, roomOf(b)).some((e) => e.source === "peer"), 5000, "B got it");
+    expect(readInbox(b.home, roomOf(b)).find((e) => e.source === "peer")).toMatchObject({ envelope: { author: "human", body: "use port 8080\n" } });
+    expect(await run(["say", "--args"])).toContain("pairwire: nothing to send.");
+    expect(await run(["say", "--args", ""])).toContain("pairwire: nothing to send.");
+    expect(await run(["log", "--args", ""])).toMatch(/^pairwire: conversation log\./);
+    expect(await run(["log", "--args"])).toMatch(/^pairwire: conversation log\./);
+    expect(await run(["accept", "--args"])).toContain("no messages are held");
+    expect(await run(["accept", "--args", "bogus"])).toContain("usage: /pairwire:accept [drop]");
+  });
+
   it("ctl.sock is private and the CLI handles a project without a room", async () => {
     const { a } = await paired();
     await a.session.ctlReady();
