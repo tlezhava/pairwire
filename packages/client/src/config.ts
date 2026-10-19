@@ -6,7 +6,14 @@ import { z } from "zod";
 import { errorCode } from "./fs-util.js";
 import { configPath } from "./paths.js";
 
-export type Delivery = "auto" | "pull";
+/**
+ * `wake` = `auto` plus the Codex idle wake (04 §10). Environment only: 0.1.x and 0.2.x read
+ * config.json's `delivery` with a strict auto/pull enum, so the file never holds it.
+ */
+export type Delivery = "auto" | "pull" | "wake";
+
+/** Whether hooks and the D3 waiter push messages to the agent (everything but `pull`). */
+export const pushes = (delivery: Delivery): boolean => delivery !== "pull";
 
 export interface Config {
   /** Display name for HELLO; `null` = derive it with resolveDisplayName(). */
@@ -109,8 +116,8 @@ function normalizeRelay(value: string | undefined, where: string): string | null
 
 function parseDelivery(value: string): Delivery {
   const v = value.trim().toLowerCase();
-  if (v === "auto" || v === "pull") return v;
-  throw new ConfigError('PAIRWIRE_DELIVERY must be "auto" or "pull".');
+  if (v === "auto" || v === "pull" || v === "wake") return v;
+  throw new ConfigError('PAIRWIRE_DELIVERY must be "auto", "pull" or "wake".');
 }
 
 function parseFlag(value: string, name: string): boolean {

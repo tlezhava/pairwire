@@ -37,6 +37,12 @@ describe("loadConfig", () => {
     expect(loadConfig(homeWith({ hold: true }), { PAIRWIRE_HOLD: "0" }).config.hold).toBe(false);
   });
 
+  it("accepts delivery wake (the Codex idle wake, 04 §10) from the environment only", () => {
+    expect(loadConfig(tempDir(), { PAIRWIRE_DELIVERY: " Wake " }).config.delivery).toBe("wake");
+    // 0.1.x and 0.2.x read config.json with a strict auto/pull enum: the file never holds it.
+    expect(() => loadConfig(homeWith({ delivery: "wake" }), {})).toThrow(/"delivery"/);
+  });
+
   it("warns about unknown keys instead of failing", () => {
     const { warnings } = loadConfig(homeWith({ hop_budegt: 3 }), {});
     expect(warnings).toEqual([expect.stringContaining('unknown key "hop_budegt"')]);
@@ -47,7 +53,7 @@ describe("loadConfig", () => {
     expect(() => loadConfig(homeWith("{not json"), {})).toThrow(ConfigError);
     expect(() => loadConfig(homeWith([]), {})).toThrow("must contain a JSON object");
     expect(() => loadConfig(homeWith({ relay: "wss://relay.example.com" }), {})).toThrow(/"relay".*without a scheme/);
-    expect(() => loadConfig(tempDir(), { PAIRWIRE_DELIVERY: "push" })).toThrow('PAIRWIRE_DELIVERY must be "auto" or "pull"');
+    expect(() => loadConfig(tempDir(), { PAIRWIRE_DELIVERY: "push" })).toThrow('PAIRWIRE_DELIVERY must be "auto", "pull" or "wake"');
     expect(() => loadConfig(tempDir(), { PAIRWIRE_CHANNELS: "yes" })).toThrow("PAIRWIRE_CHANNELS must be");
     expect(() => loadConfig(tempDir(), { PAIRWIRE_HOLD: "on" })).toThrow("PAIRWIRE_HOLD must be");
     expect(() => loadConfig(homeWith({ hold: "yes" }), {})).toThrow(/"hold"/);

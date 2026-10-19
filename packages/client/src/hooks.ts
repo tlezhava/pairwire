@@ -4,7 +4,7 @@
 // (or the dialect's neutral answer), logged to hook-errors.log.
 import { displayName, renderForHook } from "@pairwire/core";
 import { adoptOwnerSession, readBinding, readHarnessPid, sessionOwnsBinding, type Binding } from "./binding.js";
-import { DEFAULT_CONFIG, loadConfig, type Config } from "./config.js";
+import { DEFAULT_CONFIG, loadConfig, pushes, type Config } from "./config.js";
 import { hookDialect, type HookDialect, type HookInput, type HookOutcome } from "./hook-dialect.js";
 import { hookErrorLogger } from "./log.js";
 import { isHarnessProcess, type HookProcess } from "./process-tree.js";
@@ -78,7 +78,7 @@ function hook(event: HookEvent, input: HookInput, dialect: HookDialect, o: HookO
   if (event === "user-prompt-submit" && isHumanPrompt(input.prompt ?? "")) {
     updateState(o.home, roomId, (s) => ({ ...s, hop_count: 0 }));
   }
-  if (config.delivery === "pull") return finish(out);
+  if (!pushes(config.delivery)) return finish(out);
   if (event === "stop" && !config.autoContinue) return finish(out);
   // Cursor's prompt hook can't show anything, so it claims nothing.
   if (!dialect.canShow(event)) return finish(out);
