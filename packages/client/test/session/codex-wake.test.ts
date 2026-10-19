@@ -89,18 +89,22 @@ describe.skipIf(onWindows)("Codex idle wake (POSIX fake codex)", { timeout: 30_0
   it("REQ-MSG-4 runs codex queue with the exact argv, once while a wake is outstanding, again after delivery", async () => {
     const { a, fake, lines, fromB } = await pairedCodex();
     await fromB("first WAKEBODY");
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toEqual([["queue", "--thread", "thread-1", "--message", WAKE_PROMPT]]);
     await fromB("second WAKEBODY");
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1); // outstanding: no second wake
 
     // inbox delivers, which clears it.
     expect((await a.session.inbox()).text).toContain("second WAKEBODY");
     await fromB("third WAKEBODY");
+    await until(() => fake.calls().length >= 2, 10_000, "wake 2");
     expect(fake.calls()).toHaveLength(2);
 
     // A hook in another process delivers: cleared through delivered.json.
     expect(hook(a, "post-tool-use")).toContain("third WAKEBODY");
     await fromB("fourth WAKEBODY");
+    await until(() => fake.calls().length >= 3, 10_000, "wake 3");
     expect(fake.calls()).toHaveLength(3);
 
     expect(events(lines, "codex_wake")).toHaveLength(3);
@@ -146,6 +150,7 @@ describe.skipIf(onWindows)("Codex idle wake (POSIX fake codex)", { timeout: 30_0
     const { a, fake, fromB } = await pairedCodex();
     await fromB("first");
     await fromB("second");
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1);
     // A hook under its size cap showed only the first: the wake is cleared, the second is unread.
     const first = readInbox(a.home, roomOf(a)).find((e) => e.source === "peer")!;
@@ -154,8 +159,10 @@ describe.skipIf(onWindows)("Codex idle wake (POSIX fake codex)", { timeout: 30_0
     await a.session.send({ kind: "chat", body: "from Codex" });
     await until(() => readOutbox(a.home, roomOf(a)).some((e) => e.status === "delivered"), 5000, "A sees delivered");
     await settle();
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1);
     await fromB("third"); // a message still does
+    await until(() => fake.calls().length >= 2, 10_000, "wake 2");
     expect(fake.calls()).toHaveLength(2);
   });
 
@@ -163,19 +170,23 @@ describe.skipIf(onWindows)("Codex idle wake (POSIX fake codex)", { timeout: 30_0
     const { a, fake, fromB } = await pairedCodex();
     writeFileSync(join(a.home, "config.json"), JSON.stringify({ hold: true }));
     await fromB("held HOLDME");
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1); // the held notice
     await fromB("held again HOLDME");
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1);
     const inbox = await a.session.inbox(); // shows the notice, which clears the wake
     expect(inbox.text).toContain('<pairwire_notice event="held">');
     expect(inbox.text).not.toContain("HOLDME");
     await fromB("third HOLDME"); // still held, and no new notice while some are held
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1);
   });
 
   it("a nonzero exit is logged once and turns the wake off for the server's life", async () => {
     const { a, fake, lines, fromB } = await pairedCodex({ exit: 3 });
     await fromB("one");
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1);
     await until(() => events(lines, "codex_wake_failed").length === 1, 5000, "failure logged");
     expect(events(lines, "codex_wake_failed")[0]).toMatchObject({ level: "warn", exit_code: 3, timed_out: false });
@@ -183,6 +194,7 @@ describe.skipIf(onWindows)("Codex idle wake (POSIX fake codex)", { timeout: 30_0
     await fromB("two");
     await a.session.inbox();
     await fromB("three");
+    await until(() => fake.calls().length >= 1, 10_000, "wake 1");
     expect(fake.calls()).toHaveLength(1);
     expect(events(lines, "codex_wake_failed")).toHaveLength(1);
   });
