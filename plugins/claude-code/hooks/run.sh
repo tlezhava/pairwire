@@ -52,6 +52,8 @@ fi
 if [ "$major" -lt 20 ]; then
   # SessionStart output isn't shown to the human (S1b) and the waiter's stdout is unused.
   case "$event" in session-start | stop-wait) exit 0 ;; esac
+  # Cursor's hooks have no systemMessage; its MCP settings show the server failing instead.
+  [ "${PAIRWIRE_HOOK_DIALECT-}" = cursor ] && exit 0
   marker="$home/hook-node-warned"
   [ -e "$marker" ] && exit 0
   : >"$marker" 2>/dev/null

@@ -446,6 +446,24 @@ function tomlMultiline(s: string): string {
   return s.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
+/**
+ * Cursor's `mcpServers.pairwire` entry (04 §10 "Cursor"), for `install --cursor` and
+ * `--print-config cursor`. `pinnedHome`: a non-default state directory to pass as PAIRWIRE_HOME.
+ */
+export function cursorServer(bundle: string, pinnedHome?: string): Record<string, unknown> {
+  return {
+    type: "stdio",
+    command: "node",
+    args: [bundle, "mcp"],
+    env: {
+      PAIRWIRE_HARNESS: "cursor",
+      // resolveProjectDir() ignores it when Cursor leaves it unexpanded or empty.
+      PAIRWIRE_PROJECT_DIR: "${workspaceFolder}",
+      ...(pinnedHome ? { PAIRWIRE_HOME: pinnedHome } : {}),
+    },
+  };
+}
+
 /** `--print-config <harness>`: the MCP entry and the agent guide to paste (04 §10). */
 export function printConfig(given: string, sourceRoot: string, out: Writable): void {
   const harness = given === "gemini" ? "gemini-cli" : given;
@@ -453,10 +471,8 @@ export function printConfig(given: string, sourceRoot: string, out: Writable): v
     throw new InstallError(`Unknown harness "${harness}". Use one of: ${HARNESSES.filter((h) => h !== "other").join(", ")}.`);
   }
   const bundle = join(sourceRoot, "dist", "pairwire.mjs");
-  const entry =
-    harness === "codex"
-      ? codexToml(bundle)
-      : JSON.stringify({ mcpServers: { pairwire: { command: "node", args: [bundle, "mcp"], env: { PAIRWIRE_HARNESS: harness } } } }, null, 2);
+  const server = harness === "cursor" ? cursorServer(bundle) : { command: "node", args: [bundle, "mcp"], env: { PAIRWIRE_HARNESS: harness } };
+  const entry = harness === "codex" ? codexToml(bundle) : JSON.stringify({ mcpServers: { pairwire: server } }, null, 2);
   const skill = readFileSync(join(sourceRoot, "skills", "pairwire", "SKILL.md"), "utf8")
     .replace(/^---\n[\s\S]*?\n---\n/, "")
     .replace(/<!-- Generated from [^\n]*-->\n/, "")

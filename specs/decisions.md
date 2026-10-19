@@ -1114,6 +1114,25 @@ Implementation notes (`install --gemini`, 2026-10-19; `04` §8 and §10 "Gemini 
 - The commands' instruction text is a copy of the Claude Code commands' text kept in the
   installer (the npm package ships no `commands/`); a unit test keeps the two equal.
 
+Implementation notes (`install --cursor`, 2026-10-19; `04` §10 "Cursor" amended):
+
+- The guide goes to `~/.cursor/skills/pairwire/SKILL.md`: cursor.com/docs (Agent Skills) lists
+  `~/.cursor/skills/` as a user-level skills directory, so no User Rule step is needed.
+- No `${env:NAME}` in `mcp.json`: Cursor's docs don't say what an unset name expands to, and
+  every value but an empty one would break the server. The server inherits Cursor's
+  environment [S11]; a non-default PAIRWIRE_HOME is written as an absolute path into the MCP
+  `env` and the hook commands instead, so server, hooks and bundle agree even when Cursor was
+  started without the shell profile.
+- `PAIRWIRE_PROJECT_DIR: "${workspaceFolder}"` is passed because `resolveProjectDir()` already
+  ignores an unexpanded or empty value; it can only help, unless S11 finds it expands to the
+  home directory.
+- `run.sh` prints no Node-missing notice in the cursor dialect: a `systemMessage` is not part
+  of any Cursor hook's output schema.
+- Hooks get `CLAUDE_PROJECT_DIR` from Cursor (docs, hooks page), which `resolveProjectDir()`
+  takes as is, so they key the binding on the same directory as the server's
+  `${workspaceFolder}`; `04` §10 says so. `--print-config cursor` prints the same server entry
+  as the install (Cursor's docs make `type: "stdio"` required).
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
