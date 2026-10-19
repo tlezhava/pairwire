@@ -17,6 +17,7 @@ function pairwireHome(env = process.env) {
 var configPath = (home) => join(home, "config.json");
 var activeFlagPath = (home) => join(home, "active");
 var hookErrorsPath = (home) => join(home, "hook-errors.log");
+var cursorMissPath = (home) => join(home, "hook-cursor-miss.json");
 var bindingsDir = (home) => join(home, "bindings");
 var roomsDir = (home) => join(home, "rooms");
 function assertRoomId(roomId) {
@@ -53,6 +54,7 @@ export {
   configPath,
   activeFlagPath,
   hookErrorsPath,
+  cursorMissPath,
   bindingsDir,
   roomsDir,
   roomDir,

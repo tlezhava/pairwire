@@ -10,7 +10,7 @@ import {
   roomDir,
   roomFile,
   roomsDir
-} from "./chunk-GVGSGJLD.mjs";
+} from "./chunk-H3AY57FF.mjs";
 import {
   ANONYMOUS,
   RELAY_LIMITS,
@@ -27,10 +27,6 @@ import {
   sha256,
   utf8ToBytes
 } from "./chunk-KARZWXGF.mjs";
-
-// packages/client/src/log.ts
-import { appendFileSync, renameSync as renameSync2, statSync as statSync2 } from "node:fs";
-import { dirname as dirname2 } from "node:path";
 
 // packages/client/src/fs-util.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
@@ -203,6 +199,8 @@ function withLock(file, fn) {
 }
 
 // packages/client/src/log.ts
+import { appendFileSync, renameSync as renameSync2, statSync as statSync2 } from "node:fs";
+import { dirname as dirname2 } from "node:path";
 var LOG_LEVELS = ["debug", "info", "warn", "error"];
 var SENSITIVE_NAME = /secret|token|key|psk|share|password/i;
 var RESERVED = /* @__PURE__ */ new Set(["t", "level", "event"]);
@@ -275,7 +273,7 @@ function hookErrorLogger(home) {
 
 // packages/client/src/project.ts
 import { existsSync, realpathSync } from "node:fs";
-import { dirname as dirname3, join, resolve } from "node:path";
+import { dirname as dirname3, join, resolve, win32 } from "node:path";
 var usable = (value) => !!value && !value.includes("${");
 function resolveProjectDir(env, cwd) {
   if (usable(env.PAIRWIRE_PROJECT_DIR)) return canonical(env.PAIRWIRE_PROJECT_DIR);
@@ -289,15 +287,27 @@ function gitRoot(dir) {
     if (dirname3(d) === d) return null;
   }
 }
-function canonical(dir) {
+function canonical(dir, platform = process.platform) {
+  if (platform !== "win32") {
+    try {
+      return realpathSync(dir);
+    } catch {
+      return resolve(dir);
+    }
+  }
+  const d = windowsPath(dir);
   try {
-    return realpathSync(dir);
+    return windowsPath(realpathSync(d));
   } catch {
-    return resolve(dir);
+    return d;
   }
 }
-function projectHash(projectDir) {
-  return bytesToHex(sha256(utf8ToBytes(canonical(projectDir)))).slice(0, 16);
+function windowsPath(dir) {
+  const p = win32.resolve(/^\/[A-Za-z]:([\\/]|$)/.test(dir) ? dir.slice(1) : dir);
+  return /^[a-z]:/.test(p) ? p.charAt(0).toUpperCase() + p.slice(1) : p;
+}
+function projectHash(projectDir, platform = process.platform) {
+  return bytesToHex(sha256(utf8ToBytes(canonical(projectDir, platform)))).slice(0, 16);
 }
 
 // packages/client/src/state.ts

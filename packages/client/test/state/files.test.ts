@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { breakStaleLock, inspectLock, LOCK_STALE_MS, lockIdentity, withLock, writeFileAtomic } from "../../src/fs-util.js";
 import { chooseCtlPath, isNamedPipePath, roomDir } from "../../src/paths.js";
-import { gitRoot, projectHash, resolveProjectDir } from "../../src/project.js";
+import { gitRoot, projectHash, resolveProjectDir, windowsPath } from "../../src/project.js";
 import { runChild, tempDir } from "./helpers.js";
 
 const ROOM = "abcdefghijklmnopqrstuvwxyz";
@@ -199,5 +199,15 @@ describe("resolveProjectDir", () => {
     expect(projectHash(dir)).toMatch(/^[0-9a-f]{16}$/);
     expect(projectHash(link)).toBe(projectHash(dir));
     expect(projectHash(tempDir())).not.toBe(projectHash(dir));
+  });
+
+  it("on Windows, one folder written as /c:/x, c:/x/ or C:\\x is one project (ADR-034)", () => {
+    expect(windowsPath("/c:/Users/anita/proj")).toBe("C:\\Users\\anita\\proj");
+    expect(windowsPath("c:\\Users\\anita\\proj\\")).toBe("C:\\Users\\anita\\proj");
+    expect(windowsPath("C:/Users/anita/proj")).toBe("C:\\Users\\anita\\proj");
+    expect(windowsPath("\\\\server\\share\\proj")).toBe("\\\\server\\share\\proj");
+    const forms = ["/c:/Users/anita/proj", "c:/Users/anita/proj/", "C:\\Users\\anita\\proj"];
+    expect(new Set(forms.map((f) => projectHash(f, "win32"))).size).toBe(1);
+    expect(projectHash("C:\\Users\\anita\\other", "win32")).not.toBe(projectHash(forms[0]!, "win32"));
   });
 });

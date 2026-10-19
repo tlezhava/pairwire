@@ -145,7 +145,11 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 - [x] `pairwire install --print-config <harness>`.
 - [ ] Mixed-harness e2e (Claude Code ↔ Codex) and manual acceptance (REQ-X-1, REQ-X-2).
 - [ ] **S11 Gemini CLI and Cursor spike:** docs part done (`decisions.md`); hands-on part with
-  `spikes/s11/` in a real session of each harness.
+  `spikes/s11/` in a real session of each harness. Cursor on Windows done (2026-10-19): hooks
+  run, the pid rule never matches; Cursor hooks use the workspace rule (ADR-034). Open: Cursor
+  on macOS, Gemini CLI.
+- [x] Cursor hooks find their room by workspace folder; one spelling of Windows folders
+  (ADR-034).
 - [x] Gemini CLI adapter, `pairwire install --gemini` (ADR-033). Built from the docs; the
   [S11] items in `04` §10 wait for the hands-on part of S11.
 - [x] Cursor adapter, `pairwire install --cursor` (ADR-033). Built from the docs; the [S11]

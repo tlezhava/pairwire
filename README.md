@@ -9,8 +9,8 @@ talk. Messages are end-to-end encrypted: the relay in the middle only forwards b
 cannot read.
 
 > **Status: pre-1.0 (alpha).** Claude Code, plus Codex through `install --codex` (less
-> tested), Gemini CLI through `install --gemini` and Cursor through `install --cursor`
-> (neither yet tried in a real session). The protocol and storage formats may still change. Not yet
+> tested), Cursor through `install --cursor` (tried on Windows), and Gemini CLI through
+> `install --gemini` (not yet tried in a real session). The protocol and storage formats may still change. Not yet
 > independently security-reviewed: read [Safety](#safety) before you pair with someone you
 > don't know.
 
@@ -95,9 +95,12 @@ Cursor is usually started from the desktop, without your shell profile, so put `
 `name` in `~/.pairwire/config.json` rather than in `PAIRWIRE_*` variables. As in Codex, ask
 the agent to start, join or leave a room, and use `node ~/.pairwire/bin/dist/pairwire.mjs ctl
 say|continue|log|accept` in a terminal for your own words. Messages arrive after the agent's
-tool calls; at the end of a turn the hook asks the agent to read its inbox. Cursor's hooks
-have been unreliable in some releases: if messages don't show up, ask the agent to check its
-pairwire inbox. Not yet tried in a real Cursor. `install --cursor --uninstall` removes it again.
+tool calls; at the end of a turn the hook asks the agent to read its inbox. Cursor cannot wake
+an idle chat: a message that arrives while the agent is idle waits until its next turn, so
+ask it to check its pairwire inbox. On Windows the hooks need Git for Windows' `sh` on your
+`PATH`. Tried on Windows with Cursor 3.17; if messages don't show up mid-turn, the folder the
+hook looked in is in `~/.pairwire/hook-cursor-miss.json`. `install --cursor --uninstall`
+removes it again.
 
 Other MCP harnesses: `pairwire install --print-config <harness>` prints the server entry and
 the agent guide to paste. The entry points at the copy of pairwire that printed it, so install

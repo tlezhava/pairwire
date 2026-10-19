@@ -4,11 +4,11 @@ import {
   WAKE_PROMPT,
   announceWake,
   isHumanPrompt
-} from "./chunk-S42T2JTL.mjs";
+} from "./chunk-OAF23BHU.mjs";
 import {
   claimUndelivered,
   renderItemsFor
-} from "./chunk-WSXVMMYZ.mjs";
+} from "./chunk-VMSLNELL.mjs";
 import {
   DEFAULT_CONFIG,
   adoptOwnerSession,
@@ -21,9 +21,12 @@ import {
   readState,
   resolveProjectDir,
   sessionOwnsBinding,
-  updateState
-} from "./chunk-LZ32DTQE.mjs";
-import "./chunk-GVGSGJLD.mjs";
+  updateState,
+  writeFileAtomic
+} from "./chunk-MA5VS62R.mjs";
+import {
+  cursorMissPath
+} from "./chunk-H3AY57FF.mjs";
 import {
   displayName,
   renderForHook
@@ -175,7 +178,8 @@ function parseInput(stdin) {
 function hook(event, input, dialect, o) {
   const project = resolveProjectDir(o.env, input.cwd ?? o.cwd);
   const binding = readBinding(o.home, project);
-  if (!ownsBinding(binding, input.session_id, project, o)) return null;
+  if (!binding && dialect.name === "cursor") recordCursorMiss(o.home, project);
+  if (!ownsBinding(binding, input.session_id, project, dialect, o)) return null;
   const roomId = binding.room_id;
   const state = readState(o.home, roomId);
   if (!state || !isOpen(state)) return null;
@@ -213,7 +217,8 @@ ${rendered.text}`;
   }
   return finish(out);
 }
-function ownsBinding(binding, session, project, o) {
+function ownsBinding(binding, session, project, dialect, o) {
+  if (dialect.name === "cursor") return binding?.owner_harness === "cursor";
   if (sessionOwnsBinding(binding, session)) return true;
   if (!binding || binding.owner_session !== null) return false;
   const harnessPid = readHarnessPid(o.home, project, binding);
@@ -222,6 +227,12 @@ function ownsBinding(binding, session, project, o) {
     adoptOwnerSession(o.home, project, binding.room_id, binding.owner_pid, session);
   }
   return true;
+}
+function recordCursorMiss(home, project) {
+  try {
+    writeFileAtomic(cursorMissPath(home), JSON.stringify({ project_dir: project, at: Date.now() }) + "\n");
+  } catch {
+  }
 }
 function finish(out) {
   return Object.keys(out).length > 0 ? out : null;

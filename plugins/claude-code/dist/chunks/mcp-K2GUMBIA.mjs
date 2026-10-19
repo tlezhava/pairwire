@@ -2,10 +2,10 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   WAKE_PROMPT
-} from "./chunk-S42T2JTL.mjs";
+} from "./chunk-OAF23BHU.mjs";
 import {
   transcriptEvents
-} from "./chunk-PTV3IA7V.mjs";
+} from "./chunk-6XICE4FF.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -25,17 +25,17 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-WSXVMMYZ.mjs";
+} from "./chunk-VMSLNELL.mjs";
 import {
   assertStatePrivate
-} from "./chunk-FYZJW4V2.mjs";
+} from "./chunk-74UUP35X.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-BWDLZH46.mjs";
+} from "./chunk-CSC76LPH.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -58,12 +58,12 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-LZ32DTQE.mjs";
+} from "./chunk-MA5VS62R.mjs";
 import {
   chooseCtlPath,
   pairwireHome,
   roomFile
-} from "./chunk-GVGSGJLD.mjs";
+} from "./chunk-H3AY57FF.mjs";
 import {
   CLIENT_VERSION
 } from "./chunk-YQH5643R.mjs";
