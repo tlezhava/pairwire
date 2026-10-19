@@ -17,7 +17,7 @@ async function readStdin() {
 async function main(argv) {
   const [command] = argv;
   if (command === "mcp") {
-    const { runMcpServer } = await import("./chunks/mcp-LVXI266L.mjs");
+    const { runMcpServer } = await import("./chunks/mcp-HIQJX4NF.mjs");
     await runMcpServer();
     return -1;
   }
@@ -54,7 +54,7 @@ async function main(argv) {
     return runPurge({ home: pairwireHome(), out: process.stdout, all: flags.has("--all"), force: flags.has("--force") });
   }
   if (command === "install") {
-    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-B7ADHJUG.mjs");
+    const { defaultInstallOptions, Installer, InstallError, printConfig, runningPluginRoot } = await import("./chunks/install-TLIAOOGQ.mjs");
     const args = argv.slice(1);
     try {
       const printFor = args.indexOf("--print-config");
@@ -78,7 +78,7 @@ async function main(argv) {
         return 0;
       }
       if (args.includes("--cursor")) {
-        const { CursorInstaller, defaultCursorOptions } = await import("./chunks/install-cursor-WIWAGSJW.mjs");
+        const { CursorInstaller, defaultCursorOptions } = await import("./chunks/install-cursor-4VPI5GN4.mjs");
         const opts = defaultCursorOptions(process.env, process.stdout, pairwireHome());
         if (!opts) throw new InstallError("Run this from the pairwire bundle (dist/pairwire.mjs).");
         const installer = new CursorInstaller(opts);

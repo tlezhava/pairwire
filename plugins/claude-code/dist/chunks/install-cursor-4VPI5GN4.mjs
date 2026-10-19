@@ -6,8 +6,8 @@ import {
   pathProblem,
   runningPluginRoot,
   shellQuote
-} from "./chunk-YOJK7CHM.mjs";
-import "./chunk-H5DVJTAM.mjs";
+} from "./chunk-PVJUK5ZE.mjs";
+import "./chunk-YQH5643R.mjs";
 import "./chunk-HDMYU3UC.mjs";
 import {
   external_exports
