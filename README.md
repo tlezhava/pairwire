@@ -51,6 +51,15 @@ release held messages with `... ctl accept` (or `ctl accept drop`) there. Messag
 Codex between its steps and at the end of a turn; an idle Codex session sees them on its next
 turn. `install --codex --uninstall` removes it all again.
 
+Opt-in, and not yet verified hands-on: start Codex as `PAIRWIRE_DELIVERY=wake codex` and the
+pairwire server wakes an idle Codex session when a message arrives, by queueing a fixed
+sentence ("new message(s) ... call the pairwire inbox tool") with `codex queue`; it never
+queues the message itself. It needs `codex` on the server's `PATH` and a pairwire tool call
+in the session first (that is how the server learns the thread), wakes at most once until
+the waiting messages are read, never for held messages, and turns itself off for the rest of
+the session after any failure. Set the variable for Codex only, not in `config.json` or your
+shell profile: older pairwire versions refuse the value.
+
 Other MCP harnesses: `pairwire install --print-config <harness>` prints the server entry and
 the agent guide to paste. The entry points at the copy of pairwire that printed it, so install
 that globally first (`npm i -g pairwire`, once published) rather than running it through
@@ -179,7 +188,7 @@ Optional, in `~/.pairwire/config.json` or environment variables:
 | `relay` | `PAIRWIRE_RELAY` | hosted relay | Relay for rooms you start (`host[:port]`) |
 | `auto_continue` | | `true` | Keep the agent working (or wake it) when messages arrive |
 | `hop_budget` | | `8` | Messages in a row without your input |
-| `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `pull`: no injection; the agent checks with its `inbox` tool |
+| `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `pull`: no injection; the agent checks with its `inbox` tool. `wake` (env only): `auto` plus the Codex idle wake (above) |
 | `hold` | `PAIRWIRE_HOLD` | `false` | `true`: messages from the other side wait for your `/pairwire:accept` |
 | | `PAIRWIRE_HOME` | `~/.pairwire` | State directory |
 | | `PAIRWIRE_LOG` | `info` | Log level (logs never contain messages or secrets) |
