@@ -30,7 +30,7 @@ import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, PassiveSe
 import { holdMode, loadConfig, pushes, resolveDisplayName, type Config } from "./config.js";
 import { RoomConnection, type ConnectionEvents, type SendInput, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 import type { Logger } from "./log.js";
-import { chooseCtlPath, roomFile } from "./paths.js";
+import { chooseCtlPath, configPath, roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
 import { claimUndelivered, inboxCounts, readCoordSent, readOutbox, type InboxCounts, type InboxEntry } from "./room-files.js";
@@ -274,7 +274,7 @@ export class ClientSession {
 
   /**
    * The Codex idle wake (04 §10): after the D3 handoff, an item nothing took wakes the idle
-   * thread with WAKE_PROMPT, when PAIRWIRE_DELIVERY=wake and this server owns the open room.
+   * thread with WAKE_PROMPT, when delivery is `wake` and this server owns the open room.
    */
   #codexWake(): void {
     const config = this.#config;
@@ -286,6 +286,18 @@ export class ClientSession {
     } catch (e) {
       this.#o.log.error("codex_wake_check_failed", e);
     }
+  }
+
+  /** `status`'s `Idle wake:` line in Codex (04 §10, ADR-035); never shows the thread id. */
+  #codexWakeLine(config: Config): string {
+    if (config.delivery !== "wake") {
+      return `Idle wake: off (to have pairwire start a Codex turn when a message arrives, add "codex_wake": true to ${configPath(this.#o.home)} and restart Codex)`;
+    }
+    if (!config.autoContinue) return "Idle wake: off (auto_continue is false)";
+    const failure = this.#codex.failure;
+    if (failure !== null) return `Idle wake: off after codex queue failed (${failure}); restart Codex to try again`;
+    if (this.#codex.thread === null) return "Idle wake: on, but pairwire doesn't know this Codex thread yet";
+    return "Idle wake: on";
   }
 
   /** Hold mode, read afresh for every delivery decision (04 §2). */
@@ -466,6 +478,7 @@ export class ClientSession {
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...(hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : []),
         ...(harnessOf(this.#o.env) === "cursor" && isOpen(state) ? [CURSOR_APPROVAL_WARNING] : []),
+        ...(harnessOf(this.#o.env) === "codex" && isOpen(state) ? [this.#codexWakeLine(config)] : []),
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
           peer: state.peer ? displayName(state.peer.name) : "your collaborator",

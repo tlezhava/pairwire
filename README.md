@@ -52,14 +52,16 @@ release held messages with `... ctl accept` (or `ctl accept drop`) there. Messag
 Codex between its steps and at the end of a turn; an idle Codex session sees them on its next
 turn. `install --codex --uninstall` removes it all again.
 
-Opt-in, and not yet verified hands-on: start Codex as `PAIRWIRE_DELIVERY=wake codex` and the
-pairwire server wakes an idle Codex session when a message arrives, by queueing a fixed
-sentence ("new message(s) ... call the pairwire inbox tool") with `codex queue`; it never
-queues the message itself. It needs `codex` on the server's `PATH` and a pairwire tool call
-in the session first (that is how the server learns the thread), wakes at most once until
-the waiting messages are read, never for held messages, and turns itself off for the rest of
-the session after any failure. Set the variable for Codex only, not in `config.json` or your
-shell profile: older pairwire versions refuse the value.
+Opt-in, and not yet verified hands-on: add `"codex_wake": true` to `~/.pairwire/config.json`
+and restart Codex, and the pairwire server wakes an idle Codex session when a message arrives,
+by queueing a fixed sentence ("new message(s) ... call the pairwire inbox tool") with
+`codex queue`; it never queues the message itself. This works in the Codex app too, which
+passes no environment variables to pairwire. (`PAIRWIRE_DELIVERY=wake codex` does the same
+from a terminal; don't put that value in your shell profile, older pairwire versions refuse
+it.) It needs `codex` on the server's `PATH` and a pairwire tool call in the session first
+(that is how the server learns the thread), wakes at most once until the waiting messages are
+read, never for held messages, and turns itself off for the rest of the session after any
+failure. Ask the agent for the pairwire status to see whether it is on.
 
 ### Gemini CLI
 
@@ -232,9 +234,13 @@ Optional, in `~/.pairwire/config.json` or environment variables:
 | `auto_continue` | | `true` | Keep the agent working (or wake it) when messages arrive |
 | `hop_budget` | | `8` | Messages in a row without your input |
 | `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `pull`: no injection; the agent checks with its `inbox` tool. `wake` (env only): `auto` plus the Codex idle wake (above) |
+| `codex_wake` | | `false` | `true`: the Codex idle wake (above) |
 | `hold` | `PAIRWIRE_HOLD` | `false` | `true`: messages from the other side wait for your `/pairwire:accept` |
 | | `PAIRWIRE_HOME` | `~/.pairwire` | State directory |
 | | `PAIRWIRE_LOG` | `info` | Log level (logs never contain messages or secrets) |
+
+Apps started from the Dock or Start menu (the Claude desktop app, the Codex app, Cursor) don't
+see variables from your shell profile, so put settings in `config.json` for them.
 
 `pairwire doctor` checks Node, config, permissions and relay reachability, and
 `pairwire purge` deletes ended rooms' transcripts. Run them with `npx pairwire doctor` once

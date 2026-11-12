@@ -36,7 +36,8 @@ function fakeCodex(exit = 0): { dir: string; calls: () => string[][] } {
 }
 
 interface Setup {
-  delivery?: string;
+  /** PAIRWIRE_DELIVERY; null leaves it unset. Default "wake". */
+  delivery?: string | null;
   harness?: string;
   exit?: number;
   /** PATH for the Codex side's server; default the fake's directory. */
@@ -54,7 +55,7 @@ async function pairedCodex(o: Setup = {}) {
       PAIRWIRE_RELAY: `127.0.0.1:${port}`,
       PAIRWIRE_NAME: "Tazo",
       PAIRWIRE_HARNESS: o.harness ?? "codex",
-      PAIRWIRE_DELIVERY: o.delivery ?? "wake",
+      ...(o.delivery === null ? {} : { PAIRWIRE_DELIVERY: o.delivery ?? "wake" }),
       PATH: o.path ?? fake.dir,
     },
     log: createLogger({ sink: (l) => lines.push(l), level: "debug" }),
@@ -122,6 +123,32 @@ describe.skipIf(onWindows)("Codex idle wake (POSIX fake codex)", { timeout: 30_0
     }
   });
 
+  it("ADR-035: codex_wake in config.json turns the wake on with no PAIRWIRE_DELIVERY (the Codex app)", async () => {
+    const { fake, fromB } = await pairedCodex({ delivery: null, config: { codex_wake: true } });
+    await fromB("hello");
+    await until(() => fake.calls().length === 1, 10_000, "wake");
+    expect(fake.calls()[0]).toEqual(["queue", "--thread", "thread-1", "--message", WAKE_PROMPT]);
+  });
+
+  it("ADR-035: status reports the wake: on, off with how to turn it on, off after a failure", async () => {
+    const wakeLine = async (a: Side) => (await a.session.status()).text.split("\n").find((l) => l.startsWith("Idle wake:"));
+    const on = await pairedCodex();
+    expect(await wakeLine(on.a)).toBe("Idle wake: on");
+
+    const off = await pairedCodex({ delivery: null });
+    expect(await wakeLine(off.a)).toMatch(/^Idle wake: off \(to have pairwire start a Codex turn .*"codex_wake": true to .*config\.json and restart Codex\)$/);
+    const noContinue = await pairedCodex({ config: { auto_continue: false } });
+    expect(await wakeLine(noContinue.a)).toBe("Idle wake: off (auto_continue is false)");
+
+    const failing = await pairedCodex({ exit: 3 });
+    await failing.fromB("one");
+    await until(() => events(failing.lines, "codex_wake_failed").length === 1, 10_000, "failure logged");
+    expect(await wakeLine(failing.a)).toBe("Idle wake: off after codex queue failed (exit 3); restart Codex to try again");
+
+    // Claude Code has its own wake (D3): no such line there.
+    expect(await wakeLine(on.b)).toBeUndefined();
+  });
+
   it("does not wake before the server has seen a thread id, and ignores ids that could read as options", async () => {
     const { port } = await startRelay();
     const fake = fakeCodex();
@@ -132,6 +159,7 @@ describe.skipIf(onWindows)("Codex idle wake (POSIX fake codex)", { timeout: 30_0
     await until(() => readInbox(a.home, roomOf(a)).length > 0, 5000, "peer_joined notice");
     await settle();
     expect(fake.calls()).toEqual([]); // no thread known yet
+    expect((await a.session.status()).text).toContain("Idle wake: on, but pairwire doesn't know this Codex thread yet");
     a.session.noteHarnessSession("s1");
     a.session.noteHarnessThread("s1", "--help");
     a.session.noteHarnessThread("s1", "");

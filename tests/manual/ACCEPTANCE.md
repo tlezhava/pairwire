@@ -39,3 +39,9 @@ On one machine, start session B with its own state directory, for example
     `_meta.sessionId` the server recorded (S7).
 16. Codex: `node ~/.pairwire/bin/dist/pairwire.mjs ctl say` (text on stdin) in the project
     reaches Claude Code marked `author="human"`.
+17. Codex idle wake: with `"codex_wake": true` in `~/.pairwire/config.json`, `status` in Codex
+    says `Idle wake: on`; leave Codex idle, send it a message from Claude Code, and Codex
+    starts a turn on its own and reads it. Once from the Codex CLI and once from the Codex app
+    (ADR-035).
+18. Desktop apps: repeat 2–4 and 11 with one side in the Claude desktop app's Code tab, and
+    13–15 with Codex in the Codex app, both opened from the Dock, not a terminal (ADR-035).

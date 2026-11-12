@@ -91,11 +91,19 @@ Diagnostics go through one logger, `packages/client/src/log.ts`:
 | `auto_continue` | — | `true` | Stop hook keeps the agent working when new messages arrive, and D3 wakes an idle session for them |
 | `hop_budget` | — | `8` | Max consecutive agent sends without human input (REQ-SAFE-4) |
 | `delivery` | `PAIRWIRE_DELIVERY` | `auto` | `auto` = hooks inject messages; `pull` = agent must call `inbox`; `wake` (environment only) = `auto` plus the Codex idle wake (section 10) |
+| `codex_wake` | — | `false` | `true` turns a `delivery` of `auto` into `wake` (section 10, Codex idle wake), for harnesses started from a desktop app, which pass no environment variables (ADR-035) |
 | `hold` | `PAIRWIRE_HOLD` (`1`/`0`/`true`/`false`) | `false` | Hold mode (M5, section 5): peer messages wait for the human's `/pairwire:accept` before any path shows them to the agent |
 | — | `PAIRWIRE_LOG` | `info` | Log level: `debug`, `info`, `warn` or `error` (section 1, Logging) |
 | `channels` | `PAIRWIRE_CHANNELS` | `false` | Later milestone, not in the MVP: use Claude Code Channels for push instead of hooks (section 6, D3) |
 
 `PAIRWIRE_HOME` moves the whole state directory (tests use this).
+
+**Desktop apps (ADR-035).** A harness started from a desktop app (the Claude desktop app's
+Code tab, the Codex app, Cursor) does not inherit a shell's environment: the Codex app starts
+MCP servers with `HOME`, `LANG`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `TMPDIR`, `USER` and its
+config's `env` only, so `env_vars` forwards nothing. Every setting a human may need there is
+therefore a `config.json` key; the environment variables only override the file. The
+exceptions are `PAIRWIRE_HOME` (the file lives in it) and `PAIRWIRE_LOG`.
 
 Every process reads `hold` afresh each time it decides what to deliver (the MCP server
 does not cache it), so turning hold mode on in `config.json` takes effect on the next
@@ -1649,14 +1657,21 @@ thread and only queues in a busy one, that `_meta.threadId` is the id `queue --t
 and that Codex's `UserPromptSubmit` hook sees the queued text unchanged as its `prompt`.
 
 - **Turning it on.** `PAIRWIRE_DELIVERY=wake` means `auto` (sections 2 and 6) plus this wake;
-  in every harness other than Codex it is exactly `auto`. It is read from the environment
-  only: `config.json`'s `delivery` stays `auto` or `pull`, because 0.1.x and 0.2.x read that
-  file with a strict enum and would refuse to start on `"wake"` (and treat hold mode as on),
-  and the file is shared by every harness on the machine. For the same reason the README
-  tells the human to set the variable for Codex alone (`PAIRWIRE_DELIVERY=wake codex`): an
-  older Claude Code plugin started from the same shell rejects the value. Codex passes it to
-  the server through `env_vars` (install's block already lists it); hooks get the full
-  environment and treat `wake` as `auto`.
+  in every harness other than Codex it is exactly `auto`. `config.json`'s `delivery` stays
+  `auto` or `pull`, because 0.1.x and 0.2.x read that file with a strict enum and would refuse
+  to start on `"wake"` (and treat hold mode as on), and the file is shared by every harness on
+  the machine. The file turns the wake on with its own key instead, `"codex_wake": true`,
+  which those versions ignore with a warning: with no `PAIRWIRE_DELIVERY` set, a `delivery` of
+  `auto` (or none) then becomes `wake`; `pull` stays `pull`. This is the only way in the Codex
+  app, which passes no environment to MCP servers (ADR-035). From a terminal,
+  `PAIRWIRE_DELIVERY=wake codex` also works, set for Codex alone: an older Claude Code plugin
+  started from the same shell rejects the value. Codex passes it to the server through
+  `env_vars` (install's block already lists it); hooks get the full environment and treat
+  `wake` as `auto`.
+- **Status.** In Codex, `status` adds one `Idle wake:` line: `off` with how to turn it on
+  (when delivery is not `wake`), `off` because `auto_continue` is false, `off` after a failed
+  `codex queue` with the exit or error code and "restart Codex to try again", `on, but
+  pairwire doesn't know this Codex thread yet`, or `on`. The line never shows the thread id.
 - **The thread.** Each Codex tool call carries `_meta.threadId`. The MCP server keeps in
   memory, never in a file, the first one it sees on a call whose `_meta.sessionId` is absent
   or equal to the server's session ("Session id" above). It accepts only 1 to 200 characters

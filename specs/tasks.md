@@ -158,6 +158,14 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   (`PAIRWIRE_DELIVERY=wake`); `queue` behavior on idle and busy threads waits for the Codex
   manual acceptance.
 
+## M8 — 0.4.0: desktop apps, several agents per machine, bigger rooms
+
+- [x] Desktop apps: every setting in `config.json` (`codex_wake`), Codex wake state in
+  `status` (ADR-035).
+- [ ] Several memberships on one machine and in one project folder: Claude Code and Codex
+  in one room from the same machine (ADR-036).
+- [ ] Rooms with more than two members when the starter asks for it (ADR-037).
+
 ## M7 — Hardening toward 1.0
 
 - [ ] Native Windows support (named pipe for `ctl`, hook wiring). Implemented per ADR-024;

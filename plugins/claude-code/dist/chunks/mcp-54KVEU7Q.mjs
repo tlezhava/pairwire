@@ -2,10 +2,10 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   WAKE_PROMPT
-} from "./chunk-OAF23BHU.mjs";
+} from "./chunk-R76EU7QF.mjs";
 import {
   transcriptEvents
-} from "./chunk-6XICE4FF.mjs";
+} from "./chunk-WD2LWGRD.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -25,17 +25,17 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-VMSLNELL.mjs";
+} from "./chunk-2DQ52KMV.mjs";
 import {
   assertStatePrivate
-} from "./chunk-74UUP35X.mjs";
+} from "./chunk-RLVUH3TI.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-CSC76LPH.mjs";
+} from "./chunk-RFCUS3IU.mjs";
 import {
   PassiveSessionError,
   adoptOwnerSession,
@@ -58,9 +58,10 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-MA5VS62R.mjs";
+} from "./chunk-KPJ36APL.mjs";
 import {
   chooseCtlPath,
+  configPath,
   pairwireHome,
   roomFile
 } from "./chunk-H3AY57FF.mjs";
@@ -27133,8 +27134,8 @@ var CodexWake = class {
   #thread = null;
   /** The ids undelivered when the last wake went out; cleared once any of them is delivered. */
   #outstanding = null;
-  /** Set by the first failure, for the rest of this server's life. */
-  #off = false;
+  /** Set by the first failure, for the rest of this server's life: how it failed, for `status`. */
+  #failure = null;
   constructor(options) {
     this.#o = options;
   }
@@ -27146,13 +27147,17 @@ var CodexWake = class {
   get thread() {
     return this.#thread;
   }
+  /** How the wake failed ("exit 3", "ENOENT", "timed out"), or null while it hasn't. */
+  get failure() {
+    return this.#failure;
+  }
   /**
    * Called on each inbound item once the caller has checked delivery, harness and ownership.
    * Wakes when a thread is known, no earlier wake is outstanding, and some undelivered item is
    * not held. Returns whether a wake went out.
    */
   maybeWake(home, roomId, hold) {
-    if (this.#off || this.#thread === null) return false;
+    if (this.#failure !== null || this.#thread === null) return false;
     const ledger = readLedger(home, roomId);
     const prior = this.#outstanding;
     if (prior && prior.roomId === roomId && !prior.ids.some((id) => ledger.ids.has(id))) return false;
@@ -27183,8 +27188,8 @@ var CodexWake = class {
   }
   /** Output is never logged: only how it ended. */
   #fail(err) {
-    if (this.#off) return;
-    this.#off = true;
+    if (this.#failure !== null) return;
+    this.#failure = err.killed === true ? "timed out" : typeof err.code === "number" ? `exit ${err.code}` : typeof err.code === "string" ? err.code : typeof err.signal === "string" ? err.signal : "failed";
     this.#o.log.warn("codex_wake_failed", {
       exit_code: typeof err.code === "number" ? err.code : null,
       error_code: typeof err.code === "string" ? err.code : null,
@@ -27499,7 +27504,7 @@ ${rendered}` }) + "\n");
   }
   /**
    * The Codex idle wake (04 §10): after the D3 handoff, an item nothing took wakes the idle
-   * thread with WAKE_PROMPT, when PAIRWIRE_DELIVERY=wake and this server owns the open room.
+   * thread with WAKE_PROMPT, when delivery is `wake` and this server owns the open room.
    */
   #codexWake() {
     const config = this.#config;
@@ -27511,6 +27516,17 @@ ${rendered}` }) + "\n");
     } catch (e) {
       this.#o.log.error("codex_wake_check_failed", e);
     }
+  }
+  /** `status`'s `Idle wake:` line in Codex (04 §10, ADR-035); never shows the thread id. */
+  #codexWakeLine(config) {
+    if (config.delivery !== "wake") {
+      return `Idle wake: off (to have pairwire start a Codex turn when a message arrives, add "codex_wake": true to ${configPath(this.#o.home)} and restart Codex)`;
+    }
+    if (!config.autoContinue) return "Idle wake: off (auto_continue is false)";
+    const failure = this.#codex.failure;
+    if (failure !== null) return `Idle wake: off after codex queue failed (${failure}); restart Codex to try again`;
+    if (this.#codex.thread === null) return "Idle wake: on, but pairwire doesn't know this Codex thread yet";
+    return "Idle wake: on";
   }
   /** Hold mode, read afresh for every delivery decision (04 §2). */
   #hold() {
@@ -27673,6 +27689,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
         ...hold ? [`Hold mode: on (peer messages wait until your user runs ${acceptHint(harnessOf(this.#o.env))})`] : [],
         ...harnessOf(this.#o.env) === "cursor" && isOpen(state) ? [CURSOR_APPROVAL_WARNING] : [],
+        ...harnessOf(this.#o.env) === "codex" && isOpen(state) ? [this.#codexWakeLine(config)] : [],
         `Hop budget: ${Math.max(0, config.hopBudget - state.hop_count)}/${config.hopBudget} left (every message your agent sends uses one; resets when your user writes to you)`,
         ...coordStatusLines(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }), {
           peer: state.peer ? displayName(state.peer.name) : "your collaborator",

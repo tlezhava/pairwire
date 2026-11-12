@@ -1179,6 +1179,46 @@ human in the same project, the messages stay labeled and sanitized, and nothing 
 without approval, so no invariant is touched. Gemini CLI keeps the pid rule (unverified,
 [S11]); on Windows it cannot match, and Gemini there stays on D1.
 
+## ADR-035 Desktop apps: every setting in config.json (0.4.0)
+
+Status: accepted (2026-11-12). Changes `04-client.md` sections 2 and 10. No invariant
+changes.
+
+Context. The human wants pairwire to work in harnesses started from a desktop app, not only
+from a terminal. On the maintainer's machine (2026-11-12):
+
+- The Claude desktop app's Code tab (Claude Code 2.1.317) loads the plugin: its sessions list
+  the six pairwire tools. The app builds the spawn `PATH` from the login shell and adds
+  `/usr/local/bin`, `/opt/homebrew/bin` and `~/.local/bin` when that comes back short (its
+  log says so), so `node` is found as in a terminal.
+- The Codex app (0.167.2) runs the pairwire MCP server from its app-server daemon with
+  exactly `HOME`, `LANG`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `TMPDIR`, `USER`,
+  `__CF_USER_TEXT_ENCODING` and the config's `env` (`PAIRWIRE_HARNESS`). The `env_vars`
+  names install writes forward nothing, because the app has none of them. Its `PATH` holds
+  the login shell's entries and the app's own `codex` directory.
+- The same day a Codex CLI session in a real room showed no `PAIRWIRE_DELIVERY` in its
+  server's environment either, and so no wake.
+
+`PAIRWIRE_DELIVERY=wake`, the only switch for the Codex idle wake, can't be set in the app.
+
+Decisions:
+
+1. **Every setting a human may need is a `config.json` key**; environment variables only
+   override. The new key is `codex_wake` (boolean, default false): with no
+   `PAIRWIRE_DELIVERY`, it turns `delivery` `auto` into `wake`. A new key instead of
+   `"delivery": "wake"`, because 0.1.x to 0.3.x read `delivery` with a strict enum and fail
+   closed on an unknown value, while an unknown key only logs a warning, and one
+   `config.json` serves every harness and plugin version on the machine.
+   `PAIRWIRE_HOME` and `PAIRWIRE_LOG` stay environment-only.
+2. **`status` reports the Codex wake** (`Idle wake:` line), so a human can tell "off",
+   "failed" and "no thread yet" apart without reading the server's stderr, which Codex
+   doesn't show. Hands-on debugging of the wake took several round trips without it.
+3. **No absolute `node` path in the configs.** Both apps find `node` on their `PATH` above;
+   an absolute path would break on the next Node upgrade through a version manager.
+
+Open, for the desktop manual acceptance: whether `codex queue` reaches a thread of the Codex
+app, whether the Code tab runs the D3 waiter's `asyncRewake`, and `/pairwire:say` there.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)
