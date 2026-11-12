@@ -160,7 +160,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 ## M8 — 0.4.0: desktop apps, several agents per machine, bigger rooms
 
-- [ ] Desktop apps: every setting in `config.json` (`codex_wake`), Codex wake state in
+- [x] Desktop apps: every setting in `config.json` (`codex_wake`), Codex wake state in
   `status` (ADR-035).
 - [ ] Several memberships on one machine and in one project folder: Claude Code and Codex
   in one room from the same machine (ADR-036).

@@ -5,7 +5,7 @@ import {
   ensurePrivateDir,
   errorCode,
   removeFile
-} from "./chunk-MA5VS62R.mjs";
+} from "./chunk-KPJ36APL.mjs";
 import {
   isNamedPipePath,
   roomFile

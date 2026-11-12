@@ -1,4 +1,4 @@
-// Codex idle wake (04 §10, ADR-033): with PAIRWIRE_DELIVERY=wake, the MCP server that owns the
+// Codex idle wake (04 §10, ADR-033): with delivery `wake`, the MCP server that owns the
 // room starts a turn in its idle Codex thread with `codex queue` and the fixed WAKE_PROMPT, never
 // peer text. Thread and outstanding wake live in memory only (strict-schema files stay as they are).
 import { execFile } from "node:child_process";
@@ -26,8 +26,8 @@ export class CodexWake {
   #thread: string | null = null;
   /** The ids undelivered when the last wake went out; cleared once any of them is delivered. */
   #outstanding: { roomId: string; ids: readonly string[] } | null = null;
-  /** Set by the first failure, for the rest of this server's life. */
-  #off = false;
+  /** Set by the first failure, for the rest of this server's life: how it failed, for `status`. */
+  #failure: string | null = null;
 
   constructor(options: CodexWakeOptions) {
     this.#o = options;
@@ -43,13 +43,18 @@ export class CodexWake {
     return this.#thread;
   }
 
+  /** How the wake failed ("exit 3", "ENOENT", "timed out"), or null while it hasn't. */
+  get failure(): string | null {
+    return this.#failure;
+  }
+
   /**
    * Called on each inbound item once the caller has checked delivery, harness and ownership.
    * Wakes when a thread is known, no earlier wake is outstanding, and some undelivered item is
    * not held. Returns whether a wake went out.
    */
   maybeWake(home: string, roomId: string, hold: boolean): boolean {
-    if (this.#off || this.#thread === null) return false;
+    if (this.#failure !== null || this.#thread === null) return false;
     const ledger = readLedger(home, roomId);
     const prior = this.#outstanding;
     if (prior && prior.roomId === roomId && !prior.ids.some((id) => ledger.ids.has(id))) return false;
@@ -84,8 +89,17 @@ export class CodexWake {
 
   /** Output is never logged: only how it ended. */
   #fail(err: { code?: unknown; signal?: unknown; killed?: unknown }): void {
-    if (this.#off) return;
-    this.#off = true;
+    if (this.#failure !== null) return;
+    this.#failure =
+      err.killed === true
+        ? "timed out"
+        : typeof err.code === "number"
+          ? `exit ${err.code}`
+          : typeof err.code === "string"
+            ? err.code
+            : typeof err.signal === "string"
+              ? err.signal
+              : "failed";
     this.#o.log.warn("codex_wake_failed", {
       exit_code: typeof err.code === "number" ? err.code : null,
       error_code: typeof err.code === "string" ? err.code : null,

@@ -7,8 +7,9 @@ import { errorCode } from "./fs-util.js";
 import { configPath } from "./paths.js";
 
 /**
- * `wake` = `auto` plus the Codex idle wake (04 §10). Environment only: 0.1.x and 0.2.x read
- * config.json's `delivery` with a strict auto/pull enum, so the file never holds it.
+ * `wake` = `auto` plus the Codex idle wake (04 §10). config.json's `delivery` never holds it,
+ * because 0.1.x to 0.3.x read that key with a strict auto/pull enum; the file says
+ * `"codex_wake": true` instead, which they ignore (ADR-035).
  */
 export type Delivery = "auto" | "pull" | "wake";
 
@@ -44,6 +45,7 @@ const fileSchema = z.object({
   auto_continue: z.boolean().optional(),
   hop_budget: z.number().int().min(1).max(1000).optional(),
   delivery: z.enum(["auto", "pull"]).optional(),
+  codex_wake: z.boolean().optional(),
   hold: z.boolean().optional(),
   channels: z.boolean().optional(),
 });
@@ -86,7 +88,7 @@ export function loadConfig(home: string, env: NodeJS.ProcessEnv = process.env): 
     relay: normalizeRelay(env.PAIRWIRE_RELAY || file.relay, env.PAIRWIRE_RELAY ? "PAIRWIRE_RELAY" : `${path}: "relay"`),
     autoContinue: file.auto_continue ?? DEFAULT_CONFIG.autoContinue,
     hopBudget: file.hop_budget ?? DEFAULT_CONFIG.hopBudget,
-    delivery: env.PAIRWIRE_DELIVERY ? parseDelivery(env.PAIRWIRE_DELIVERY) : (file.delivery ?? DEFAULT_CONFIG.delivery),
+    delivery: env.PAIRWIRE_DELIVERY ? parseDelivery(env.PAIRWIRE_DELIVERY) : fileDelivery(file.delivery, file.codex_wake),
     hold: env.PAIRWIRE_HOLD ? parseFlag(env.PAIRWIRE_HOLD, "PAIRWIRE_HOLD") : (file.hold ?? DEFAULT_CONFIG.hold),
     channels: env.PAIRWIRE_CHANNELS ? parseFlag(env.PAIRWIRE_CHANNELS, "PAIRWIRE_CHANNELS") : (file.channels ?? DEFAULT_CONFIG.channels),
   };
@@ -112,6 +114,12 @@ function normalizeRelay(value: string | undefined, where: string): string | null
   } catch (e) {
     throw new ConfigError(`${where}: ${(e as Error).message}`);
   }
+}
+
+/** The file's delivery: `codex_wake` turns `auto` (or none) into `wake`; `pull` stays (ADR-035). */
+function fileDelivery(delivery: "auto" | "pull" | undefined, codexWake: boolean | undefined): Delivery {
+  const d = delivery ?? DEFAULT_CONFIG.delivery;
+  return d === "auto" && codexWake === true ? "wake" : d;
 }
 
 function parseDelivery(value: string): Delivery {

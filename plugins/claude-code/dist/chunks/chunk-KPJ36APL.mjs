@@ -638,6 +638,7 @@ var fileSchema = external_exports.object({
   auto_continue: external_exports.boolean().optional(),
   hop_budget: external_exports.number().int().min(1).max(1e3).optional(),
   delivery: external_exports.enum(["auto", "pull"]).optional(),
+  codex_wake: external_exports.boolean().optional(),
   hold: external_exports.boolean().optional(),
   channels: external_exports.boolean().optional()
 });
@@ -669,7 +670,7 @@ function loadConfig(home, env = process.env) {
     relay: normalizeRelay(env.PAIRWIRE_RELAY || file.relay, env.PAIRWIRE_RELAY ? "PAIRWIRE_RELAY" : `${path}: "relay"`),
     autoContinue: file.auto_continue ?? DEFAULT_CONFIG.autoContinue,
     hopBudget: file.hop_budget ?? DEFAULT_CONFIG.hopBudget,
-    delivery: env.PAIRWIRE_DELIVERY ? parseDelivery(env.PAIRWIRE_DELIVERY) : file.delivery ?? DEFAULT_CONFIG.delivery,
+    delivery: env.PAIRWIRE_DELIVERY ? parseDelivery(env.PAIRWIRE_DELIVERY) : fileDelivery(file.delivery, file.codex_wake),
     hold: env.PAIRWIRE_HOLD ? parseFlag(env.PAIRWIRE_HOLD, "PAIRWIRE_HOLD") : file.hold ?? DEFAULT_CONFIG.hold,
     channels: env.PAIRWIRE_CHANNELS ? parseFlag(env.PAIRWIRE_CHANNELS, "PAIRWIRE_CHANNELS") : file.channels ?? DEFAULT_CONFIG.channels
   };
@@ -689,6 +690,10 @@ function normalizeRelay(value, where) {
   } catch (e) {
     throw new ConfigError(`${where}: ${e.message}`);
   }
+}
+function fileDelivery(delivery, codexWake) {
+  const d = delivery ?? DEFAULT_CONFIG.delivery;
+  return d === "auto" && codexWake === true ? "wake" : d;
 }
 function parseDelivery(value) {
   const v = value.trim().toLowerCase();

@@ -43,6 +43,16 @@ describe("loadConfig", () => {
     expect(() => loadConfig(homeWith({ delivery: "wake" }), {})).toThrow(/"delivery"/);
   });
 
+  it("ADR-035: codex_wake in config.json turns auto into wake, for desktop apps with no environment", () => {
+    expect(loadConfig(homeWith({ codex_wake: true }), {})).toEqual({ config: { ...DEFAULT_CONFIG, delivery: "wake" }, warnings: [] });
+    expect(loadConfig(homeWith({ codex_wake: true, delivery: "auto" }), {}).config.delivery).toBe("wake");
+    expect(loadConfig(homeWith({ codex_wake: true, delivery: "pull" }), {}).config.delivery).toBe("pull");
+    expect(loadConfig(homeWith({ codex_wake: false }), {}).config.delivery).toBe("auto");
+    // The environment still overrides the file.
+    expect(loadConfig(homeWith({ codex_wake: true }), { PAIRWIRE_DELIVERY: "auto" }).config.delivery).toBe("auto");
+    expect(() => loadConfig(homeWith({ codex_wake: "yes" }), {})).toThrow(/"codex_wake"/);
+  });
+
   it("warns about unknown keys instead of failing", () => {
     const { warnings } = loadConfig(homeWith({ hop_budegt: 3 }), {});
     expect(warnings).toEqual([expect.stringContaining('unknown key "hop_budegt"')]);
