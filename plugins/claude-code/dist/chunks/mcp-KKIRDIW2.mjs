@@ -81,7 +81,7 @@ import {
 } from "./chunk-H3AY57FF.mjs";
 import {
   CLIENT_VERSION
-} from "./chunk-Q6V7YHA7.mjs";
+} from "./chunk-YWOZ2NUT.mjs";
 import {
   $ZodObject,
   $ZodType,

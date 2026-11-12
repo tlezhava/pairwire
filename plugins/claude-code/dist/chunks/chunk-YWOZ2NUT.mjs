@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 
 // packages/client/src/version.ts
-var CLIENT_VERSION = "0.3.1";
+var CLIENT_VERSION = "0.4.0";
 
 export {
   CLIENT_VERSION

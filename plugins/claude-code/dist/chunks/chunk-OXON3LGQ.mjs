@@ -2,7 +2,7 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   CLIENT_VERSION
-} from "./chunk-Q6V7YHA7.mjs";
+} from "./chunk-YWOZ2NUT.mjs";
 import {
   findDistDir
 } from "./chunk-HDMYU3UC.mjs";
