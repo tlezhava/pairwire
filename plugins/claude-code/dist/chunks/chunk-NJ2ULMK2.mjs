@@ -22154,25 +22154,26 @@ var HandshakeAbort = class extends Error {
   reason;
   name = "HandshakeAbort";
 };
-function helloAad(roomIdBytes, epoch, ePub) {
-  return concatBytes(utf8ToBytes("pairwire/v1/hello"), roomIdBytes, u32be(epoch), ePub);
+function helloAad(roomIdBytes, epoch, ePub, pair) {
+  if (!pair) return concatBytes(utf8ToBytes("pairwire/v1/hello"), roomIdBytes, u32be(epoch), ePub);
+  return concatBytes(utf8ToBytes("pairwire/v2/hello"), roomIdBytes, u32be(epoch), Uint8Array.of(u8(pair.from), u8(pair.to)), ePub);
 }
 function sealHello(args) {
-  const { keys, epoch, ePub, payload } = args;
+  const { keys, epoch, ePub, payload, pair } = args;
   if (ePub.length !== KEY_BYTES) throw new Error("e_pub must be 32 bytes");
   const nonce = args.nonce ?? randomBytes(NONCE_BYTES);
   const plain = utf8ToBytes(JSON.stringify(payload));
-  const ct = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, ePub)).encrypt(plain);
+  const ct = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, ePub, pair)).encrypt(plain);
   return concatBytes(Uint8Array.of(HELLO_TYPE), u32be(epoch), ePub, nonce, ct);
 }
-function openHello(frame, keys) {
+function openHello(frame, keys, pair) {
   if (frame.length < HEADER_BYTES + TAG_BYTES || frame[0] !== HELLO_TYPE) return { ok: false, reason: "malformed" };
   const epoch = new DataView(frame.buffer, frame.byteOffset + 1, 4).getUint32(0);
   const pPub = frame.slice(5, 5 + KEY_BYTES);
   const nonce = frame.subarray(5 + KEY_BYTES, HEADER_BYTES);
   let plain;
   try {
-    plain = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, pPub)).decrypt(
+    plain = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, pPub, pair)).decrypt(
       frame.subarray(HEADER_BYTES)
     );
   } catch {
@@ -22244,10 +22245,12 @@ var Handshake = class {
     const priv = x25519.utils.randomSecretKey();
     const pub = x25519.getPublicKey(priv);
     this.#ephemeral = { epoch, priv, pub };
-    return sealHello({ keys: this.opts.keys, epoch, ePub: pub, payload: this.opts.payload });
+    const pair = this.opts.pair;
+    return sealHello({ keys: this.opts.keys, epoch, ePub: pub, payload: this.opts.payload, ...pair ? { pair: { from: pair.me, to: pair.peer } } : {} });
   }
   receive(frame) {
-    const opened = openHello(frame, this.opts.keys);
+    const pair = this.opts.pair;
+    const opened = openHello(frame, this.opts.keys, pair ? { from: pair.peer, to: pair.me } : void 0);
     if (!opened.ok) {
       if (opened.reason === "decrypt_failed") this.#failures++;
       const wrongKey = opened.reason === "decrypt_failed" && this.#failures === MAX_HELLO_FAILURES;
@@ -22279,6 +22282,10 @@ var Handshake = class {
     this.#ephemeral = null;
   }
 };
+function u8(n) {
+  if (!Number.isInteger(n) || n < 0 || n > 255) throw new Error("member index must be a byte");
+  return n;
+}
 function u32be(n) {
   if (!Number.isInteger(n) || n < 0 || n > 4294967295) throw new Error("epoch must be a u32");
   const out = new Uint8Array(4);
@@ -22294,6 +22301,7 @@ function compareBytes(a, b) {
 
 // packages/core/src/config.ts
 var SHARE_PREFIX = "pw1_";
+var GROUP_SHARE_PREFIX = "pw2_";
 var SECRET_BYTES = 32;
 var DEFAULT_RELAY_HOST = "pairwire-relay.tazo.workers.dev";
 
@@ -22524,6 +22532,9 @@ function noticePeerJoined(name, harness) {
 }
 function noticePeerLeft(name, reason) {
   return { event: "peer_left", text: reason === "left" ? `${displayName(name)} ended the room.` : "The room expired." };
+}
+function noticeMemberLeft(name) {
+  return { event: "peer_left", text: `${displayName(name)} left the room; it stays open for the others.` };
 }
 function noticePeerChanged(was, now) {
   const who = (p) => `${displayName(p.name)}/${displayName(p.harness)}`;
@@ -22768,9 +22779,9 @@ var fail = (code, message) => {
 function generateSecret() {
   return randomBytes(SECRET_BYTES);
 }
-function encodeShareString(secret, relay) {
+function encodeShareString(secret, relay, opts = {}) {
   if (secret.length !== SECRET_BYTES) throw new Error(`secret must be ${SECRET_BYTES} bytes`);
-  let out = SHARE_PREFIX + base32Encode(secret);
+  let out = (opts.group ? GROUP_SHARE_PREFIX : SHARE_PREFIX) + base32Encode(secret);
   if (relay) {
     const text = formatRelayAddress(relay);
     parseHostPort(text);
@@ -22783,11 +22794,12 @@ function parseShareString(input2) {
   if (text === "") fail("empty", "The share string is empty. Paste the whole string, starting with pw1_.");
   if (text.length > MAX_INPUT) fail("too_long", "That text is too long to be a pairwire share string.");
   const lower = text.toLowerCase();
-  if (!lower.startsWith(SHARE_PREFIX)) {
+  const group = lower.startsWith(GROUP_SHARE_PREFIX);
+  if (!lower.startsWith(SHARE_PREFIX) && !group) {
     if (/^pw\d+_/.test(lower)) {
       fail(
         "unsupported_version",
-        "This share string is for a pairwire protocol version this client doesn't support (it speaks pw1). Update pairwire on both sides."
+        "This share string is for a pairwire protocol version this client doesn't support (it speaks pw1 and pw2). Update pairwire on both sides."
       );
     }
     fail("bad_prefix", "This is not a pairwire share string: it should start with pw1_.");
@@ -22813,7 +22825,7 @@ function parseShareString(input2) {
   } catch {
     return fail("non_canonical", "The key part of the share string is not valid: its last character is wrong. It may have been mistyped.");
   }
-  return { secret, relay: at < 0 ? null : parseHostPort(rest.slice(at + 1)) };
+  return { secret, relay: at < 0 ? null : parseHostPort(rest.slice(at + 1)), group };
 }
 function parseRelayAddress(input2) {
   const text = input2.trim().toLowerCase();
@@ -23092,12 +23104,23 @@ var CLIENT_LIMITS = {
   ackDelayMs: 2 * SECOND,
   resendAfterMs: 15 * SECOND
 };
+var GROUP_LIMITS = {
+  minCapacity: 3,
+  maxCapacity: 8,
+  /** A group room's offline buffers together hold at most this much: per member, ÷ capacity. */
+  roomBufferBytes: 2 * 1024 * 1024
+};
 
 // packages/core/src/relay-room.ts
 var REFILL_PER_MS = RELAY_LIMITS.binaryFramesPerMinute / 6e4;
 var REPLY_REFILL_PER_MS = RELAY_LIMITS.relayRepliesPerMinute / 6e4;
 var controlSchema = external_exports.discriminatedUnion("t", [
-  external_exports.strictObject({ t: external_exports.literal("join"), v: external_exports.number(), token: external_exports.string().nullable() }),
+  external_exports.strictObject({
+    t: external_exports.literal("join"),
+    v: external_exports.number(),
+    token: external_exports.string().nullable(),
+    capacity: external_exports.number().int().min(GROUP_LIMITS.minCapacity).max(GROUP_LIMITS.maxCapacity).optional()
+  }),
   external_exports.strictObject({ t: external_exports.literal("leave") }),
   external_exports.strictObject({ t: external_exports.literal("ping") })
 ]);
@@ -23111,7 +23134,9 @@ var roomStateSchema = external_exports.strictObject({
   lastActivityAt: external_exports.number().int(),
   epoch: external_exports.number().int().nonnegative(),
   ended: external_exports.strictObject({ at: external_exports.number().int(), reason: external_exports.enum(["left", "expired"]) }).nullable(),
-  slots: external_exports.strictObject({ a: slotSchema.optional(), b: slotSchema.optional() })
+  slots: external_exports.strictObject({ a: slotSchema.optional(), b: slotSchema.optional() }),
+  capacity: external_exports.number().int().min(GROUP_LIMITS.minCapacity).max(GROUP_LIMITS.maxCapacity).optional(),
+  members: external_exports.array(external_exports.union([slotSchema, external_exports.literal("left"), external_exports.null()])).max(GROUP_LIMITS.maxCapacity).optional()
 });
 
 // packages/core/src/relay-frames.ts
@@ -23151,6 +23176,51 @@ function parseRelayFrame(text) {
   if (typeof t !== "string") return invalid(null);
   if (!KNOWN.has(t)) return { ok: false, reason: "unknown_type" };
   const parsed = relayFrameSchema.safeParse(json2);
+  if (parsed.success) return { ok: true, frame: parsed.data };
+  const fields2 = new Set(parsed.error.issues.map((i) => i.path[0]).filter((k) => typeof k === "string"));
+  return invalid(t, [...fields2].sort());
+}
+var memberIndex = external_exports.number().int().min(0).max(7);
+var groupJoined = external_exports.object({
+  t: external_exports.literal("joined"),
+  member: memberIndex,
+  token: external_exports.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  epoch: u322,
+  capacity: external_exports.number().int().min(3).max(8),
+  taken: external_exports.array(memberIndex).max(7),
+  present: external_exports.array(memberIndex).max(7),
+  buffered: count,
+  expires_at: count
+}).superRefine((f, ctx) => {
+  if (f.member >= f.capacity) ctx.addIssue({ code: "custom", path: ["member"], message: "member out of range" });
+  const valid = (list) => list.every((m, i) => m < f.capacity && m !== f.member && (i === 0 || m > list[i - 1]));
+  if (!valid(f.taken)) ctx.addIssue({ code: "custom", path: ["taken"], message: "taken out of range or order" });
+  if (!valid(f.present) || !f.present.every((m) => f.taken.includes(m))) ctx.addIssue({ code: "custom", path: ["present"], message: "present out of range, order or not taken" });
+});
+var groupRelayFrameSchema = external_exports.discriminatedUnion("t", [
+  groupJoined,
+  external_exports.object({ t: external_exports.literal("peer_joined"), member: memberIndex, epoch: u322 }),
+  external_exports.object({ t: external_exports.literal("peer_left"), member: memberIndex, reason: external_exports.enum(["disconnected", "left"]) }),
+  external_exports.object({
+    t: external_exports.literal("error"),
+    code: external_exports.string().regex(/^[a-z_]{1,32}$/),
+    retry_after: external_exports.number().min(0).max(MAX_RETRY_AFTER_S).optional()
+  }),
+  external_exports.object({ t: external_exports.literal("pong") })
+]);
+function parseGroupRelayFrame(text) {
+  const invalid = (t2, fields3 = []) => ({ ok: false, reason: "invalid", t: t2, fields: fields3 });
+  let json2;
+  try {
+    json2 = JSON.parse(text);
+  } catch {
+    return invalid(null);
+  }
+  if (typeof json2 !== "object" || json2 === null || Array.isArray(json2)) return invalid(null);
+  const t = json2.t;
+  if (typeof t !== "string") return invalid(null);
+  if (!KNOWN.has(t)) return { ok: false, reason: "unknown_type" };
+  const parsed = groupRelayFrameSchema.safeParse(json2);
   if (parsed.success) return { ok: true, frame: parsed.data };
   const fields2 = new Set(parsed.error.issues.map((i) => i.path[0]).filter((k) => typeof k === "string"));
   return invalid(t, [...fields2].sort());
@@ -23332,6 +23402,7 @@ export {
   fallbackBody,
   fallbackEnvelope,
   HELLO_TYPE,
+  MAX_HELLO_FAILURES,
   HARNESSES,
   Handshake,
   CTL_KEY_BYTES,
@@ -23344,8 +23415,10 @@ export {
   RELAY_LIMITS,
   CLIENT_LIMITS,
   parseRelayFrame,
+  parseGroupRelayFrame,
   noticePeerJoined,
   noticePeerLeft,
+  noticeMemberLeft,
   noticePeerChanged,
   noticePeerUnreadable,
   noticeWrongKey,

@@ -33,9 +33,18 @@ export const CLIENT_LIMITS = {
   resendAfterMs: 15 * SECOND,
 } as const;
 
-export const SUPPORTED_PROTOCOLS = [1] as const;
+/** Group rooms (02 §8, 03 Limits, ADR-037). */
+export const GROUP_LIMITS = {
+  minCapacity: 3,
+  maxCapacity: 8,
+  /** A group room's offline buffers together hold at most this much: per member, ÷ capacity. */
+  roomBufferBytes: 2 * 1024 * 1024,
+} as const;
+
+/** 1: pair rooms; 2: group rooms (02 §8). */
+export const SUPPORTED_PROTOCOLS = [1, 2] as const;
 
 /** Body of GET /v1/info (03, HTTP surface). */
 export function relayInfo(relayVersion: string) {
-  return { protocol: [...SUPPORTED_PROTOCOLS], relay: relayVersion, limits: RELAY_LIMITS };
+  return { protocol: [...SUPPORTED_PROTOCOLS], relay: relayVersion, limits: RELAY_LIMITS, group_limits: GROUP_LIMITS };
 }

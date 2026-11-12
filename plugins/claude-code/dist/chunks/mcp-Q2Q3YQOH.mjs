@@ -2,10 +2,10 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   WAKE_PROMPT
-} from "./chunk-CREJ4Q7B.mjs";
+} from "./chunk-L6YYVVLS.mjs";
 import {
   transcriptEvents
-} from "./chunk-POHET3J6.mjs";
+} from "./chunk-QRZGEUUA.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -25,17 +25,30 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-ZMASPVBM.mjs";
+} from "./chunk-U5GM4BUZ.mjs";
+import {
+  createGroup,
+  groupFill,
+  isGroupRoom,
+  newPeer,
+  peerList,
+  peopleLabel,
+  readGroup,
+  readGroupOutbox,
+  updateGroup,
+  updateGroupOutbox,
+  wipeGroupSessions
+} from "./chunk-GRSVGBV2.mjs";
 import {
   assertStatePrivate
-} from "./chunk-YEYARWRO.mjs";
+} from "./chunk-4SPMUMTX.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-N573BUDX.mjs";
+} from "./chunk-KKOA2SWC.mjs";
 import {
   adoptOwnerSession,
   bindProject,
@@ -59,7 +72,7 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-HYOGY7D3.mjs";
+} from "./chunk-PKJEAGAD.mjs";
 import {
   chooseCtlPath,
   configPath,
@@ -84,6 +97,7 @@ import {
   MAX_ACTIVE_CLAIMS,
   MAX_CONTRACT_NAMES_PER_SIDE,
   MAX_CONTRACT_VERSION,
+  MAX_HELLO_FAILURES,
   MAX_PATHS,
   MSG_TYPE,
   ZodOptional,
@@ -116,6 +130,7 @@ import {
   makeAck,
   normalizeParams,
   noticeHeld,
+  noticeMemberLeft,
   noticePeerChanged,
   noticePeerJoined,
   noticePeerLeft,
@@ -128,6 +143,7 @@ import {
   own,
   parse,
   parseAsync,
+  parseGroupRelayFrame,
   parseRelayAddress,
   parseRelayFrame,
   parseShareString,
@@ -150,7 +166,7 @@ import {
   toJSONSchema,
   union,
   unknown
-} from "./chunk-O5I4E6QX.mjs";
+} from "./chunk-NJ2ULMK2.mjs";
 import {
   __commonJS,
   __require,
@@ -26528,6 +26544,7 @@ function closeRoomLocally(home, roomId, status, error = null) {
     error: error ?? s.error
   }));
   removeFile(roomFile(home, roomId, "caps.json"));
+  wipeGroupSessions(home, roomId);
   removeBindingFor(home, roomId);
   return state;
 }
@@ -27124,6 +27141,638 @@ var RoomConnection = class {
   }
 };
 
+// packages/client/src/group-connection.ts
+var fromStored2 = (s) => ({ sid: hexToBytes(s.sid), sendKey: hexToBytes(s.send_key), recvKey: hexToBytes(s.recv_key) });
+var toStored2 = (s) => ({ sid: bytesToHex(s.sid), send_key: bytesToHex(s.sendKey), recv_key: bytesToHex(s.recvKey) });
+var MAX_TIMER_MS2 = 2 ** 31 - 1;
+var NobodyJoinedError = class extends Error {
+  name = "NobodyJoinedError";
+  constructor() {
+    super("Nobody else has joined the room yet, so the message was not sent.");
+  }
+};
+var GroupConnection = class {
+  #o;
+  #t;
+  #tune;
+  #ulid;
+  #key;
+  #socket = null;
+  #handshakes = /* @__PURE__ */ new Map();
+  #joined = false;
+  #present = /* @__PURE__ */ new Set();
+  #stopped = false;
+  #halted = null;
+  #attempt = 0;
+  #leaving = null;
+  #leaveRequested = false;
+  #helloFailures = 0;
+  #unreadableNoticed = /* @__PURE__ */ new Set();
+  #seenEpoch = -1;
+  #queue = [];
+  #sentTimes = [];
+  #pausedUntil = 0;
+  #timers = /* @__PURE__ */ new Map();
+  constructor(options) {
+    this.#o = options;
+    this.#t = options.timers ?? realTimers;
+    this.#tune = { ...DEFAULT_TUNING, ...options.tuning };
+    this.#ulid = monotonicFactory(() => this.#t.random());
+    this.#key = options.roomKey ?? options.keys.roomId;
+  }
+  // --- public API (as RoomConnection) --------------------------------------------------
+  start() {
+    const s = this.#state();
+    if (!s || !isOpen(s)) return;
+    if (this.#t.now() >= expiresAt(s)) return this.#end("expired");
+    this.#halted = s.error === "wrong_key" ? "wrong_key" : null;
+    if (this.#halted) return this.#emitStatus();
+    this.#connect();
+  }
+  resume() {
+    if (this.#halted !== "wrong_key") return;
+    updateState(this.#o.home, this.#key, (s) => ({ ...s, error: null }));
+    this.#halted = null;
+    if (!this.#socket) this.#connect();
+  }
+  stop() {
+    this.#stopped = true;
+    this.#clearAll();
+    this.#socket?.close(1e3);
+    this.#socket = null;
+  }
+  status() {
+    const g = this.#group();
+    return {
+      socket: this.#joined ? "joined" : this.#socket ? "connecting" : "offline",
+      peerConnected: this.#present.size > 0,
+      session: !!g && Object.values(g.peers).some((p) => !p.left && p.sessions.current !== null),
+      halted: this.#halted
+    };
+  }
+  /** Members connected now, by index. */
+  presentMembers() {
+    return [...this.#present].sort((a, b) => a - b);
+  }
+  /** Group rooms carry no coordination kinds (02 §8.5). */
+  peerHasCollab() {
+    return false;
+  }
+  /**
+   * One copy per member that has joined and not left (02 §8.5), each with that peer's next
+   * seq, persisted before anything is written. Throws NobodyJoinedError when there is no one.
+   */
+  send(input) {
+    const s = this.#state();
+    if (!s || !isOpen(s)) throw new Error("The room is not open.");
+    if ("fallbackBody" in input) throw new Error("Coordination kinds are not sent in group rooms.");
+    const id = this.#ulid();
+    const ts = new Date(this.#t.now()).toISOString();
+    const base = { v: 1, id, ts, reply_to: input.reply_to ?? null, body: input.body, acks: null, author: input.author, kind: input.kind };
+    serializeEnvelope({ ...base, seq: 1 });
+    const targets = [];
+    updateGroup(this.#o.home, this.#key, (g) => {
+      for (const [i, p] of Object.entries(g.peers)) {
+        if (p.left) continue;
+        p.my_seq += 1;
+        targets.push({ to: Number(i), envelope: { ...base, seq: p.my_seq }, live: p.sessions.current !== null });
+      }
+      return g;
+    });
+    if (targets.length === 0) throw new NobodyJoinedError();
+    const entries = targets.map((t) => ({ to: t.to, envelope: t.envelope, status: t.live ? "sent" : "queued", sent_at: null, delivered_at: null }));
+    updateGroupOutbox(this.#o.home, this.#key, (all) => [...all, ...entries]);
+    const first = targets[0].envelope;
+    this.#o.events?.sent?.(first);
+    for (const t of targets) if (t.live) this.#queue.push({ t: "env", to: t.to, id });
+    this.#pump();
+    const live = targets.some((t) => t.live);
+    return { id, seq: first.seq, status: live ? "sent" : "queued", envelope: first, encoding: null };
+  }
+  /** Sends `bye` to every peer, then relay `leave`, then removes the room locally (02 §8.2). */
+  async leave(message = null) {
+    const s = this.#state();
+    if (!s || !isOpen(s)) return;
+    const done = new Promise((resolve) => {
+      this.#leaving = resolve;
+      this.#set("leave", this.#tune.leaveTimeoutMs, resolve);
+    });
+    try {
+      this.send({ kind: "bye", body: message, author: "agent" });
+    } catch {
+    }
+    this.#leaveRequested = true;
+    if (this.#joined) this.#sendLeaveWhenDrained();
+    else if (!this.#socket && !this.#halted) this.#connect();
+    await done;
+    this.#leaving = null;
+    this.#clear("leave");
+    this.#stopped = true;
+    this.#clearAll();
+    this.#socket?.close(1e3);
+    this.#socket = null;
+    this.#end("left");
+  }
+  notice(notice) {
+    this.#notice(notice);
+  }
+  // --- connection ----------------------------------------------------------------------
+  #state() {
+    return readState(this.#o.home, this.#key);
+  }
+  #group() {
+    try {
+      return readGroup(this.#o.home, this.#key);
+    } catch {
+      return null;
+    }
+  }
+  #connect() {
+    if (this.#stopped || this.#halted) return;
+    const s = this.#state();
+    const g = this.#group();
+    if (!s || !isOpen(s) || !g) return;
+    this.#seenEpoch = s.epoch ?? -1;
+    this.#handshakes.clear();
+    this.#helloFailures = 0;
+    this.#joined = false;
+    this.#present.clear();
+    const factory = this.#o.socketFactory ?? wsSocketFactory;
+    let socket = null;
+    const current = () => socket !== null && socket === this.#socket;
+    socket = factory(this.#o.url, {
+      onOpen: () => this.#guard(current, "open", () => {
+        const st = this.#state();
+        const gr = this.#group();
+        const token = st?.token ?? null;
+        const creating = token === null && gr?.starter === true && gr.capacity !== null;
+        socket.sendText(JSON.stringify({ t: "join", v: 2, token, ...creating ? { capacity: gr.capacity } : {} }));
+        this.#schedulePing();
+      }),
+      onText: (d) => this.#guard(current, "text", () => this.#onText(d)),
+      onBinary: (d) => this.#guard(current, "binary", () => this.#onBinary(d)),
+      onClose: (code) => this.#guard(current, "close", () => this.#onClose(code))
+    });
+    this.#socket = socket;
+    this.#emitStatus();
+  }
+  #guard(current, on, fn) {
+    if (!current()) return;
+    try {
+      fn();
+    } catch (e) {
+      this.#o.log.warn("relay_handler_failed", { on, error: e instanceof Error ? e.name : typeof e });
+      try {
+        if (on !== "close" && current()) this.#relayProtocolError("handler_failed");
+        else if (on === "close" && !this.#socket) this.#scheduleReconnect();
+      } catch {
+      }
+    }
+  }
+  #relayProtocolError(reason, fields = {}) {
+    this.#o.log.warn("relay_protocol_error", { reason, ...fields });
+    const socket = this.#socket;
+    try {
+      this.#onClose(1002);
+    } finally {
+      socket?.close(1002);
+    }
+  }
+  #schedulePing() {
+    this.#set("ping", this.#tune.pingIntervalMs, () => {
+      this.#socket?.sendText('{"t":"ping"}');
+      this.#schedulePing();
+    });
+  }
+  #onText(data) {
+    const parsed = parseGroupRelayFrame(data);
+    if (!parsed.ok) {
+      if (parsed.reason === "unknown_type") return;
+      return this.#relayProtocolError("bad_frame", { frame: parsed.t, fields: parsed.fields.join(",") });
+    }
+    const frame = parsed.frame;
+    switch (frame.t) {
+      case "joined":
+        return this.#onJoined(frame);
+      case "peer_joined":
+        return this.#onPeerJoined(frame.member, frame.epoch);
+      case "peer_left":
+        return this.#onPeerLeft(frame.member, frame.reason);
+      case "error": {
+        this.#o.log.warn("relay_error", { code: frame.code });
+        if (frame.code === "rate_limited" || frame.code === "buffer_full") {
+          const retry = frame.retry_after !== void 0 ? frame.retry_after * 1e3 : this.#tune.defaultRetryMs;
+          this.#pausedUntil = this.#t.now() + retry;
+          this.#set("retry", retry, () => this.#resendAll());
+        }
+        return;
+      }
+      case "pong":
+        return;
+    }
+  }
+  #raiseEpoch(epoch, change = (s) => s) {
+    this.#seenEpoch = epoch;
+    updateState(this.#o.home, this.#key, (s) => ({ ...change(s), epoch: Math.max(s.epoch ?? -1, epoch) }));
+  }
+  #onJoined(frame) {
+    if (frame.epoch <= this.#seenEpoch) {
+      this.#attempt = 0;
+      return this.#relayProtocolError("epoch_rollback", { epoch: frame.epoch, floor: this.#seenEpoch });
+    }
+    const before = this.#group();
+    if (before?.member !== null && before?.member !== void 0 && before.member !== frame.member) {
+      return this.#relayProtocolError("member_changed");
+    }
+    if (before?.capacity !== null && before?.capacity !== void 0 && before.capacity !== frame.capacity) {
+      return this.#relayProtocolError("capacity_changed");
+    }
+    this.#raiseEpoch(frame.epoch, (s) => ({ ...s, token: frame.token, expires_at: frame.expires_at }));
+    const gone = [];
+    updateGroup(this.#o.home, this.#key, (g) => {
+      g.member = frame.member;
+      g.capacity = frame.capacity;
+      for (const i of frame.taken) g.peers[String(i)] ??= newPeer();
+      for (const [i, p] of Object.entries(g.peers)) {
+        if (!p.left && !frame.taken.includes(Number(i))) {
+          p.left = true;
+          if (p.name !== null) gone.push(p.name);
+        }
+      }
+      return g;
+    });
+    for (const name of gone) this.#notice(noticeMemberLeft(name));
+    this.#joined = true;
+    this.#attempt = 0;
+    this.#present = new Set(frame.present);
+    this.#scheduleExpiry();
+    this.#scheduleResendCheck();
+    this.#o.log.info("joined", { epoch: frame.epoch, present: frame.present.length, buffered: frame.buffered });
+    this.#emitStatus();
+    if (this.#leaveRequested) return this.#sendLeaveWhenDrained();
+    for (const m of frame.present) this.#startEpoch(m, frame.epoch);
+    this.#sendNeverSent();
+  }
+  #onPeerJoined(member, epoch) {
+    const g = this.#group();
+    if (!this.#joined || epoch <= this.#seenEpoch || !g || member === g.member || g.capacity === null || member >= g.capacity) {
+      return this.#relayProtocolError("epoch_order", { epoch, seen: this.#seenEpoch });
+    }
+    this.#raiseEpoch(epoch);
+    updateGroup(this.#o.home, this.#key, (gr) => {
+      gr.peers[String(member)] ??= newPeer();
+      return gr;
+    });
+    this.#present.add(member);
+    this.#emitStatus();
+    this.#startEpoch(member, epoch);
+  }
+  #onPeerLeft(member, reason) {
+    this.#present.delete(member);
+    if (reason === "left") {
+      let name = null;
+      let already = true;
+      updateGroup(this.#o.home, this.#key, (g) => {
+        const p = g.peers[String(member)];
+        if (p && !p.left) {
+          already = false;
+          p.left = true;
+          p.sessions = { current: null, previous: null };
+          name = p.name;
+        }
+        return g;
+      });
+      this.#handshakes.delete(member);
+      this.#queue = this.#queue.filter((q) => q.to !== member);
+      updateGroupOutbox(this.#o.home, this.#key, (entries) => entries.filter((e) => e.to !== member || e.status === "delivered"));
+      if (!already && name !== null) this.#notice(noticeMemberLeft(name));
+    }
+    this.#emitStatus();
+  }
+  #handshakeFor(member) {
+    const g = this.#group();
+    if (!g || g.member === null) return null;
+    let h = this.#handshakes.get(member);
+    if (!h) {
+      h = new Handshake({ keys: this.#o.keys, payload: this.#o.hello, floor: this.#state()?.epoch ?? -1, pair: { me: g.member, peer: member } });
+      this.#handshakes.set(member, h);
+    }
+    return h;
+  }
+  #startEpoch(member, epoch) {
+    const g = this.#group();
+    if (!g || g.member === null) return;
+    const h = new Handshake({ keys: this.#o.keys, payload: this.#o.hello, floor: epoch - 1, pair: { me: g.member, peer: member } });
+    this.#handshakes.set(member, h);
+    const hello = h.startEpoch(epoch);
+    if (!hello) return;
+    this.#queue.unshift({ t: "hello", to: member, frame: hello });
+    this.#pump();
+  }
+  #onBinary(data) {
+    const g = this.#group();
+    const from = data[0];
+    if (!g || g.member === null || g.capacity === null || from === void 0 || from === g.member || from >= g.capacity || data.length < 2) {
+      return this.#o.log.debug("frame_dropped", { reason: "bad_address" });
+    }
+    const frame = data.subarray(1);
+    if (frame[0] === HELLO_TYPE) {
+      const h = this.#handshakes.get(from) ?? this.#handshakeFor(from);
+      if (!h) return;
+      const ev = h.receive(frame);
+      if (ev.type === "session") return this.#onSession(from, ev.session, ev.peer);
+      this.#o.log.debug("hello_dropped", { reason: ev.reason });
+      if (ev.reason === "decrypt_failed" && ++this.#helloFailures === MAX_HELLO_FAILURES) this.#onWrongKey();
+      return;
+    }
+    if (frame[0] !== MSG_TYPE) return this.#o.log.debug("frame_dropped", { reason: "unknown_type" });
+    const peer = g.peers[String(from)];
+    if (!peer || peer.left) return this.#o.log.debug("frame_dropped", { reason: "unknown_peer" });
+    const sessions = [peer.sessions.current, peer.sessions.previous].filter((x) => x !== null).map(fromStored2);
+    const opened = openMsg(frame, { roomIdBytes: this.#o.keys.roomIdBytes, sessions });
+    if (!opened.ok) {
+      if (opened.skipSeq !== void 0) return this.#onUnreadable(from, opened.skipSeq, opened.reason);
+      return this.#o.log.debug("frame_dropped", { reason: opened.reason });
+    }
+    this.#onEnvelope(from, opened.envelope);
+  }
+  #onSession(from, session, hello) {
+    let before = null;
+    updateGroup(this.#o.home, this.#key, (g) => {
+      const p = g.peers[String(from)] ??= newPeer();
+      before = structuredClone(p);
+      p.sessions = { current: toStored2(session), previous: p.sessions.current };
+      p.name = hello.name;
+      p.harness = hello.harness;
+      p.instance = hello.instance;
+      p.caps = [...new Set(hello.caps.filter((c) => c.length <= 32))].slice(0, 16);
+      p.left = false;
+      return g;
+    });
+    updateState(this.#o.home, this.#key, (s) => ({ ...s, status: "active" }));
+    const was = before;
+    this.#o.log.info("session", { first: was?.instance === null });
+    if (!was || was.instance === null || was.name === null || was.harness === null) {
+      this.#notice(noticePeerJoined(hello.name, hello.harness));
+    } else if (was.instance !== hello.instance || was.name !== hello.name) {
+      const notice = noticePeerChanged({ name: was.name, harness: was.harness }, hello);
+      this.#o.log.warn("peer_changed");
+      this.#o.events?.peerChanged?.(notice);
+      if (!hasUndeliveredNotice(this.#o.home, this.#key, "peer_changed")) this.#notice(notice);
+    }
+    this.#emitStatus();
+    this.#resendFor(from);
+  }
+  #onEnvelope(from, env) {
+    const peer = this.#group()?.peers[String(from)];
+    if (!peer) return;
+    const decision = receiveDecision(env, peer.peer_max_seq);
+    if (decision === "ack") return this.#onAck(from, env.acks ?? 0);
+    if (decision === "out_of_order") return this.#o.log.debug("frame_dropped", { reason: "out_of_order", seq: env.seq });
+    if (decision === "accept") {
+      const entry = {
+        source: "peer",
+        id: env.id,
+        from: peer.name ?? "",
+        harness: peer.harness ?? "other",
+        received_at: this.#t.now(),
+        envelope: env
+      };
+      const added = appendInbox(this.#o.home, this.#key, entry);
+      this.#setPeerMaxSeq(from, env.seq);
+      if (added) this.#o.events?.inbound?.(entry);
+    }
+    this.#scheduleAck(from);
+  }
+  #setPeerMaxSeq(from, seq) {
+    updateGroup(this.#o.home, this.#key, (g) => {
+      const p = g.peers[String(from)];
+      if (p) p.peer_max_seq = Math.max(p.peer_max_seq, seq);
+      return g;
+    });
+  }
+  #onUnreadable(from, seq, reason) {
+    const peer = this.#group()?.peers[String(from)];
+    if (!peer) return;
+    this.#o.log.info("frame_skipped", { reason, seq });
+    if (seq > peer.peer_max_seq + 1) return;
+    if (seq === peer.peer_max_seq + 1) {
+      this.#setPeerMaxSeq(from, seq);
+      if (!this.#unreadableNoticed.has(from)) {
+        this.#unreadableNoticed.add(from);
+        this.#notice(noticePeerUnreadable(peer.name ?? ""));
+      }
+    }
+    this.#scheduleAck(from);
+  }
+  #onAck(from, acks) {
+    const now = this.#t.now();
+    const newly = /* @__PURE__ */ new Set();
+    const after = updateGroupOutbox(
+      this.#o.home,
+      this.#key,
+      (entries) => entries.map((e) => {
+        if (e.to !== from || e.status === "delivered" || e.envelope.seq > acks) return e;
+        newly.add(e.envelope.id);
+        return { ...e, status: "delivered", delivered_at: now };
+      })
+    );
+    const ids = [...newly].filter((id) => after.every((e) => e.envelope.id !== id || e.status === "delivered"));
+    if (ids.length > 0) this.#o.events?.delivered?.(ids);
+  }
+  #scheduleAck(to) {
+    const name = `ack:${to}`;
+    if (this.#timers.has(name)) return;
+    this.#set(name, this.#tune.ackDelayMs, () => {
+      this.#queue.push({ t: "ack", to });
+      this.#pump();
+    });
+  }
+  #onWrongKey() {
+    this.#o.log.warn("wrong_key");
+    updateState(this.#o.home, this.#key, (s) => ({ ...s, error: "wrong_key" }));
+    this.#halted = "wrong_key";
+    this.#notice(noticeWrongKey());
+    this.#socket?.close(1e3);
+  }
+  #onClose(code) {
+    this.#socket = null;
+    this.#joined = false;
+    this.#present.clear();
+    this.#queue = [];
+    for (const name of [...this.#timers.keys()]) if (name !== "reconnect" && name !== "leave") this.#clear(name);
+    this.#o.log.info("closed", { code });
+    if (this.#leaving) return this.#leaving();
+    switch (code) {
+      case 4001:
+        return this.#end("room_full");
+      case 4002:
+      case 4003:
+        return this.#end("gone");
+      case 4004:
+        return this.#end("unsupported");
+      case 4005:
+        return this.#halt("protocol_error");
+      case 4007:
+        return this.#halt("replaced");
+      default:
+        this.#emitStatus();
+        return this.#scheduleReconnect();
+    }
+  }
+  #halt(reason) {
+    this.#halted = reason;
+    if (reason !== "replaced") updateState(this.#o.home, this.#key, (s) => ({ ...s, error: reason }));
+    this.#emitStatus();
+  }
+  #scheduleReconnect() {
+    if (this.#stopped || this.#halted) return;
+    const base = Math.min(this.#tune.backoffMaxMs, this.#tune.backoffMinMs * 2 ** this.#attempt);
+    const delay = Math.round(base * (0.5 + this.#t.random() / 2));
+    this.#attempt++;
+    this.#set("reconnect", delay, () => this.#connect());
+  }
+  #scheduleExpiry() {
+    const s = this.#state();
+    if (!s) return;
+    const wait = Math.max(0, expiresAt(s) - this.#t.now());
+    if (wait > MAX_TIMER_MS2) return;
+    this.#set("expiry", wait, () => this.#end("expired"));
+  }
+  /** 02 §6.2 rule (b), per peer: resend when its oldest unacked copy is old and it is here. */
+  #scheduleResendCheck() {
+    const every = Math.max(50, Math.min(1e3, Math.floor(this.#tune.resendAfterMs / 3)));
+    this.#set("resend", every, () => {
+      const now = this.#t.now();
+      const entries = readGroupOutbox(this.#o.home, this.#key);
+      for (const to of this.#present) {
+        const oldest = entries.find((e) => e.to === to && e.status !== "delivered" && e.sent_at !== null);
+        if (oldest?.sent_at != null && now - oldest.sent_at >= this.#tune.resendAfterMs) this.#resendFor(to);
+      }
+      this.#scheduleResendCheck();
+    });
+  }
+  #queuedIds(to) {
+    return new Set(this.#queue.flatMap((q) => q.t === "env" && q.to === to ? [q.id] : []));
+  }
+  #resendFor(to) {
+    const queued = this.#queuedIds(to);
+    for (const e of readGroupOutbox(this.#o.home, this.#key)) {
+      if (e.to === to && e.status !== "delivered" && !queued.has(e.envelope.id)) this.#queue.push({ t: "env", to, id: e.envelope.id });
+    }
+    this.#pump();
+  }
+  #resendAll() {
+    for (const to of new Set(readGroupOutbox(this.#o.home, this.#key).map((e) => e.to))) this.#resendFor(to);
+  }
+  #sendNeverSent() {
+    const g = this.#group();
+    for (const e of readGroupOutbox(this.#o.home, this.#key)) {
+      if (e.status === "delivered" || e.sent_at !== null) continue;
+      if (!g?.peers[String(e.to)]?.sessions.current) continue;
+      if (!this.#queuedIds(e.to).has(e.envelope.id)) this.#queue.push({ t: "env", to: e.to, id: e.envelope.id });
+    }
+    this.#pump();
+  }
+  /** Writes queued frames while the rolling window allows: 8 × (capacity − 1) per 10 s (02 §8.5). */
+  #pump() {
+    this.#clear("pump");
+    if (!this.#socket || !this.#joined) return;
+    const now = this.#t.now();
+    if (now < this.#pausedUntil) return this.#set("pump", this.#pausedUntil - now, () => this.#pump());
+    this.#sentTimes = this.#sentTimes.filter((at) => now - at < this.#tune.windowMs);
+    const g = this.#group();
+    const limit = this.#tune.framesPerWindow * Math.max(1, (g?.capacity ?? 2) - 1);
+    const outbox = readGroupOutbox(this.#o.home, this.#key);
+    const sent = [];
+    while (this.#queue.length > 0 && this.#sentTimes.length < limit) {
+      const item = this.#queue.shift();
+      const peer = g?.peers[String(item.to)];
+      const session = peer?.sessions.current ? fromStored2(peer.sessions.current) : null;
+      let frame = null;
+      if (item.t === "hello") frame = item.frame;
+      else if (session && item.t === "ack") {
+        frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: makeAck(peer.peer_max_seq, this.#ulid(), new Date(now).toISOString()) });
+        this.#clear(`ack:${item.to}`);
+      } else if (session && item.t === "env") {
+        const entry = outbox.find((e) => e.to === item.to && e.envelope.id === item.id);
+        if (entry && entry.status !== "delivered") {
+          frame = sealMsg({ roomIdBytes: this.#o.keys.roomIdBytes, session, envelope: entry.envelope });
+          sent.push({ to: item.to, id: item.id });
+        }
+      }
+      if (!frame) continue;
+      const addressed = new Uint8Array(frame.length + 1);
+      addressed[0] = item.to;
+      addressed.set(frame, 1);
+      this.#socket.sendBinary(addressed);
+      this.#sentTimes.push(this.#t.now());
+    }
+    if (sent.length > 0) {
+      const keys = new Set(sent.map((x) => `${x.to}:${x.id}`));
+      updateGroupOutbox(
+        this.#o.home,
+        this.#key,
+        (entries) => entries.map((e) => keys.has(`${e.to}:${e.envelope.id}`) && e.status !== "delivered" ? { ...e, status: "sent", sent_at: now } : e)
+      );
+    }
+    if (this.#queue.length > 0) {
+      const wait = this.#sentTimes[0] + this.#tune.windowMs - now;
+      this.#set("pump", Math.max(1, wait), () => this.#pump());
+    } else if (this.#leaveRequested) {
+      this.#socket.sendText('{"t":"leave"}');
+    }
+  }
+  #sendLeaveWhenDrained() {
+    if (this.#queue.length === 0) this.#socket?.sendText('{"t":"leave"}');
+    else this.#pump();
+  }
+  #notice(notice) {
+    const entry = { source: "local", id: this.#ulid(), event: notice.event, text: notice.text, received_at: this.#t.now() };
+    appendInbox(this.#o.home, this.#key, entry);
+    this.#o.events?.inbound?.(entry);
+  }
+  #end(reason) {
+    const s = this.#state();
+    this.#stopped = true;
+    this.#clearAll();
+    this.#socket?.close(1e3);
+    this.#socket = null;
+    if (!s || !isOpen(s)) return;
+    if (reason === "expired" || reason === "gone") this.#notice(noticePeerLeft("", "expired"));
+    const error = reason === "left" ? null : reason === "unsupported" ? "unsupported_version" : reason;
+    closeRoomLocally(this.#o.home, this.#key, reason === "left" ? "left" : "ended", error);
+    this.#o.log.info("room_ended", { reason });
+    this.#o.events?.ended?.(reason);
+    this.#emitStatus();
+  }
+  #emitStatus() {
+    this.#o.events?.status?.(this.status());
+  }
+  #set(name, ms, fn) {
+    this.#clear(name);
+    const delay = Number.isNaN(ms) ? MAX_TIMER_MS2 : Math.min(MAX_TIMER_MS2, Math.max(0, ms));
+    this.#timers.set(
+      name,
+      this.#t.setTimeout(() => {
+        this.#timers.delete(name);
+        fn();
+      }, delay)
+    );
+  }
+  #clear(name) {
+    const h = this.#timers.get(name);
+    if (h !== void 0) {
+      this.#t.clearTimeout(h);
+      this.#timers.delete(name);
+    }
+  }
+  #clearAll() {
+    for (const name of [...this.#timers.keys()]) this.#clear(name);
+  }
+};
+var GROUP_FRAMES_PER_PEER_PER_10S = CLIENT_LIMITS.binaryFramesPer10s;
+
 // packages/client/src/codex-wake.ts
 import { execFile } from "node:child_process";
 var THREAD_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
@@ -27378,7 +28027,11 @@ var KIND_FIELDS = {
 };
 var OPTIONAL_FIELDS = Object.keys(sendInputSchema.shape).filter((k) => k !== "kind");
 var HELLO_CAPS = ["ack", "say", COLLAB_CAP];
-var startInputSchema = external_exports.object({ name: external_exports.string().max(200).optional() });
+var NO_GROUP_RELAY = "This relay doesn't host rooms for more than two people (it needs protocol 2, pairwire's relay 0.4.0 or later). Start a two-person room, or use a relay that supports it.";
+var startInputSchema = external_exports.object({
+  name: external_exports.string().max(200).optional(),
+  size: external_exports.number().int().min(2).max(8).optional().describe("Only when your user asks for a room for more than two people: how many, 3 to 8. Leave it out otherwise.")
+});
 var joinInputSchema = external_exports.object({ share: external_exports.string().max(4096), name: external_exports.string().max(200).optional() });
 var leaveInputSchema = external_exports.object({ message: external_exports.string().optional() });
 var ToolError = class extends Error {
@@ -27450,13 +28103,13 @@ var ClientSession = class {
       this.#conn?.resume();
       const sent = this.#conn.send({ kind: "chat", body: request.text, author: "human" });
       updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: 0 }));
-      const to = state.peer ? displayName(state.peer.name) : "your collaborator";
+      const to = this.#peerLabel(state, false);
       return {
         ok: true,
         text: sent.status === "sent" ? `pairwire: sent your message to ${to} as you (id ${sent.id}). It is already sent; do not send it again.` : `pairwire: queued your message for ${to} (id ${sent.id}); it goes out when they connect. Do not send it again.`
       };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError;
+      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof NobodyJoinedError;
       if (!known) this.#o.log.error("ctl_failed", e);
       return { ok: false, text: `pairwire: ${known ? e.message : "internal error; see the MCP server log."}` };
     }
@@ -27564,20 +28217,25 @@ ${rendered}` }) + "\n");
       const secret = generateSecret();
       const keys = deriveRoomKeys(secret);
       const name = this.#name(input.name);
+      const size = input.size !== void 0 && input.size >= 3 ? input.size : null;
       createRoom(this.#o.home, { roomId: keys.roomId, secret, relay: config.relay, name, now: this.#now() }, this.#o.env);
+      if (size !== null) createGroup(this.#o.home, keys.roomId, size);
       bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant());
       this.#open(keys.roomId);
-      const share = encodeShareString(secret, config.relay ? parseRelayAddress(config.relay) : void 0);
+      const share = encodeShareString(secret, config.relay ? parseRelayAddress(config.relay) : void 0, { group: size !== null });
       const reached = await this.#waitFor(() => this.#conn?.status().socket === "joined" || !this.#roomOpen(), this.#o.startWaitMs ?? 1e4);
-      if (!this.#roomOpen()) throw new ToolError("The relay refused the new room. Try /pairwire:start again.");
+      if (!this.#roomOpen()) {
+        if (readState(this.#o.home, keys.roomId)?.error === "unsupported_version") throw new ToolError(NO_GROUP_RELAY);
+        throw new ToolError("The relay refused the new room. Try /pairwire:start again.");
+      }
       return [
-        "Room created. Show the user this share string once, in a code block, and tell them to send it to their",
-        "collaborator over a channel they trust (Slack DM, Signal, in person). Do not repeat it anywhere else and",
-        "never send it through pairwire.",
+        size !== null ? `Room for ${size} created. Show the user this share string once, in a code block, and tell them to send it to the` : "Room created. Show the user this share string once, in a code block, and tell them to send it to their",
+        size !== null ? "people they want in the room, over a channel they trust (Slack DM, Signal, in person). Do not repeat it anywhere" : "collaborator over a channel they trust (Slack DM, Signal, in person). Do not repeat it anywhere else and",
+        size !== null ? "else and never send it through pairwire." : "never send it through pairwire.",
         "",
         share,
         "",
-        reached ? "Connected to the relay; waiting for the collaborator to join. You'll get a notice when they do." : "The relay isn't reachable yet; pairwire keeps trying in the background. You'll get a notice when the collaborator joins."
+        reached ? `Connected to the relay; waiting for ${size !== null ? "the others" : "the collaborator"} to join. You'll get a notice when ${size !== null ? "each one does" : "they do"}.` : "The relay isn't reachable yet; pairwire keeps trying in the background. You'll get a notice when the collaborator joins."
       ].join("\n");
     });
   }
@@ -27590,18 +28248,23 @@ ${rendered}` }) + "\n");
       const keys = deriveRoomKeys(parsed.secret);
       const relay = parsed.relay ? formatRelayAddress(parsed.relay) : null;
       const roomKey = createMembership(this.#o.home, { roomId: keys.roomId, secret: parsed.secret, relay, name: this.#name(input.name), now: this.#now() }, this.#o.env);
+      if (parsed.group) createGroup(this.#o.home, roomKey, null);
       bindProject(this.#o.home, this.projectDir, roomKey, this.#claimant());
       this.#open(roomKey);
-      const paired = await this.#waitFor(() => !!this.#roomState()?.peer || !this.#roomOpen(), this.#o.joinWaitMs ?? 3e4);
+      const paired = await this.#waitFor(() => this.#hasPeer(roomKey) || !this.#roomOpen(), this.#o.joinWaitMs ?? 3e4);
       const state = readState(this.#o.home, roomKey);
       if (!state || !isOpen(state)) {
-        const why = state?.error === "room_full" ? "the room already has two members" : "the room no longer exists";
+        if (state?.error === "unsupported_version" && parsed.group) throw new ToolError(NO_GROUP_RELAY);
+        const why = state?.error === "room_full" ? parsed.group ? "the room is full" : "the room already has two members" : "the room no longer exists";
         throw new ToolError(`Could not join: ${why}. Ask your collaborator to start a new room.`);
       }
       const ownDefault = config.relay ?? DEFAULT_RELAY_HOST;
       const via = relay !== null && relay !== ownDefault ? ` This room uses relay ${relay}.` : "";
-      if (!paired) return `Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.${via}`;
-      return `Paired with ${this.#peerLabel(state)}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.${via}`;
+      const fill = groupFill(this.#o.home, roomKey);
+      if (!paired) {
+        return parsed.group ? `Joined the room${fill ? ` (${fill})` : ""}; waiting for the others to come online. You'll get a notice as each one does.${via}` : `Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.${via}`;
+      }
+      return `Paired with ${this.#peerLabel({ ...state, roomId: roomKey })}${fill ? ` (${fill})` : ""}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.${via}`;
     });
   }
   send(input) {
@@ -27613,6 +28276,9 @@ ${rendered}` }) + "\n");
       if (extra.length > 0) throw new ToolError(`${extra.join(", ")} ${extra.length === 1 ? "doesn't" : "don't"} apply to kind "${input.kind}"; nothing was sent.`);
       const now = this.#now();
       let plan = null;
+      if (isCollabKind(input.kind) && isGroupRoom(this.#o.home, state.roomId)) {
+        throw new ToolError("Coordination messages work in two-person rooms only; send a chat instead. Nothing was sent.");
+      }
       if (isCollabKind(input.kind)) {
         plan = planStructured({ ...input, kind: input.kind }, {
           loaded: loadView(this.#o.home, state.roomId, { hold: this.#hold(), now }),
@@ -27647,7 +28313,7 @@ ${rendered}` }) + "\n");
       this.#sendTimes.push(now);
       updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: s.hop_count + 1 }));
       const lines = [
-        sent.status === "sent" ? `Sent (id ${sent.id}). You'll see "delivered" in status once their client receives it.` : `Queued (id ${sent.id}): it goes out as soon as your collaborator connects.`,
+        sent.status === "sent" ? `Sent (id ${sent.id}). You'll see "delivered" in status once their client receives it.` : `Queued (id ${sent.id}): it goes out as soon as ${isGroupRoom(this.#o.home, state.roomId) ? "each of them and you have been online at the same time" : "your collaborator connects"}.`,
         ...plan?.lines ?? [],
         ...sent.encoding === "chat" ? ["Your collaborator's pairwire is older, so this went out as a chat message with a header line."] : []
       ];
@@ -27678,7 +28344,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
       const hold = this.#hold();
       const lines = [
         `Room: ${state.status}${state.error ? ` (${state.error})` : ""}`,
-        `Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${conn?.peerConnected ? ", online" : state.peer ? ", offline" : ""}`,
+        ...this.#peerLines(state, conn?.peerConnected ?? false),
         `Connection: ${conn?.halted ? `stopped (${conn.halted})` : conn?.socket ?? "offline"}`,
         `Relay: ${state.relay ?? "default relay"}`,
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
@@ -27703,8 +28369,9 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
       const state = this.#requireRoom();
       const message = input.message?.trim() ? input.message : null;
       if (message !== null) this.#checkOutbound(message, state, "bye", null);
+      const group = isGroupRoom(this.#o.home, state.roomId);
       await this.#conn?.leave(message);
-      return "Left the room. Your collaborator has been told; the room's keys are deleted.";
+      return group ? "Left the room. The others have been told and the room stays open for them; your copy of its keys is deleted." : "Left the room. Your collaborator has been told; the room's keys are deleted.";
     });
   }
   // --- helpers -------------------------------------------------------------------------
@@ -27713,7 +28380,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
     try {
       result = { text: await fn() };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof CollabSendError || e instanceof EnvelopeTooLargeError || e.name === "ShareStringError";
+      const known = e instanceof ToolError || e instanceof CollabSendError || e instanceof EnvelopeTooLargeError || e instanceof NobodyJoinedError || e.name === "ShareStringError";
       if (!known) this.#o.log.error("tool_failed", e);
       result = { text: known ? e.message : "pairwire hit an internal error; details are in its log.", isError: true };
     }
@@ -27728,7 +28395,9 @@ ${this.footer()}` };
     if (!state) return `[pairwire] not in a room${this.#othersText()}`;
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
-    const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
+    const fill = groupFill(this.#o.home, state.roomId);
+    const people = peopleLabel(this.#o.home, state.roomId, state, displayName);
+    const who = `${people ? `paired with ${people}` : fill ? "waiting for the others" : "waiting for your collaborator"}${fill ? ` \xB7 ${fill}` : ""}`;
     const hold = this.#hold();
     const coord = coordFooter(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }).view);
     return `[pairwire] ${who} \xB7 ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))} \xB7 hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)${coord}`;
@@ -27783,17 +28452,20 @@ ${this.footer()}` };
     const state = readState(this.#o.home, roomId);
     if (!secret || !state) throw new ToolError("The room's local state is missing.");
     const keys = deriveRoomKeys(secret);
+    const group = isGroupRoom(this.#o.home, roomId);
+    const caps = this.#o.helloCaps ?? HELLO_CAPS;
     const hello = {
       v: 1,
       name: state.name,
       harness: harnessOf(this.#o.env),
       client: `pairwire/${CLIENT_VERSION}`,
       instance: state.instance,
-      caps: this.#o.helloCaps ?? HELLO_CAPS
+      // Group rooms carry no coordination kinds (02 §8.5).
+      caps: group ? caps.filter((c) => c !== COLLAB_CAP) : caps
     };
     const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${keys.roomId}`;
     this.#roomId = roomId;
-    this.#conn = new RoomConnection({
+    this.#conn = new (group ? GroupConnection : RoomConnection)({
       home: this.#o.home,
       keys,
       roomKey: roomId,
@@ -27906,10 +28578,59 @@ ${this.footer()}` };
   #name(requested) {
     return requested?.trim() || resolveDisplayName(this.#config, this.projectDir, this.#o.env);
   }
-  #peerLabel(state) {
-    return state.peer ? `${displayName(state.peer.name)} (${displayName(state.peer.harness)})` : "your collaborator";
+  /** "Nika (claude-code)", or a group room's members "Nika (claude-code), Ana (codex)". */
+  #peerLabel(state, withHarness = true) {
+    const key = state.roomId ?? this.#roomId;
+    if (key && isGroupRoom(this.#o.home, key)) {
+      return peopleLabel(this.#o.home, key, state, (t) => displayName(t)) ?? "the others";
+    }
+    if (!state.peer) return "your collaborator";
+    return withHarness ? `${displayName(state.peer.name)} (${displayName(state.peer.harness)})` : displayName(state.peer.name);
+  }
+  /** Whether the room has someone we hold a session with: its peer, or any group member. */
+  #hasPeer(key) {
+    const state = readState(this.#o.home, key);
+    if (!state) return false;
+    try {
+      const group = readGroup(this.#o.home, key);
+      if (group) return peerList(group).some(([, p]) => p.sessions.current !== null);
+    } catch {
+      return false;
+    }
+    return !!state.peer;
+  }
+  /** status's people lines: `Peer:` in a pair room, `Members:` in a group room (04 §4). */
+  #peerLines(state, peerConnected) {
+    let group;
+    try {
+      group = readGroup(this.#o.home, state.roomId);
+    } catch {
+      return ["Members: unreadable (group.json)"];
+    }
+    if (!group) return [`Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${peerConnected ? ", online" : state.peer ? ", offline" : ""}`];
+    const present = new Set(this.#conn instanceof GroupConnection ? this.#conn.presentMembers() : []);
+    const members = peerList(group).filter(([, p]) => !p.left);
+    const listed = members.map(([i, p]) => `${p.name !== null ? `${displayName(p.name)} (${displayName(p.harness ?? "other")})` : "someone not yet met"}, ${present.has(i) ? "online" : "offline"}`);
+    return [`Members: you${listed.length > 0 ? `; ${listed.join("; ")}` : ""} (${groupFill(this.#o.home, state.roomId) ?? "room for more"})`];
   }
   #recentSends(roomId) {
+    if (isGroupRoom(this.#o.home, roomId)) {
+      const byId = /* @__PURE__ */ new Map();
+      for (const e of readGroupOutbox(this.#o.home, roomId)) {
+        if (e.envelope.kind === "ack") continue;
+        const item = byId.get(e.envelope.id) ?? { kind: e.envelope.kind, copies: [] };
+        item.copies.push(e.status);
+        byId.set(e.envelope.id, item);
+      }
+      const recent2 = [...byId.entries()].sort((a, b) => a[0] < b[0] ? 1 : -1).slice(0, 5);
+      if (recent2.length === 0) return "";
+      const state = (copies) => {
+        const done = copies.filter((c) => c === "delivered").length;
+        if (done === copies.length) return "delivered";
+        return `${copies.some((c) => c === "sent") ? "sent" : "queued"}, delivered to ${done} of ${copies.length}`;
+      };
+      return ["Your recent messages:", ...recent2.map(([id, i]) => `- ${id} (${i.kind}): ${state(i.copies)}`)].join("\n");
+    }
     const recent = readOutbox(this.#o.home, roomId).filter((e) => e.envelope.kind !== "ack").slice(-5).reverse();
     if (recent.length === 0) return "";
     const kinds = new Map(readCoordSent(this.#o.home, roomId).map((c) => [c.envelope.id, c.envelope.kind]));

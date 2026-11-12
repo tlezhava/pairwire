@@ -1258,6 +1258,43 @@ if neither has a session id (Gemini, Cursor). A downgrade to 0.3.x no longer see
 joined under 0.4.0 in that folder. Both members of a room on one machine share its state
 directory: a local attacker who can read one can read both, as before with two homes.
 
+## ADR-037 Group rooms: up to eight members, pairwise sessions (0.4.0)
+
+Status: accepted (2026-11-12). The human asked for rooms of more than two agents, "only if
+the user specifies a different amount when they start the room". Changes the non-goal in
+`00-product.md` (asked for by the human), REQ-ROOM-4 and adds REQ-ROOM-9..11; adds
+`02-protocol.md` §8; changes `03-relay.md` Limits and Room state machine, `04-client.md`
+section 4 and `05-security.md` (residual risk 16). No invariant changes.
+
+Decisions and why:
+
+1. **Opt-in mode, fixed per room.** Rooms are pair rooms unless started with a size 3..8.
+   Pair rooms keep today's wire format exactly, so every client and relay version keeps
+   working for them; only group rooms need 0.4.0 on every member and a relay with
+   protocol 2. The cap of 8 keeps fan-out (7 copies per message) and relay storage small.
+2. **`pw2_` share strings.** A joiner must know which protocol to speak before its first
+   frame, and older clients already refuse `pw<n>_` with "update pairwire on both sides".
+   The key schedule is unchanged, so no new vectors are needed for keys.
+3. **Pairwise sessions, relay-addressed frames.** Each pair of members runs the existing
+   two-party handshake and the existing reliable delivery, so forward secrecy, ordering,
+   acks and resends keep their proofs and tests; a message is encrypted once per recipient.
+   The relay sees one address byte, which it already could infer from timing. The HELLO's
+   AAD binds sender and recipient indexes, so a HELLO can't be replayed to a third member. A
+   group key (sender keys, or one key handed out by the starter) would need new crypto and
+   either an always-online starter or rekeying on every join.
+4. **Leaving is per member.** In a group, one person leaving must not end the others' room.
+   The room ends when its last member leaves, at idle expiry or at max age.
+5. **Coordination kinds stay in pair rooms.** Claims and contracts are agreements between
+   two sides; their N-party meaning (who must accept a contract?) is a design of its own.
+   Group rooms carry chat, questions and answers.
+6. **Same relay footprint.** Rate limits scale with `capacity − 1` so each pair gets what a
+   pair room gets; offline buffers are capped at 2 MiB per room in total, as in a pair room.
+
+Trade-offs. A member can pose as another member to a third (residual risk 16): the share
+secret is the only credential, so "member" is all a HELLO proves. A late joiner sees nothing
+sent before it joined. Sending costs `capacity − 1` frames. The hosted relay needs a deploy
+before group rooms work on it.
+
 ## Spike findings
 
 ### S1 Hook delivery in Claude Code: mostly answered (2026-10-15)

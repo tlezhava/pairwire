@@ -6,12 +6,12 @@ import {
   pathProblem,
   runningPluginRoot,
   shellQuote
-} from "./chunk-BJDTC27K.mjs";
+} from "./chunk-FZSM52CX.mjs";
 import "./chunk-Q6V7YHA7.mjs";
 import "./chunk-HDMYU3UC.mjs";
 import {
   external_exports
-} from "./chunk-O5I4E6QX.mjs";
+} from "./chunk-NJ2ULMK2.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/install-cursor.ts

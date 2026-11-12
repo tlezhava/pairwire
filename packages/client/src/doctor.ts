@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_RELAY_HOST, displayName, parseRelayAddress, relayUrl } from "@pairwire/core";
 import { bindingsForRoom, isProcessAlive } from "./binding.js";
 import { loadConfig } from "./config.js";
+import { peopleLabel } from "./group-files.js";
 import { CtlProofError, CtlUnreachableError, ctlCall, ctlTarget, type CtlProofFailure } from "./ctl-client.js";
 import { CtlKeyError, readCtlKey } from "./ctl-key.js";
 import { activeFlagPath, roomDir, roomFile } from "./paths.js";
@@ -80,7 +81,7 @@ export async function runDoctor(o: DoctorOptions): Promise<number> {
     try {
       const s = readState(o.home, id);
       if (!s) continue;
-      const peer = s.peer ? `${displayName(s.peer.name)} (${displayName(s.peer.harness)})` : "no peer yet";
+      const peer = peopleLabel(o.home, id, s, displayName) ?? "no peer yet";
       const until = isOpen(s) ? `, expires ${new Date(expiresAt(s)).toISOString()}` : "";
       line(s.error && isOpen(s) ? "warn" : "ok", `room ${id.slice(0, 6)}…: ${s.status}${s.error ? ` (${s.error})` : ""}, ${peer}${until}`);
       if (isOpen(s)) relays.add(s.relay ?? DEFAULT_RELAY_HOST ?? "");

@@ -21,7 +21,7 @@ protect, against whom, and the invariants code must keep.
 |---|---|---|
 | A1 Relay operator (incl. the maintainer) | Sees all frames, room ids, timing, sizes, IPs | E2E encryption (INV-1); display names inside encrypted HELLO; our relay code never logs ids or IPs (platform request logs may contain `room_id`, which reveals nothing about keys) |
 | A2 Network attacker | Observes or tampers with traffic | TLS (`wss://`), AEAD on every frame, sequence numbers |
-| A3 Someone who later obtains the share string (chat logs, agent transcript) | Knows the secret | Ephemeral X25519 session keys (cannot decrypt passively); sealed rooms (cannot join once both slots are taken); peer `instance` change warning |
+| A3 Someone who later obtains the share string (chat logs, agent transcript) | Knows the secret | Ephemeral X25519 session keys (cannot decrypt passively); sealed rooms (cannot join once all slots are taken); peer `instance` change warning |
 | A4 The peer, or the peer's compromised agent | Sends arbitrary text to your agent | INV-2, INV-3, INV-8; agent guide; harness permission prompts; hop budget |
 | A5 Your own agent, oversharing | Sends secrets or more code than intended | Outbound approval (INV-4); secret scanner (INV-5); agent guide |
 | A6 Two agents in a loop | Burns tokens and time | Hop budget (INV-6), client and relay rate limits, Stop hook only blocks for new messages, a D3 wake turn doesn't count as human input |
@@ -210,6 +210,13 @@ New risks and their mitigations:
     the client then holds a session nobody can read, and messages stall until the next
     real handshake. Confidentiality is unaffected, because no one holds the matching
     private key.
+16. **(ADR-037) Members of a group room can pose as one another.** Every member holds the
+    share secret, and a HELLO proves only that its sender is a member. Names, harnesses and
+    instances are what each member says about itself, so one member can claim another's
+    name to a third; each pair still has its own session keys, and a peer whose instance or
+    name changes is reported per peer as in pair rooms. A member sees only messages sent to
+    it, never another pair's traffic. Sealing comes later than in a pair room: until all
+    `capacity` slots are taken, anyone who obtains the share string can still join.
 
 ## Security review gate
 

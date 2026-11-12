@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CLIENT_LIMITS, RELAY_LIMITS, relayInfo } from "../src/limits.js";
+import { CLIENT_LIMITS, GROUP_LIMITS, RELAY_LIMITS, relayInfo } from "../src/limits.js";
 import { parseRelayFrame } from "../src/relay-frames.js";
 import { RelayRoom, decodeRoomState, encodeRoomState, type Effect, type Output, type RoomState } from "../src/relay-room.js";
 
@@ -66,7 +66,7 @@ describe("limits (03, Limits)", () => {
   });
 
   it("are reported by GET /v1/info", () => {
-    expect(relayInfo("0.1.0")).toEqual({ protocol: [1], relay: "0.1.0", limits: RELAY_LIMITS });
+    expect(relayInfo("0.1.0")).toEqual({ protocol: [1, 2], relay: "0.1.0", limits: RELAY_LIMITS, group_limits: GROUP_LIMITS });
   });
 });
 
@@ -200,7 +200,7 @@ describe("protocol errors before and after join (02 §5)", () => {
   it("closes with 4004 for an unsupported protocol version", () => {
     const h = harness();
     h.room.connect("s1");
-    expect(closes(h.room.text("s1", '{"t":"join","v":2,"token":null}'))).toEqual([["s1", 4004]]);
+    expect(closes(h.room.text("s1", '{"t":"join","v":3,"token":null}'))).toEqual([["s1", 4004]]);
   });
 
   it("closes with 4005 for a control frame over 1 KiB, measured in UTF-8 bytes", () => {

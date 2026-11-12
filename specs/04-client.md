@@ -402,7 +402,7 @@ appears only when the count is above zero, and names the human's command for the
 
 | Tool | Input | Behavior |
 |---|---|---|
-| `start` | `{ name?: string }` | Fails if this project has a room with status `active` (a handshake has happened). If a room is still `waiting` (no handshake yet), sends relay `leave` for it and creates a new one. Generates the secret, connects, returns the share string and instructions for the human. The share string is returned **only** here (REQ-ROOM-1). |
+| `start` | `{ name?: string, size?: integer }` | `size` 3..8 starts a group room (section 4, Group rooms); absent or 2, a pair room. Fails if this project has a room with status `active` (a handshake has happened). If a room is still `waiting` (no handshake yet), sends relay `leave` for it and creates a new one. Generates the secret, connects, returns the share string and instructions for the human. The share string is returned **only** here (REQ-ROOM-1). |
 | `join` | `{ share: string, name?: string }` | Parses the share string (REQ-ROOM-8), connects to its relay, waits up to 30 s for the handshake. Success → peer name and harness. If the peer isn't online within 30 s, the room stays bound and connected in the background and the tool returns "joined; waiting for your collaborator to come online". Relay errors (4001 etc.) → no binding is kept. |
 | `send` | `{ kind: "chat"\|"question"\|"answer", body: string, reply_to?: string }`, plus the coordination kinds and fields below | Validates (`body` max 24 KiB UTF-8 **and** serialized envelope max 28 KiB, `02` §6), secret-scans (REQ-SAFE-3), checks the hop budget (REQ-SAFE-4), rate-limits (20/min), then follows the sender rules in `02` §6.2: sent under the current session even if the peer is offline (the relay buffers), or queued if no session has ever existed. Returns `{ id, status: "sent"\|"queued" }`; "delivered" arrives later via ack. Never sets `author: "human"`. |
 | `inbox` | `{}` | Returns all undelivered messages except held ones (section 5, Hold mode), wrapped (section 5), marks them delivered, and lists delivery status of the agent's last 5 sent messages. |
@@ -411,6 +411,40 @@ appears only when the count is above zero, and names the human's command for the
 
 There is deliberately **no** tool to reset the hop budget, change config, send as a
 human, or release or drop held messages: those are human-only paths (`ctl`, section 8).
+
+### Group rooms (ADR-037, `02` §8)
+
+- **Starting.** `start` with `size` 3..8 joins the relay with `v: 2` and `capacity: size` and
+  returns a `pw2_` share string. `/pairwire:start` passes a number the human gives ("for 4")
+  as `size`. `join` reads the prefix: `pw1_` joins as a pair room, `pw2_` as a group room.
+  A relay that answers a group room's join with 4004 doesn't host group rooms; the room is
+  ended locally and the tool says to use a relay with protocol 2 (`/v1/info`).
+- **State.** `state.json` keeps the schema of section 3 (0.3.x parses it with a strict
+  schema when it lists rooms): `token`, `epoch`, `status`, `relay`, `instance`, `name`,
+  `hop_count` and the rest mean what they mean in a pair room; `member`, `sessions`,
+  `my_seq`, `peer_max_seq` and `peer` stay at their initial values. What is per peer lives in
+  `rooms/<room_key>/group.json` (0600): `{"v":1,"capacity","member","peers":{"<index>":
+  {"name","harness","instance","sessions":{"current","previous"},"caps":{<sid>:[…]},
+  "my_seq","peer_max_seq","left"}}}`, rewritten atomically under its lock. A peer appears
+  there with its first accepted HELLO; until then copies addressed to a joined member it
+  has no session with wait in the outbox. `status` becomes `active` with the first session.
+- **Outbox.** Each line carries `to` (the peer's index) in a group room; one message is one
+  line per recipient, with the same envelope `id` and that peer's `seq`. Acks, resends and
+  "delivered" are per line; the `inbox` tool's delivery status reports a message delivered
+  once every copy is.
+- **Inbound.** Inbox entries are as in a pair room, with `from` and `harness` from the
+  sending peer's HELLO, so rendering, hooks, hold mode, the transcript and the ledger are
+  unchanged.
+- **Kinds.** `send` accepts `chat`, `question` and `answer`; a coordination kind (section 4,
+  Structured kinds) is refused with "Coordination messages work in two-person rooms only;
+  send a chat instead." HELLOs carry no `collab1`.
+- **Leaving.** `leave` sends `bye` to every peer with a session, then relay `leave`, and
+  removes the room locally (`left`). A peer's `bye` or `peer_left` (`left`) queues the
+  notice "<name> left the room; it stays open for the others." and marks the peer `left`;
+  the room ends locally only on 4003 or 4002, at `expires_at`, or when we leave.
+- **Footer and status.** `paired with Nika (claude-code), Ana (codex) · 3 of 4 joined`;
+  `status` lists each peer with online or offline. Notices (`peer_joined`, `peer_changed`,
+  `peer_left`) name the peer they are about.
 
 ### Structured kinds in the tools (M5)
 
@@ -1311,9 +1345,10 @@ Commands are short prompt templates. Example `commands/start.md`:
 ```markdown
 ---
 description: Start a pairwire room and get a share string for your collaborator
-argument-hint: "[display name]"
+argument-hint: "[display name] [for <3-8> people]"
 ---
-Call the pairwire `start` tool (pass "$ARGUMENTS" as `name` if it is not empty).
+Call the pairwire `start` tool. If "$ARGUMENTS" asks for a room for more than two people (for
+example "for 4"), pass that number as `size`; pass any other text in "$ARGUMENTS" as `name`.
 Show the returned share string to the user once, in a code block, and tell them to send it
 to their collaborator over a channel they trust (Slack DM, Signal, in person). Do not
 repeat the share string anywhere else, and never send it through pairwire.

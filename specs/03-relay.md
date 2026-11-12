@@ -14,7 +14,7 @@ short-lived membership tokens and a small buffer of opaque frames for an offline
 | Route | Behavior |
 |---|---|
 | `GET /v1/rooms/:room_id` (Upgrade: websocket) | Room connection. `room_id` must match `^[a-z2-7]{26}$`, otherwise HTTP 400. Without an `Upgrade: websocket` header: HTTP 426. relay-node answers HTTP 503 when a relay-wide limit is reached (Relay-wide limits). |
-| `GET /v1/info` | `{"protocol":[1],"relay":"<semver>","limits":{...}}` — the limits table below as JSON. |
+| `GET /v1/info` | `{"protocol":[1,2],"relay":"<semver>","limits":{...}}` — the limits table below as JSON. Protocol 2 means the relay can host group rooms (`02-protocol.md` §8). |
 | `GET /health` | `200 ok` |
 | anything else | 404 |
 
@@ -28,14 +28,14 @@ reported at `/v1/info`.
 
 | Limit | Value | On violation |
 |---|---|---|
-| Members per room | 2 | close 4001 `room_full` |
+| Members per room | 2; a group room's `capacity`, 3 to 8 (`02` §8) | close 4001 `room_full` |
 | Join deadline | 10 s after upgrade | close 4006 |
 | Unjoined sockets per room | 8 | the oldest unjoined socket is closed with 4008 `overloaded` |
 | Binary frame size | 64 KiB | `error too_large`, frame dropped |
 | Control frame size | 1 KiB | close 4005 |
-| Binary frames per member | 60 per minute, burst 20 | `error rate_limited` with `retry_after`, frame dropped |
+| Binary frames per member | 60 per minute, burst 20; in a group room `capacity − 1` times both | `error rate_limited` with `retry_after`, frame dropped |
 | Relay replies per socket (`pong`, `error`) | 60 per minute, burst 10 | reply not sent; the frame that caused it is still handled |
-| Offline buffer per member | 100 frames or 1 MiB, whichever first | `error buffer_full` to sender, frame dropped |
+| Offline buffer per member | 100 frames or 1 MiB, whichever first; in a group room 100 frames or 2 MiB ÷ `capacity`, so a room never holds more than a pair room | `error buffer_full` to sender, frame dropped |
 | Buffered frame lifetime | 72 h | silently discarded |
 | Room idle expiry | 72 h with no connected member and no frame | room becomes a tombstone; joins get 4003 |
 | Room max age | 7 days from creation | sockets closed with 4003; tombstone kept until max age, then all storage deleted |
@@ -83,7 +83,9 @@ interface RoomState {
   lastActivityAt: number;          // ms; any frame, connect or disconnect
   epoch: number;                   // +1 on every accepted socket (02 §4.1)
   ended: null | { at: number; reason: "left" | "expired" };   // tombstone: no tokens, no buffers
-  slots: { a?: Slot; b?: Slot };
+  slots: { a?: Slot; b?: Slot };   // a pair room
+  capacity?: number;               // a group room (02 §8): 3..8; absent in a pair room
+  members?: (Slot | "left" | null)[];   // a group room's slots by index: free, taken, retired
 }
 interface Slot {
   token: string;                   // base64url(32 random bytes), issued by the relay
@@ -94,8 +96,11 @@ interface Slot {
 
 Events: `connect`, `controlFrame(slot?, json)`, `binaryFrame(slot, bytes)`, `disconnect`,
 `alarm`. Outputs: frames to send, sockets to close, state to persist, next alarm time.
-Behavior is exactly the membership rules in `02-protocol.md` section 5 plus the limits
-above.
+Behavior is exactly the membership rules in `02-protocol.md` section 5 (pair rooms) or
+§8.2 (group rooms) plus the limits above. The state of a pair room has no `capacity` or
+`members`, so a stored pair room reads the same before and after ADR-037. A group room keeps
+`slots` empty. A socket's member is `"a"`, `"b"` or a group index; the Durable Object's
+socket attachment stores it as is.
 
 Host hooks:
 

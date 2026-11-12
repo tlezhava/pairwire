@@ -1,6 +1,7 @@
 // Leaving and ending rooms locally (04 §3).
 import { removeBindingFor } from "./binding.js";
 import { removeFile } from "./fs-util.js";
+import { wipeGroupSessions } from "./group-files.js";
 import { roomFile } from "./paths.js";
 import { type RoomState, updateState } from "./state.js";
 
@@ -19,6 +20,7 @@ export function closeRoomLocally(home: string, roomId: string, status: "left" | 
     error: error ?? s.error,
   }));
   removeFile(roomFile(home, roomId, "caps.json")); // the sessions it describes are gone
+  wipeGroupSessions(home, roomId); // a group room's per-peer keys (04 §4, Group rooms)
   removeBindingFor(home, roomId);
   return state;
 }

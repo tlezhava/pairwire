@@ -14,10 +14,10 @@ import {
   runningPluginRoot,
   shellQuote,
   tomlPath
-} from "./chunk-BJDTC27K.mjs";
+} from "./chunk-FZSM52CX.mjs";
 import "./chunk-Q6V7YHA7.mjs";
 import "./chunk-HDMYU3UC.mjs";
-import "./chunk-O5I4E6QX.mjs";
+import "./chunk-NJ2ULMK2.mjs";
 import "./chunk-KARZWXGF.mjs";
 export {
   COMMANDS,

@@ -164,7 +164,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
   `status` (ADR-035).
 - [x] Several memberships on one machine and in one project folder: Claude Code and Codex
   in one room from the same machine (ADR-036).
-- [ ] Rooms with more than two members when the starter asks for it (ADR-037).
+- [x] Rooms with more than two members when the starter asks for it (ADR-037). The hosted relay needs a deploy before group rooms work on it.
 
 ## M7 — Hardening toward 1.0
 

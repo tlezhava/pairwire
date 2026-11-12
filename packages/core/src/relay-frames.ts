@@ -58,3 +58,63 @@ export function parseRelayFrame(text: string): RelayFrameResult {
   const fields = new Set(parsed.error.issues.map((i) => i.path[0]).filter((k): k is string => typeof k === "string"));
   return invalid(t as RelayFrame["t"], [...fields].sort());
 }
+
+// --- group rooms (02 §8.2, ADR-037) ---------------------------------------------------
+
+const memberIndex = z.number().int().min(0).max(7);
+
+const groupJoined = z
+  .object({
+    t: z.literal("joined"),
+    member: memberIndex,
+    token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    epoch: u32,
+    capacity: z.number().int().min(3).max(8),
+    taken: z.array(memberIndex).max(7),
+    present: z.array(memberIndex).max(7),
+    buffered: count,
+    expires_at: count,
+  })
+  .superRefine((f, ctx) => {
+    if (f.member >= f.capacity) ctx.addIssue({ code: "custom", path: ["member"], message: "member out of range" });
+    const valid = (list: number[]) => list.every((m, i) => m < f.capacity && m !== f.member && (i === 0 || m > list[i - 1]!));
+    if (!valid(f.taken)) ctx.addIssue({ code: "custom", path: ["taken"], message: "taken out of range or order" });
+    if (!valid(f.present) || !f.present.every((m) => f.taken.includes(m))) ctx.addIssue({ code: "custom", path: ["present"], message: "present out of range, order or not taken" });
+  });
+
+export const groupRelayFrameSchema = z.discriminatedUnion("t", [
+  groupJoined,
+  z.object({ t: z.literal("peer_joined"), member: memberIndex, epoch: u32 }),
+  z.object({ t: z.literal("peer_left"), member: memberIndex, reason: z.enum(["disconnected", "left"]) }),
+  z.object({
+    t: z.literal("error"),
+    code: z.string().regex(/^[a-z_]{1,32}$/),
+    retry_after: z.number().min(0).max(MAX_RETRY_AFTER_S).optional(),
+  }),
+  z.object({ t: z.literal("pong") }),
+]);
+export type GroupRelayFrame = z.output<typeof groupRelayFrameSchema>;
+
+export type GroupRelayFrameResult =
+  | { ok: true; frame: GroupRelayFrame }
+  | { ok: false; reason: "unknown_type" }
+  | { ok: false; reason: "invalid"; t: GroupRelayFrame["t"] | null; fields: string[] };
+
+/** parseRelayFrame for a group room's text frames, with the §8.2 bounds. */
+export function parseGroupRelayFrame(text: string): GroupRelayFrameResult {
+  const invalid = (t: GroupRelayFrame["t"] | null, fields: string[] = []): GroupRelayFrameResult => ({ ok: false, reason: "invalid", t, fields });
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return invalid(null);
+  }
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return invalid(null);
+  const t = (json as { t?: unknown }).t;
+  if (typeof t !== "string") return invalid(null);
+  if (!KNOWN.has(t)) return { ok: false, reason: "unknown_type" };
+  const parsed = groupRelayFrameSchema.safeParse(json);
+  if (parsed.success) return { ok: true, frame: parsed.data };
+  const fields = new Set(parsed.error.issues.map((i) => i.path[0]).filter((k): k is string => typeof k === "string"));
+  return invalid(t as GroupRelayFrame["t"], [...fields].sort());
+}

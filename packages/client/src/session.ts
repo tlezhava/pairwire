@@ -30,6 +30,8 @@ import { z } from "zod";
 import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, otherMemberships } from "./binding.js";
 import { holdMode, loadConfig, pushes, resolveDisplayName, type Config } from "./config.js";
 import { RoomConnection, type ConnectionEvents, type SendInput, type SocketFactory, type Timers, type Tuning } from "./connection.js";
+import { GroupConnection, NobodyJoinedError } from "./group-connection.js";
+import { createGroup, groupFill, isGroupRoom, peerList, peopleLabel, readGroup, readGroupOutbox } from "./group-files.js";
 import type { Logger } from "./log.js";
 import { chooseCtlPath, configPath, roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
@@ -133,7 +135,20 @@ const OPTIONAL_FIELDS = Object.keys(sendInputSchema.shape).filter((k) => k !== "
 
 /** The HELLO caps of an M5 client (02 §6.3.2). */
 export const HELLO_CAPS = ["ack", "say", COLLAB_CAP];
-export const startInputSchema = z.object({ name: z.string().max(200).optional() });
+
+/** A relay without group rooms answers a v2 join with 4004 (04 §4, Group rooms). */
+const NO_GROUP_RELAY =
+  "This relay doesn't host rooms for more than two people (it needs protocol 2, pairwire's relay 0.4.0 or later). Start a two-person room, or use a relay that supports it.";
+export const startInputSchema = z.object({
+  name: z.string().max(200).optional(),
+  size: z
+    .number()
+    .int()
+    .min(2)
+    .max(8)
+    .optional()
+    .describe("Only when your user asks for a room for more than two people: how many, 3 to 8. Leave it out otherwise."),
+});
 export const joinInputSchema = z.object({ share: z.string().max(4096), name: z.string().max(200).optional() });
 export const leaveInputSchema = z.object({ message: z.string().optional() });
 
@@ -149,7 +164,7 @@ export class ClientSession {
   #fatal: string | null = null;
   #config: Config | null = null;
   #roomId: string | null = null;
-  #conn: RoomConnection | null = null;
+  #conn: RoomConnection | GroupConnection | null = null;
   #ctl: Promise<CtlServer | null> | null = null;
   /** D3 waiters by harness session id: at most one each (04 §6). */
   #waiters = new Map<string, Socket>();
@@ -214,7 +229,7 @@ export class ClientSession {
       this.#conn?.resume();
       const sent = this.#conn!.send({ kind: "chat", body: request.text, author: "human" });
       updateState(this.#o.home, state.roomId, (s) => ({ ...s, hop_count: 0 }));
-      const to = state.peer ? displayName(state.peer.name) : "your collaborator";
+      const to = this.#peerLabel(state, false);
       return {
         ok: true,
         text: sent.status === "sent"
@@ -222,7 +237,7 @@ export class ClientSession {
           : `pairwire: queued your message for ${to} (id ${sent.id}); it goes out when they connect. Do not send it again.`,
       };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError;
+      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof NobodyJoinedError;
       if (!known) this.#o.log.error("ctl_failed", e);
       return { ok: false, text: `pairwire: ${known ? (e as Error).message : "internal error; see the MCP server log."}` };
     }
@@ -340,21 +355,31 @@ export class ClientSession {
       const secret = generateSecret();
       const keys = deriveRoomKeys(secret);
       const name = this.#name(input.name);
+      // 3..8: a group room (02 §8, ADR-037); otherwise a pair room, as every version speaks.
+      const size = input.size !== undefined && input.size >= 3 ? input.size : null;
       createRoom(this.#o.home, { roomId: keys.roomId, secret, relay: config.relay, name, now: this.#now() }, this.#o.env);
+      if (size !== null) createGroup(this.#o.home, keys.roomId, size);
       bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant());
       this.#open(keys.roomId);
-      const share = encodeShareString(secret, config.relay ? parseRelayAddress(config.relay) : undefined);
+      const share = encodeShareString(secret, config.relay ? parseRelayAddress(config.relay) : undefined, { group: size !== null });
       const reached = await this.#waitFor(() => this.#conn?.status().socket === "joined" || !this.#roomOpen(), this.#o.startWaitMs ?? 10_000);
-      if (!this.#roomOpen()) throw new ToolError("The relay refused the new room. Try /pairwire:start again.");
+      if (!this.#roomOpen()) {
+        if (readState(this.#o.home, keys.roomId)?.error === "unsupported_version") throw new ToolError(NO_GROUP_RELAY);
+        throw new ToolError("The relay refused the new room. Try /pairwire:start again.");
+      }
       return [
-        "Room created. Show the user this share string once, in a code block, and tell them to send it to their",
-        "collaborator over a channel they trust (Slack DM, Signal, in person). Do not repeat it anywhere else and",
-        "never send it through pairwire.",
+        size !== null
+          ? `Room for ${size} created. Show the user this share string once, in a code block, and tell them to send it to the`
+          : "Room created. Show the user this share string once, in a code block, and tell them to send it to their",
+        size !== null
+          ? "people they want in the room, over a channel they trust (Slack DM, Signal, in person). Do not repeat it anywhere"
+          : "collaborator over a channel they trust (Slack DM, Signal, in person). Do not repeat it anywhere else and",
+        size !== null ? "else and never send it through pairwire." : "never send it through pairwire.",
         "",
         share,
         "",
         reached
-          ? "Connected to the relay; waiting for the collaborator to join. You'll get a notice when they do."
+          ? `Connected to the relay; waiting for ${size !== null ? "the others" : "the collaborator"} to join. You'll get a notice when ${size !== null ? "each one does" : "they do"}.`
           : "The relay isn't reachable yet; pairwire keeps trying in the background. You'll get a notice when the collaborator joins.",
       ].join("\n");
     });
@@ -371,19 +396,26 @@ export class ClientSession {
       // Another membership of this room on this machine (another agent here started or joined
       // it) keeps its directory; this one gets a fresh room key (04 §3, ADR-036).
       const roomKey = createMembership(this.#o.home, { roomId: keys.roomId, secret: parsed.secret, relay, name: this.#name(input.name), now: this.#now() }, this.#o.env);
+      if (parsed.group) createGroup(this.#o.home, roomKey, null);
       bindProject(this.#o.home, this.projectDir, roomKey, this.#claimant());
       this.#open(roomKey);
-      const paired = await this.#waitFor(() => !!this.#roomState()?.peer || !this.#roomOpen(), this.#o.joinWaitMs ?? 30_000);
+      const paired = await this.#waitFor(() => this.#hasPeer(roomKey) || !this.#roomOpen(), this.#o.joinWaitMs ?? 30_000);
       const state = readState(this.#o.home, roomKey);
       if (!state || !isOpen(state)) {
-        const why = state?.error === "room_full" ? "the room already has two members" : "the room no longer exists";
+        if (state?.error === "unsupported_version" && parsed.group) throw new ToolError(NO_GROUP_RELAY);
+        const why = state?.error === "room_full" ? (parsed.group ? "the room is full" : "the room already has two members") : "the room no longer exists";
         throw new ToolError(`Could not join: ${why}. Ask your collaborator to start a new room.`);
       }
       // 03 Self-hosting: say once when the room lives on a relay other than ours.
       const ownDefault = config.relay ?? DEFAULT_RELAY_HOST;
       const via = relay !== null && relay !== ownDefault ? ` This room uses relay ${relay}.` : "";
-      if (!paired) return `Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.${via}`;
-      return `Paired with ${this.#peerLabel(state)}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.${via}`;
+      const fill = groupFill(this.#o.home, roomKey);
+      if (!paired) {
+        return parsed.group
+          ? `Joined the room${fill ? ` (${fill})` : ""}; waiting for the others to come online. You'll get a notice as each one does.${via}`
+          : `Joined the room; waiting for your collaborator to come online. You'll get a notice when they do.${via}`;
+      }
+      return `Paired with ${this.#peerLabel({ ...state, roomId: roomKey })}${fill ? ` (${fill})` : ""}. Messages from them arrive as <pairwire_message> blocks; follow the pairwire skill.${via}`;
     });
   }
 
@@ -396,6 +428,9 @@ export class ClientSession {
       if (extra.length > 0) throw new ToolError(`${extra.join(", ")} ${extra.length === 1 ? "doesn't" : "don't"} apply to kind "${input.kind}"; nothing was sent.`);
       const now = this.#now();
       let plan: CollabPlan | null = null;
+      if (isCollabKind(input.kind) && isGroupRoom(this.#o.home, state.roomId)) {
+        throw new ToolError("Coordination messages work in two-person rooms only; send a chat instead. Nothing was sent.");
+      }
       if (isCollabKind(input.kind)) {
         plan = planStructured({ ...input, kind: input.kind }, {
           loaded: loadView(this.#o.home, state.roomId, { hold: this.#hold(), now }),
@@ -434,7 +469,7 @@ export class ClientSession {
       const lines = [
         sent.status === "sent"
           ? `Sent (id ${sent.id}). You'll see "delivered" in status once their client receives it.`
-          : `Queued (id ${sent.id}): it goes out as soon as your collaborator connects.`,
+          : `Queued (id ${sent.id}): it goes out as soon as ${isGroupRoom(this.#o.home, state.roomId) ? "each of them and you have been online at the same time" : "your collaborator connects"}.`,
         ...(plan?.lines ?? []),
         ...(sent.encoding === "chat" ? ["Your collaborator's pairwire is older, so this went out as a chat message with a header line."] : []),
       ];
@@ -466,7 +501,7 @@ export class ClientSession {
       const hold = this.#hold();
       const lines = [
         `Room: ${state.status}${state.error ? ` (${state.error})` : ""}`,
-        `Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${conn?.peerConnected ? ", online" : state.peer ? ", offline" : ""}`,
+        ...this.#peerLines(state, conn?.peerConnected ?? false),
         `Connection: ${conn?.halted ? `stopped (${conn.halted})` : (conn?.socket ?? "offline")}`,
         `Relay: ${state.relay ?? "default relay"}`,
         `Inbox: ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))}`,
@@ -490,8 +525,11 @@ export class ClientSession {
       const state = this.#requireRoom();
       const message = input.message?.trim() ? input.message : null;
       if (message !== null) this.#checkOutbound(message, state, "bye", null);
+      const group = isGroupRoom(this.#o.home, state.roomId);
       await this.#conn?.leave(message);
-      return "Left the room. Your collaborator has been told; the room's keys are deleted.";
+      return group
+        ? "Left the room. The others have been told and the room stays open for them; your copy of its keys is deleted."
+        : "Left the room. Your collaborator has been told; the room's keys are deleted.";
     });
   }
 
@@ -506,6 +544,7 @@ export class ClientSession {
         e instanceof ToolError ||
         e instanceof CollabSendError ||
         e instanceof EnvelopeTooLargeError ||
+        e instanceof NobodyJoinedError ||
         (e as Error).name === "ShareStringError";
       if (!known) this.#o.log.error("tool_failed", e);
       result = { text: known ? (e as Error).message : "pairwire hit an internal error; details are in its log.", isError: true };
@@ -520,7 +559,9 @@ export class ClientSession {
     if (!state) return `[pairwire] not in a room${this.#othersText()}`;
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
-    const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
+    const fill = groupFill(this.#o.home, state.roomId);
+    const people = peopleLabel(this.#o.home, state.roomId, state, displayName);
+    const who = `${people ? `paired with ${people}` : fill ? "waiting for the others" : "waiting for your collaborator"}${fill ? ` · ${fill}` : ""}`;
     const hold = this.#hold();
     const coord = coordFooter(loadView(this.#o.home, state.roomId, { hold, now: this.#now() }).view);
     return `[pairwire] ${who} · ${unreadText(inboxCounts(this.#o.home, state.roomId, hold), harnessOf(this.#o.env))} · hop budget ${Math.max(0, budget - state.hop_count)}/${budget} (resets when your user writes)${coord}`;
@@ -585,17 +626,20 @@ export class ClientSession {
     // The relay and the protocol know the room by the id derived from its secret; `roomId` is
     // the local room key, which differs for a second membership on this machine (ADR-036).
     // ctl's proof covers the room key, as `ctl` computes it from the directory (ADR-029).
+    const group = isGroupRoom(this.#o.home, roomId);
+    const caps = this.#o.helloCaps ?? HELLO_CAPS;
     const hello: HelloPayload = {
       v: 1,
       name: state.name,
       harness: harnessOf(this.#o.env),
       client: `pairwire/${CLIENT_VERSION}`,
       instance: state.instance,
-      caps: this.#o.helloCaps ?? HELLO_CAPS,
+      // Group rooms carry no coordination kinds (02 §8.5).
+      caps: group ? caps.filter((c) => c !== COLLAB_CAP) : caps,
     };
     const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${keys.roomId}`;
     this.#roomId = roomId;
-    this.#conn = new RoomConnection({
+    this.#conn = new (group ? GroupConnection : RoomConnection)({
       home: this.#o.home,
       keys,
       roomKey: roomId,
@@ -724,11 +768,62 @@ export class ClientSession {
     return requested?.trim() || resolveDisplayName(this.#config!, this.projectDir, this.#o.env);
   }
 
-  #peerLabel(state: RoomState): string {
-    return state.peer ? `${displayName(state.peer.name)} (${displayName(state.peer.harness)})` : "your collaborator";
+  /** "Nika (claude-code)", or a group room's members "Nika (claude-code), Ana (codex)". */
+  #peerLabel(state: RoomState & { roomId?: string }, withHarness = true): string {
+    const key = state.roomId ?? this.#roomId;
+    if (key && isGroupRoom(this.#o.home, key)) {
+      return peopleLabel(this.#o.home, key, state, (t) => displayName(t)) ?? "the others";
+    }
+    if (!state.peer) return "your collaborator";
+    return withHarness ? `${displayName(state.peer.name)} (${displayName(state.peer.harness)})` : displayName(state.peer.name);
+  }
+
+  /** Whether the room has someone we hold a session with: its peer, or any group member. */
+  #hasPeer(key: string): boolean {
+    const state = readState(this.#o.home, key);
+    if (!state) return false;
+    try {
+      const group = readGroup(this.#o.home, key);
+      if (group) return peerList(group).some(([, p]) => p.sessions.current !== null);
+    } catch {
+      return false;
+    }
+    return !!state.peer;
+  }
+
+  /** status's people lines: `Peer:` in a pair room, `Members:` in a group room (04 §4). */
+  #peerLines(state: RoomState & { roomId: string }, peerConnected: boolean): string[] {
+    let group: ReturnType<typeof readGroup>;
+    try {
+      group = readGroup(this.#o.home, state.roomId);
+    } catch {
+      return ["Members: unreadable (group.json)"];
+    }
+    if (!group) return [`Peer: ${state.peer ? this.#peerLabel(state) : "not joined yet"}${peerConnected ? ", online" : state.peer ? ", offline" : ""}`];
+    const present = new Set(this.#conn instanceof GroupConnection ? this.#conn.presentMembers() : []);
+    const members = peerList(group).filter(([, p]) => !p.left);
+    const listed = members.map(([i, p]) => `${p.name !== null ? `${displayName(p.name)} (${displayName(p.harness ?? "other")})` : "someone not yet met"}, ${present.has(i) ? "online" : "offline"}`);
+    return [`Members: you${listed.length > 0 ? `; ${listed.join("; ")}` : ""} (${groupFill(this.#o.home, state.roomId) ?? "room for more"})`];
   }
 
   #recentSends(roomId: string): string {
+    if (isGroupRoom(this.#o.home, roomId)) {
+      const byId = new Map<string, { kind: string; copies: string[] }>();
+      for (const e of readGroupOutbox(this.#o.home, roomId)) {
+        if (e.envelope.kind === "ack") continue;
+        const item = byId.get(e.envelope.id) ?? { kind: e.envelope.kind, copies: [] };
+        item.copies.push(e.status);
+        byId.set(e.envelope.id, item);
+      }
+      const recent = [...byId.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).slice(0, 5);
+      if (recent.length === 0) return "";
+      const state = (copies: string[]) => {
+        const done = copies.filter((c) => c === "delivered").length;
+        if (done === copies.length) return "delivered";
+        return `${copies.some((c) => c === "sent") ? "sent" : "queued"}, delivered to ${done} of ${copies.length}`;
+      };
+      return ["Your recent messages:", ...recent.map(([id, i]) => `- ${id} (${i.kind}): ${state(i.copies)}`)].join("\n");
+    }
     const recent = readOutbox(this.#o.home, roomId)
       .filter((e) => e.envelope.kind !== "ack")
       .slice(-5)
