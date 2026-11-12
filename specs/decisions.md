@@ -1245,8 +1245,9 @@ Decisions:
    folder stays idle instead of taking over a membership whose room key it would put in the
    relay URL (which would end the membership with 4002).
 3. **No passive mode.** A server without a membership is idle and can start or join. It
-   takes over only a dead binding of its own harness (and own session when both have one),
-   so restarting Claude Code resumes Claude Code's membership, not Codex's (REQ-ROOM-6).
+   takes over only a dead binding of its own harness (preferring its own session id, which a
+   restart usually changes), so restarting Claude Code resumes Claude Code's membership,
+   not Codex's (REQ-ROOM-6).
 4. **Hooks and `ctl` pick their membership.** Hooks by session id, the harness-pid rule or
    the Cursor workspace rule, as before, now over all of the folder's bindings. `ctl` by
    `CLAUDE_CODE_SESSION_ID`, then `--harness`, then the only live one, and refuses to guess.

@@ -217,9 +217,9 @@ it cannot tell whether the human asked for it, so it fails closed.
   and again on every tool call while it owns none, it reads the folder's bindings:
   - one whose `owner_pid` is this process → it owns that one;
   - else one with a dead owner that is **its own**: `owner_harness` absent or equal to the
-    server's `PAIRWIRE_HARNESS`, and, when both sides have a session, `owner_session` equal
-    to the server's → take ownership, record this server's session, and reconnect
-    (REQ-ROOM-6). Among several, a binding whose `owner_session` equals the server's wins,
+    server's `PAIRWIRE_HARNESS` → take ownership, record this server's session, and
+    reconnect (REQ-ROOM-6). A restarted harness usually has a new session id, so the session
+    only ranks: among several, a binding whose `owner_session` equals the server's wins,
     then the most recent `updated_at`;
   - else → idle, ready for `start`/`join`, even while other live sessions in the folder own
     memberships. `status` and the footer then say "not in a room" and name the harness of

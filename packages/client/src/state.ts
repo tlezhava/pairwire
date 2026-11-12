@@ -41,6 +41,28 @@ export class StateError extends Error {
   override readonly name = "StateError";
 }
 
+class RoomExistsError extends StateError {
+  constructor() {
+    super("This room is already stored on this machine.");
+  }
+}
+
+/**
+ * Stores a membership of room `room.roomId` (the room id derived from its secret) and returns
+ * its room key: the room id itself when this machine holds no membership of the room yet,
+ * else 16 fresh random bytes in base32 (04 §3, ADR-036).
+ */
+export function createMembership(home: string, room: NewRoom, env: NodeJS.ProcessEnv = process.env): string {
+  for (let key = room.roomId; ; key = base32Encode(randomBytes(16))) {
+    try {
+      createRoom(home, { ...room, roomId: key }, env);
+      return key;
+    } catch (e) {
+      if (!(e instanceof RoomExistsError)) throw e;
+    }
+  }
+}
+
 export interface NewRoom {
   roomId: string;
   secret: Uint8Array;
@@ -51,7 +73,10 @@ export interface NewRoom {
   now: number;
 }
 
-/** Creates rooms/<id>/ with the secret and a `waiting` state. Fails if the room already exists. */
+/**
+ * Creates rooms/<id>/ with the secret and a `waiting` state. `roomId` is the room key (04 §3,
+ * ADR-036). Fails if a room is already stored under that key.
+ */
 export function createRoom(home: string, room: NewRoom, env: NodeJS.ProcessEnv = process.env): RoomState {
   if (room.secret.length !== SECRET_BYTES) throw new StateError("Room secret has the wrong length.");
   ensurePrivateDir(roomsDir(home));
@@ -59,7 +84,7 @@ export function createRoom(home: string, room: NewRoom, env: NodeJS.ProcessEnv =
     // Not recursive: an existing directory means the room is already stored here.
     mkdirSync(roomDir(home, room.roomId), { mode: PRIVATE_DIR_MODE });
   } catch (e) {
-    if (errorCode(e) === "EEXIST") throw new StateError("This room is already stored on this machine.");
+    if (errorCode(e) === "EEXIST") throw new RoomExistsError();
     throw e;
   }
   writeFileAtomic(roomFile(home, room.roomId, "secret"), room.secret);

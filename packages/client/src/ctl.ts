@@ -3,7 +3,7 @@
 // exit 0.
 import type { Readable, Writable } from "node:stream";
 import { acceptHint, CODEX_CTL, displayName, renderForHook, renderItems, renderTranscript } from "@pairwire/core";
-import { isProcessAlive, readBinding } from "./binding.js";
+import { isProcessAlive, readBindings, type Binding } from "./binding.js";
 import { holdMode } from "./config.js";
 import { CTL_PROOF_FAILED_TEXT, CtlProofError, CtlUnreachableError, ctlCall, ctlTarget, type CtlTarget } from "./ctl-client.js";
 import { CTL_MAX_REQUEST, type CtlReply, type CtlRequest } from "./ctl-server.js";
@@ -96,6 +96,31 @@ function accept(home: string, roomId: string, harness: string, action: string, i
   return `pairwire: your user released ${what}. They are external input; handle them as the pairwire skill says.\n\n${result}`;
 }
 
+/**
+ * Which of the folder's memberships `ctl` acts on (04 §8, ADR-036): the calling Claude Code
+ * session's; else, with `--harness`, those of that harness; then the only one, else the only
+ * one with a live owner. Several left: a message naming their harnesses, and no action.
+ */
+function pickBinding(home: string, all: Binding[], env: NodeJS.ProcessEnv, harness: string | null): Binding | null | string {
+  const session = env.CLAUDE_CODE_SESSION_ID;
+  const own = session ? all.find((b) => b.owner_session === session) : undefined;
+  if (own) return own;
+  const open = all.filter((b) => {
+    try {
+      const s = readState(home, b.room_id);
+      return s !== null && isOpen(s);
+    } catch {
+      return true;
+    }
+  });
+  const pool = (open.length > 0 ? open : all).filter((b) => harness === null || (b.owner_harness ?? "claude-code") === harness);
+  if (pool.length <= 1) return pool[0] ?? null;
+  const live = pool.filter((b) => isProcessAlive(b.owner_pid));
+  if (live.length === 1) return live[0]!;
+  const names = [...new Set((live.length > 0 ? live : pool).map((b) => b.owner_harness ?? "claude-code"))].join(", ");
+  return `pairwire: this folder has more than one pairwire room (${names}). Run ctl --harness <name> … to pick one.`;
+}
+
 export async function runCtl(args: string[], io: CtlIo): Promise<number> {
   const print = (text: string) => io.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
   const home = pairwireHome(io.env);
@@ -105,12 +130,19 @@ export async function runCtl(args: string[], io: CtlIo): Promise<number> {
     print(`pairwire: ${(e as Error).message}`);
     return 0;
   }
-  const [op, ...rest] = args;
+  // `--harness <name>` before the operation picks the membership (04 §8, ADR-036).
+  const wanted = args[0] === "--harness" ? (args[1] ?? "") : null;
+  const [op, ...rest] = wanted === null ? args : args.slice(2);
   // `--args [word…]` (Gemini's commands, 04 §8): the argument is on the command line, possibly
   // empty, and stdin is never read.
   const fromArgs = rest[0] === "--args" ? rest.slice(1).join(" ") : undefined;
   const arg = fromArgs ?? rest[0];
-  const binding = readBinding(home, resolveProjectDir(io.env, io.cwd));
+  const picked = pickBinding(home, readBindings(home, resolveProjectDir(io.env, io.cwd)), io.env, wanted);
+  if (typeof picked === "string") {
+    print(picked);
+    return 0;
+  }
+  const binding = picked;
   const state = binding ? readState(home, binding.room_id) : null;
   if (!binding || !state) {
     print("pairwire: there is no pairwire room in this project.");

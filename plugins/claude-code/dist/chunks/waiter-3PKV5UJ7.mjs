@@ -3,19 +3,18 @@ const require = __pwCreateRequire(import.meta.url);
 import {
   ctlCall,
   ctlTarget
-} from "./chunk-R6E7YRZO.mjs";
-import "./chunk-RFCUS3IU.mjs";
+} from "./chunk-FJQX44XF.mjs";
+import "./chunk-N573BUDX.mjs";
 import {
+  bindingOfSession,
   hookErrorLogger,
   isOpen,
   isProcessAlive,
   loadConfig,
   pushes,
-  readBinding,
   readState,
-  resolveProjectDir,
-  sessionOwnsBinding
-} from "./chunk-KPJ36APL.mjs";
+  resolveProjectDir
+} from "./chunk-HYOGY7D3.mjs";
 import "./chunk-H3AY57FF.mjs";
 import "./chunk-O5I4E6QX.mjs";
 import "./chunk-KARZWXGF.mjs";
@@ -28,8 +27,8 @@ function locate(stdin, o, forWaiting) {
   } catch {
     return null;
   }
-  const binding = readBinding(o.home, resolveProjectDir(o.env, input.cwd ?? o.cwd));
-  if (!sessionOwnsBinding(binding, input.session_id)) return null;
+  const binding = bindingOfSession(o.home, resolveProjectDir(o.env, input.cwd ?? o.cwd), input.session_id);
+  if (!binding) return null;
   if (!isProcessAlive(binding.owner_pid)) return null;
   const state = readState(o.home, binding.room_id);
   if (!state || !isOpen(state)) return null;

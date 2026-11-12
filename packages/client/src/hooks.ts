@@ -3,7 +3,7 @@
 // stdout. Synchronous and fast; never fails the harness: any internal error means no output
 // (or the dialect's neutral answer), logged to hook-errors.log.
 import { displayName, renderForHook } from "@pairwire/core";
-import { adoptOwnerSession, readBinding, readHarnessPid, sessionOwnsBinding, type Binding } from "./binding.js";
+import { adoptOwnerSession, folderBindings, isProcessAlive, readHarnessPid, sessionOwnsBinding, type Binding } from "./binding.js";
 import { DEFAULT_CONFIG, loadConfig, pushes, type Config } from "./config.js";
 import { hookDialect, type HookDialect, type HookInput, type HookOutcome } from "./hook-dialect.js";
 import { writeFileAtomic } from "./fs-util.js";
@@ -54,11 +54,13 @@ function parseInput(stdin: string): Record<string, unknown> {
 
 function hook(event: HookEvent, input: HookInput, dialect: HookDialect, o: HookOptions): HookOutcome | null {
   const project = resolveProjectDir(o.env, input.cwd ?? o.cwd);
-  const binding = readBinding(o.home, project);
-  if (!binding && dialect.name === "cursor") recordCursorMiss(o.home, project);
-  // Only the owning session's hooks act, so a passive session never takes the owner's mail.
-  if (!ownsBinding(binding, input.session_id, project, dialect, o)) return null;
-  const roomId = binding!.room_id;
+  const bindings = folderBindings(o.home, project).map((f) => f.binding);
+  if (bindings.length === 0 && dialect.name === "cursor") recordCursorMiss(o.home, project);
+  // Only the owning session's hooks act, so another session in the folder never takes a
+  // membership's mail (04 §3, ADR-036).
+  const binding = ownedBinding(bindings, input.session_id, project, dialect, o);
+  if (!binding) return null;
+  const roomId = binding.room_id;
   const state = readState(o.home, roomId);
   if (!state || !isOpen(state)) return null;
   let config: Config = { ...DEFAULT_CONFIG, hold: true };
@@ -103,22 +105,31 @@ function hook(event: HookEvent, input: HookInput, dialect: HookDialect, o: HookO
 }
 
 /**
- * The owning session's id matches (04 §3); or the binding has none and this hook runs in the
- * harness that started the owning server (04 §10, ADR-033), and then its session id becomes
- * `owner_session`, so later hooks take the first path. A Cursor hook instead owns a binding
- * that a Cursor server holds for its workspace (ADR-034): the folder is open in one window
- * only, whose one server serves all its chats, so no session or process is compared.
+ * The folder's binding this hook acts for (04 §3, ADR-036): the one whose owning session's id
+ * matches; else one that has none and whose owning server this hook's harness started (04
+ * §10, ADR-033), and then its session id becomes `owner_session`, so later hooks take the
+ * first path. A Cursor hook instead acts for the binding a Cursor server holds for its
+ * workspace (ADR-034): the folder is open in one window only, whose one server serves all its
+ * chats, so no session or process is compared.
  */
-function ownsBinding(binding: Binding | null, session: string | undefined, project: string, dialect: HookDialect, o: HookOptions): boolean {
-  if (dialect.name === "cursor") return binding?.owner_harness === "cursor";
-  if (sessionOwnsBinding(binding, session)) return true;
-  if (!binding || binding.owner_session !== null) return false;
-  const harnessPid = readHarnessPid(o.home, project, binding);
-  if (harnessPid === null || !isHarnessProcess(harnessPid, o)) return false;
-  if (typeof session === "string" && session !== "" && session.length <= 200) {
-    adoptOwnerSession(o.home, project, binding.room_id, binding.owner_pid, session);
+function ownedBinding(bindings: Binding[], session: string | undefined, project: string, dialect: HookDialect, o: HookOptions): Binding | null {
+  const newest = [...bindings].sort((a, b) => b.updated_at - a.updated_at);
+  if (dialect.name === "cursor") {
+    const cursor = newest.filter((b) => b.owner_harness === "cursor");
+    return cursor.find((b) => isProcessAlive(b.owner_pid)) ?? cursor[0] ?? null;
   }
-  return true;
+  const bySession = newest.find((b) => sessionOwnsBinding(b, session));
+  if (bySession) return bySession;
+  for (const binding of newest) {
+    if (binding.owner_session !== null) continue;
+    const harnessPid = readHarnessPid(o.home, project, binding);
+    if (harnessPid === null || !isHarnessProcess(harnessPid, o)) continue;
+    if (typeof session === "string" && session !== "" && session.length <= 200) {
+      adoptOwnerSession(o.home, project, binding.room_id, binding.owner_pid, session);
+    }
+    return binding;
+  }
+  return null;
 }
 
 /** Overwrites the diagnosis file; never throws (a hook must not fail on it). */

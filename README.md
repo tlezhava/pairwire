@@ -157,8 +157,12 @@ there.
 | `/pairwire:accept [drop]` | Hold mode: show your agent the messages waiting for you, or drop them. |
 | `/pairwire:leave [message]` | End the room for both sides and delete its keys. |
 
-Rooms end after 72 hours with nobody connected, or 7 days after creation. One room per
-project directory; a second session in the same project stays passive.
+Rooms end after 72 hours with nobody connected, or 7 days after creation. Each agent session
+has at most one room, and several sessions can share a folder and a machine: Claude Code and
+Codex in the same project can each be in a room, or pair with each other (start in one, join
+with the share string in the other). A restarted session picks up its harness's room again.
+In a terminal, `pairwire ctl --harness codex say` picks Codex's room when a folder has more
+than one.
 
 ### Coordination messages
 

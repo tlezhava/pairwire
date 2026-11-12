@@ -19,7 +19,7 @@ function setup(server: { session?: string | null; harnessPid?: number } = {}) {
   const project = tempDir();
   createRoom(home, { roomId: ROOM, secret: new Uint8Array(32), relay: null, name: "Tazo", now: Date.now() }, {});
   updateState(home, ROOM, (s) => ({ ...s, status: "active", peer: { name: "Nika", harness: "codex", instance: "b".repeat(26) } }));
-  bindProject(home, project, ROOM, { pid: SERVER_PID, session: server.session ?? null, harnessPid: server.harnessPid ?? HARNESS_PID, now: Date.now() }, () => false);
+  bindProject(home, project, ROOM, { pid: SERVER_PID, session: server.session ?? null, harnessPid: server.harnessPid ?? HARNESS_PID, now: Date.now() });
   appendInbox(home, ROOM, {
     source: "peer",
     id: "01JPW000000000000000000001",
@@ -68,7 +68,7 @@ describe("session by harness pid (ADR-033)", () => {
     expect(JSON.parse(readFileSync(side, "utf8"))).toEqual({ owner_pid: 5151, harness_pid: 777 });
     expect(adoptOwnerSession(h.home, h.project, ROOM, 5151, "learned")).toBe(true);
     expect(existsSync(side)).toBe(false);
-    bindProject(h.home, h.project, ROOM, { pid: 5151, session: null, harnessPid: 777, now: Date.now() }, () => true);
+    bindProject(h.home, h.project, ROOM, { pid: 5151, session: null, harnessPid: 777, now: Date.now() });
     expect(existsSync(side)).toBe(true);
     removeBindingFor(h.home, ROOM);
     expect(existsSync(side)).toBe(false);

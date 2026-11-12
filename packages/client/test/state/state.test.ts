@@ -1,9 +1,9 @@
-// Room state, bindings, passive mode and takeover, and INV-9 (04 §3).
-import { chmodSync, existsSync, readdirSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+// Room state, bindings (memberships per folder, ADR-036) and takeover, and INV-9 (04 §3).
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { RELAY_LIMITS } from "@pairwire/core";
 import { describe, expect, it } from "vitest";
-import { bindingPath, bindProject, claimProject, PassiveSessionError, readBinding, sessionOwnsBinding } from "../../src/binding.js";
+import { bindingPath, bindProject, claimProject, otherMemberships, readBinding, readBindings, sessionOwnsBinding } from "../../src/binding.js";
 import { closeRoomLocally } from "../../src/lifecycle.js";
 import { activeFlagPath, chooseCtlPath, isNamedPipePath, roomDir, roomFile } from "../../src/paths.js";
 import { assertStatePrivate, checkStatePermissions, StatePermissionError } from "../../src/permissions.js";
@@ -107,15 +107,15 @@ describe("room state", () => {
   });
 });
 
-describe("bindings: one room per project directory", () => {
+describe("bindings: memberships per project directory (ADR-036)", () => {
   const me = { pid: 1000, session: "session-me", now: NOW };
   const alive = (pids: number[]) => (pid: number) => pids.includes(pid);
 
-  function boundHome(ownerPid: number) {
+  function boundHome(ownerPid: number, harness?: string) {
     const home = newHome();
     const project = tempDir();
     createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
-    bindProject(home, project, ROOM, { pid: ownerPid, session: `session-${ownerPid}`, now: NOW }, alive([]));
+    bindProject(home, project, ROOM, { pid: ownerPid, session: `session-${ownerPid}`, ...(harness ? { harness } : {}), now: NOW });
     return { home, project };
   }
 
@@ -123,12 +123,24 @@ describe("bindings: one room per project directory", () => {
     expect(claimProject(newHome(), tempDir(), me)).toEqual({ kind: "idle" });
   });
 
-  it("runs passive while another live session owns the room, and cannot bind over it", () => {
+  it("binds each membership in its own file, which 0.3.x does not read", () => {
     const { home, project } = boundHome(2000);
-    expect(claimProject(home, project, me, alive([2000]))).toEqual({ kind: "passive", ownerPid: 2000, roomId: ROOM });
-    expect(() => bindProject(home, project, ROOM2, me, alive([2000]))).toThrow(PassiveSessionError);
-    expect(() => bindProject(home, project, ROOM2, me, alive([2000]))).toThrow("Another session in this project (pid 2000) owns the pairwire room.");
-    expect(readBinding(home, project)?.owner_pid).toBe(2000);
+    expect(basename(bindingPath(home, project))).toMatch(new RegExp(`^[0-9a-f]{16}\\.${ROOM}\\.json$`));
+    expect(existsSync(join(home, "bindings", basename(bindingPath(home, project)).replace(`.${ROOM}`, "")))).toBe(false);
+  });
+
+  it("is idle, not refused, while another live session owns a membership, and can bind its own", () => {
+    const { home, project } = boundHome(2000, "codex");
+    expect(claimProject(home, project, { ...me, harness: "claude-code" }, alive([2000]))).toEqual({ kind: "idle" });
+    expect(otherMemberships(home, project, 1000, alive([2000]))).toEqual([{ harness: "codex", pid: 2000 }]);
+    createRoom(home, { roomId: ROOM2, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
+    bindProject(home, project, ROOM2, { ...me, harness: "claude-code" });
+    expect(readBindings(home, project).map((b) => [b.room_id, b.owner_pid]).sort()).toEqual([
+      [ROOM, 2000],
+      [ROOM2, 1000],
+    ]);
+    expect(claimProject(home, project, { ...me, harness: "claude-code" }, alive([2000]))).toEqual({ kind: "owner", roomId: ROOM2, tookOver: false });
+    expect(otherMemberships(home, project, 1000, alive([1000]))).toEqual([]);
   });
 
   it("REQ-ROOM-6 takes over the room of a dead owner and records the new session", () => {
@@ -138,23 +150,49 @@ describe("bindings: one room per project directory", () => {
     expect(claimProject(home, project, me, alive([]))).toEqual({ kind: "owner", roomId: ROOM, tookOver: false });
   });
 
-  it("records the owner's harness, replacing it on takeover (04 §3)", () => {
+  it("takes over only a dead binding of its own harness, or one that names none (04 §3)", () => {
+    const { home, project } = boundHome(2000, "codex");
+    expect(readBinding(home, project)?.owner_harness).toBe("codex");
+    expect(claimProject(home, project, { ...me, harness: "claude-code" }, alive([]))).toEqual({ kind: "idle" });
+    expect(claimProject(home, project, { ...me, harness: "codex" }, alive([]))).toEqual({ kind: "owner", roomId: ROOM, tookOver: true });
+    expect(readBinding(home, project)).toMatchObject({ owner_pid: 1000, owner_harness: "codex" });
+    // A binding from before M5 names no harness: anyone may resume it, and drops none it names.
+    const old = boundHome(2000);
+    claimProject(old.home, old.project, { ...me, pid: 1001, harness: "claude-code" }, alive([]));
+    expect(readBinding(old.home, old.project)).toMatchObject({ owner_pid: 1001, owner_harness: "claude-code" });
+    claimProject(old.home, old.project, { ...me, pid: 1002 }, alive([]));
+    expect(readBinding(old.home, old.project)).not.toHaveProperty("owner_harness");
+  });
+
+  it("among dead bindings of its harness, resumes its own session's, else the most recent", () => {
     const home = newHome();
     const project = tempDir();
     createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
-    bindProject(home, project, ROOM, { pid: 2000, session: null, harness: "codex", now: NOW }, alive([]));
-    expect(readBinding(home, project)?.owner_harness).toBe("codex");
-    claimProject(home, project, { ...me, harness: "claude-code" }, alive([]));
-    expect(readBinding(home, project)).toMatchObject({ owner_pid: 1000, owner_harness: "claude-code" });
-    claimProject(home, project, { ...me, pid: 1001 }, alive([]));
-    expect(readBinding(home, project)).not.toHaveProperty("owner_harness");
+    createRoom(home, { roomId: ROOM2, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
+    bindProject(home, project, ROOM, { pid: 2000, session: "session-me", harness: "claude-code", now: NOW });
+    bindProject(home, project, ROOM2, { pid: 2001, session: "session-x", harness: "claude-code", now: NOW + 1 });
+    expect(claimProject(home, project, { ...me, harness: "claude-code" }, alive([]))).toMatchObject({ roomId: ROOM, tookOver: true });
+    expect(claimProject(home, project, { ...me, pid: 1001, session: "session-new", harness: "claude-code" }, alive([1000]))).toMatchObject({ roomId: ROOM2, tookOver: true });
+  });
+
+  it("rewrites a 0.3.x binding in place on takeover", () => {
+    const home = newHome();
+    const project = tempDir();
+    createRoom(home, { roomId: ROOM, secret: secret(), relay: null, name: "Tazo", now: NOW }, {});
+    const legacy = bindingPath(home, project); // no binding yet: the legacy path
+    mkdirSync(join(home, "bindings"), { recursive: true, mode: 0o700 });
+    writeFileSync(legacy, JSON.stringify({ project_dir: project, room_id: ROOM, owner_pid: 2000, owner_session: "s", updated_at: NOW }));
+    expect(claimProject(home, project, me, alive([]))).toEqual({ kind: "owner", roomId: ROOM, tookOver: true });
+    expect(JSON.parse(readFileSync(legacy, "utf8"))).toMatchObject({ owner_pid: 1000 });
+    expect(readBindings(home, project)).toHaveLength(1);
   });
 
   it("drops a binding whose room has ended", () => {
     const { home, project } = boundHome(2000);
+    const path = bindingPath(home, project);
     updateState(home, ROOM, (s) => ({ ...s, status: "ended" }));
     expect(claimProject(home, project, me, alive([2000]))).toEqual({ kind: "idle" });
-    expect(existsSync(bindingPath(home, project))).toBe(false);
+    expect(existsSync(path)).toBe(false);
   });
 
   it("lets exactly one of two servers starting together take over a dead owner", async () => {
@@ -162,7 +200,7 @@ describe("bindings: one room per project directory", () => {
     const results = await Promise.all([3001, 3002, 3003].map((pid) => runChild(["claim", home, project, String(pid), "2000"])));
     const kinds = results.map((r) => JSON.parse(r) as { kind: string; tookOver?: boolean });
     expect(kinds.filter((k) => k.kind === "owner" && k.tookOver)).toHaveLength(1);
-    expect(kinds.filter((k) => k.kind === "passive")).toHaveLength(2);
+    expect(kinds.filter((k) => k.kind === "idle")).toHaveLength(2);
   }, 30_000);
 
   it("lets hooks deliver only for the owning session", () => {

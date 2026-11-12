@@ -1,5 +1,5 @@
 // pairwire client: MCP server, hooks and CLI (specs/04-client.md).
-export { bindProject, bindingPath, claimProject, isProcessAlive, PassiveSessionError, readBinding, removeBindingFor, sessionOwnsBinding, type Binding, type Claimant, type Ownership } from "./binding.js";
+export { bindProject, bindingPath, claimProject, isProcessAlive, readBinding, readBindings, removeBindingFor, sessionOwnsBinding, type Binding, type Claimant, type Ownership } from "./binding.js";
 export { ConfigError, DEFAULT_CONFIG, loadConfig, resolveDisplayName, type Config, type Delivery, type LoadedConfig } from "./config.js";
 export { LockTimeoutError, withLock, writeFileAtomic } from "./fs-util.js";
 export { closeRoomLocally } from "./lifecycle.js";

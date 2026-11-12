@@ -4,26 +4,27 @@ import {
   WAKE_PROMPT,
   announceWake,
   isHumanPrompt
-} from "./chunk-R76EU7QF.mjs";
+} from "./chunk-CREJ4Q7B.mjs";
 import {
   claimUndelivered,
   renderItemsFor
-} from "./chunk-2DQ52KMV.mjs";
+} from "./chunk-ZMASPVBM.mjs";
 import {
   DEFAULT_CONFIG,
   adoptOwnerSession,
+  folderBindings,
   hookErrorLogger,
   isOpen,
+  isProcessAlive,
   loadConfig,
   pushes,
-  readBinding,
   readHarnessPid,
   readState,
   resolveProjectDir,
   sessionOwnsBinding,
   updateState,
   writeFileAtomic
-} from "./chunk-KPJ36APL.mjs";
+} from "./chunk-HYOGY7D3.mjs";
 import {
   cursorMissPath
 } from "./chunk-H3AY57FF.mjs";
@@ -177,9 +178,10 @@ function parseInput(stdin) {
 }
 function hook(event, input, dialect, o) {
   const project = resolveProjectDir(o.env, input.cwd ?? o.cwd);
-  const binding = readBinding(o.home, project);
-  if (!binding && dialect.name === "cursor") recordCursorMiss(o.home, project);
-  if (!ownsBinding(binding, input.session_id, project, dialect, o)) return null;
+  const bindings = folderBindings(o.home, project).map((f) => f.binding);
+  if (bindings.length === 0 && dialect.name === "cursor") recordCursorMiss(o.home, project);
+  const binding = ownedBinding(bindings, input.session_id, project, dialect, o);
+  if (!binding) return null;
   const roomId = binding.room_id;
   const state = readState(o.home, roomId);
   if (!state || !isOpen(state)) return null;
@@ -217,16 +219,24 @@ ${rendered.text}`;
   }
   return finish(out);
 }
-function ownsBinding(binding, session, project, dialect, o) {
-  if (dialect.name === "cursor") return binding?.owner_harness === "cursor";
-  if (sessionOwnsBinding(binding, session)) return true;
-  if (!binding || binding.owner_session !== null) return false;
-  const harnessPid = readHarnessPid(o.home, project, binding);
-  if (harnessPid === null || !isHarnessProcess(harnessPid, o)) return false;
-  if (typeof session === "string" && session !== "" && session.length <= 200) {
-    adoptOwnerSession(o.home, project, binding.room_id, binding.owner_pid, session);
+function ownedBinding(bindings, session, project, dialect, o) {
+  const newest = [...bindings].sort((a, b) => b.updated_at - a.updated_at);
+  if (dialect.name === "cursor") {
+    const cursor2 = newest.filter((b) => b.owner_harness === "cursor");
+    return cursor2.find((b) => isProcessAlive(b.owner_pid)) ?? cursor2[0] ?? null;
   }
-  return true;
+  const bySession = newest.find((b) => sessionOwnsBinding(b, session));
+  if (bySession) return bySession;
+  for (const binding of newest) {
+    if (binding.owner_session !== null) continue;
+    const harnessPid = readHarnessPid(o.home, project, binding);
+    if (harnessPid === null || !isHarnessProcess(harnessPid, o)) continue;
+    if (typeof session === "string" && session !== "" && session.length <= 200) {
+      adoptOwnerSession(o.home, project, binding.room_id, binding.owner_pid, session);
+    }
+    return binding;
+  }
+  return null;
 }
 function recordCursorMiss(home, project) {
   try {

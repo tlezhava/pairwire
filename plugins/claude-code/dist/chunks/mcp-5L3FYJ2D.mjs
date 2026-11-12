@@ -2,10 +2,10 @@ import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
   WAKE_PROMPT
-} from "./chunk-R76EU7QF.mjs";
+} from "./chunk-CREJ4Q7B.mjs";
 import {
   transcriptEvents
-} from "./chunk-WD2LWGRD.mjs";
+} from "./chunk-POHET3J6.mjs";
 import {
   ContractFileError,
   appendCoordSent,
@@ -25,29 +25,30 @@ import {
   renderItemsFor,
   unacked,
   updateOutbox
-} from "./chunk-2DQ52KMV.mjs";
+} from "./chunk-ZMASPVBM.mjs";
 import {
   assertStatePrivate
-} from "./chunk-RLVUH3TI.mjs";
+} from "./chunk-YEYARWRO.mjs";
 import {
   CTL_LISTEN_RETRIES,
   ensureCtlKey,
   listenCtl,
   listenFresh,
   readCtlKey
-} from "./chunk-RFCUS3IU.mjs";
+} from "./chunk-N573BUDX.mjs";
 import {
-  PassiveSessionError,
   adoptOwnerSession,
   bindProject,
   claimProject,
   createLogger,
+  createMembership,
   createRoom,
   expiresAt,
   holdMode,
   isOpen,
   isProcessAlive,
   loadConfig,
+  otherMemberships,
   pushes,
   readSecret,
   readSessionCaps,
@@ -58,7 +59,7 @@ import {
   resolveProjectDir,
   updateState,
   writeSessionCaps
-} from "./chunk-KPJ36APL.mjs";
+} from "./chunk-HYOGY7D3.mjs";
 import {
   chooseCtlPath,
   configPath,
@@ -90,6 +91,7 @@ import {
   _null,
   acceptHint,
   array,
+  base32Decode,
   boolean,
   clone,
   contractNameSchema,
@@ -26607,7 +26609,7 @@ var RoomConnection = class {
     this.#t = options.timers ?? realTimers;
     this.#tune = { ...DEFAULT_TUNING, ...options.tuning };
     this.#ulid = monotonicFactory(() => this.#t.random());
-    this.#roomId = options.keys.roomId;
+    this.#roomId = options.roomKey ?? options.keys.roomId;
   }
   // --- public API ----------------------------------------------------------------------
   /** Connects if the room is open; ends it locally first if it is past its expiry. */
@@ -27388,7 +27390,6 @@ var ClientSession = class {
   projectDir;
   #fatal = null;
   #config = null;
-  #passiveOwner = null;
   #roomId = null;
   #conn = null;
   #ctl = null;
@@ -27455,7 +27456,7 @@ var ClientSession = class {
         text: sent.status === "sent" ? `pairwire: sent your message to ${to} as you (id ${sent.id}). It is already sent; do not send it again.` : `pairwire: queued your message for ${to} (id ${sent.id}); it goes out when they connect. Do not send it again.`
       };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError;
+      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError;
       if (!known) this.#o.log.error("ctl_failed", e);
       return { ok: false, text: `pairwire: ${known ? e.message : "internal error; see the MCP server log."}` };
     }
@@ -27466,7 +27467,7 @@ var ClientSession = class {
     const config = this.#config;
     const state = this.#roomState();
     const send = (frame) => void socket.end(JSON.stringify(frame) + "\n");
-    if (!own2 || session !== own2 || this.#passiveOwner !== null || !config || !pushes(config.delivery) || !config.autoContinue || !state || !isOpen(state)) {
+    if (!own2 || session !== own2 || !config || !pushes(config.delivery) || !config.autoContinue || !state || !isOpen(state)) {
       return send({ t: "refused" });
     }
     this.#endWaiter(session, { t: "superseded" });
@@ -27510,7 +27511,7 @@ ${rendered}` }) + "\n");
     const config = this.#config;
     const roomId = this.#roomId;
     if (!config || config.delivery !== "wake" || !config.autoContinue || harnessOf(this.#o.env) !== "codex") return;
-    if (this.#passiveOwner !== null || !roomId || !this.#roomOpen()) return;
+    if (!roomId || !this.#roomOpen()) return;
     try {
       this.#codex.maybeWake(this.#o.home, roomId, this.#hold());
     } catch (e) {
@@ -27557,14 +27558,14 @@ ${rendered}` }) + "\n");
       const config = this.#ready();
       const current = this.#roomState();
       if (current && current.status === "active") {
-        throw new ToolError(`This project already has an active pairwire room with ${this.#peerLabel(current)}. Run /pairwire:leave first.`);
+        throw new ToolError(`This session already has an active pairwire room with ${this.#peerLabel(current)}. Run /pairwire:leave first.`);
       }
       if (current && current.status === "waiting") await this.#conn?.leave();
       const secret = generateSecret();
       const keys = deriveRoomKeys(secret);
       const name = this.#name(input.name);
       createRoom(this.#o.home, { roomId: keys.roomId, secret, relay: config.relay, name, now: this.#now() }, this.#o.env);
-      bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant(), this.#o.isAlive);
+      bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant());
       this.#open(keys.roomId);
       const share = encodeShareString(secret, config.relay ? parseRelayAddress(config.relay) : void 0);
       const reached = await this.#waitFor(() => this.#conn?.status().socket === "joined" || !this.#roomOpen(), this.#o.startWaitMs ?? 1e4);
@@ -27584,21 +27585,15 @@ ${rendered}` }) + "\n");
     return this.#tool(async () => {
       const config = this.#ready();
       const current = this.#roomState();
-      if (current && isOpen(current)) throw new ToolError("This project already has a pairwire room. Run /pairwire:leave first.");
+      if (current && isOpen(current)) throw new ToolError("This session already has a pairwire room. Run /pairwire:leave first.");
       const parsed = parseShareString(input.share);
       const keys = deriveRoomKeys(parsed.secret);
-      const existing = readState(this.#o.home, keys.roomId);
-      if (existing) {
-        throw new ToolError(
-          isOpen(existing) ? "This machine already holds that room (did you start it here?). The other person must join it." : "That room has ended. Ask your collaborator to start a new one."
-        );
-      }
       const relay = parsed.relay ? formatRelayAddress(parsed.relay) : null;
-      createRoom(this.#o.home, { roomId: keys.roomId, secret: parsed.secret, relay, name: this.#name(input.name), now: this.#now() }, this.#o.env);
-      bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant(), this.#o.isAlive);
-      this.#open(keys.roomId);
+      const roomKey = createMembership(this.#o.home, { roomId: keys.roomId, secret: parsed.secret, relay, name: this.#name(input.name), now: this.#now() }, this.#o.env);
+      bindProject(this.#o.home, this.projectDir, roomKey, this.#claimant());
+      this.#open(roomKey);
       const paired = await this.#waitFor(() => !!this.#roomState()?.peer || !this.#roomOpen(), this.#o.joinWaitMs ?? 3e4);
-      const state = readState(this.#o.home, keys.roomId);
+      const state = readState(this.#o.home, roomKey);
       if (!state || !isOpen(state)) {
         const why = state?.error === "room_full" ? "the room already has two members" : "the room no longer exists";
         throw new ToolError(`Could not join: ${why}. Ask your collaborator to start a new room.`);
@@ -27663,7 +27658,7 @@ ${rendered}` }) + "\n");
     return this.#tool(async () => {
       this.#ready();
       const state = this.#roomState();
-      if (!state) throw new ToolError("No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
+      if (!state) throw new ToolError(`No pairwire room in this session${this.#othersText()}. Your user can run /pairwire:start or /pairwire:join.`);
       const hold = this.#hold();
       const text = claimUndelivered(this.#o.home, state.roomId, { hold }, (items, ledger) => ({
         ids: items.map((i) => i.id),
@@ -27678,7 +27673,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
     return this.#tool(async () => {
       const config = this.#ready();
       const state = this.#roomState();
-      if (!state) return "No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.";
+      if (!state) return `No pairwire room in this session${this.#othersText()}. Your user can run /pairwire:start or /pairwire:join.`;
       const conn = this.#conn?.status();
       const hold = this.#hold();
       const lines = [
@@ -27718,7 +27713,7 @@ ${this.#recentSends(state.roomId)}`.trimEnd();
     try {
       result = { text: await fn() };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof CollabSendError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError || e.name === "ShareStringError";
+      const known = e instanceof ToolError || e instanceof CollabSendError || e instanceof EnvelopeTooLargeError || e.name === "ShareStringError";
       if (!known) this.#o.log.error("tool_failed", e);
       result = { text: known ? e.message : "pairwire hit an internal error; details are in its log.", isError: true };
     }
@@ -27729,9 +27724,8 @@ ${this.footer()}` };
   /** The status line every tool result ends with (04 §4, delivery tier D1). */
   footer() {
     if (this.#fatal) return "[pairwire] not running: see the error above";
-    if (this.#passiveOwner !== null) return `[pairwire] another session (pid ${this.#passiveOwner}) owns this project's room`;
     const state = this.#roomState();
-    if (!state) return "[pairwire] not in a room";
+    if (!state) return `[pairwire] not in a room${this.#othersText()}`;
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
@@ -27742,17 +27736,14 @@ ${this.footer()}` };
   #ready() {
     if (this.#fatal) throw new ToolError(this.#fatal);
     this.#claim();
-    if (this.#passiveOwner !== null) throw new PassiveSessionError(this.#passiveOwner);
     return this.#config;
   }
-  /** Re-checks ownership on every call, so a passive session takes over once the owner dies. */
+  /**
+   * Re-checks ownership on every call, so a session without a room takes over its harness's
+   * membership once that owner dies (04 §3, ADR-036).
+   */
   #claim() {
     const own2 = claimProject(this.#o.home, this.projectDir, this.#claimant(), this.#o.isAlive ?? isProcessAlive);
-    if (own2.kind === "passive") {
-      this.#passiveOwner = own2.ownerPid;
-      return;
-    }
-    this.#passiveOwner = null;
     if (own2.kind === "owner" && (this.#roomId !== own2.roomId || !this.#conn)) {
       if (own2.tookOver) this.#o.log.info("took_over");
       this.#open(own2.roomId);
@@ -27776,7 +27767,7 @@ ${this.footer()}` };
   noteHarnessSession(id) {
     if (this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession || typeof id !== "string" || id === "" || id.length > 200) return;
     this.#learnedSession = id;
-    if (this.#roomId && this.#passiveOwner === null) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
+    if (this.#roomId) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
   }
   /**
    * Codex's `_meta.threadId` (04 §10, Codex idle wake): the first one seen on a call from this
@@ -27800,11 +27791,12 @@ ${this.footer()}` };
       instance: state.instance,
       caps: this.#o.helloCaps ?? HELLO_CAPS
     };
-    const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${roomId}`;
+    const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${keys.roomId}`;
     this.#roomId = roomId;
     this.#conn = new RoomConnection({
       home: this.#o.home,
       keys,
+      roomKey: roomId,
       url,
       hello,
       log: this.#o.log,
@@ -27836,7 +27828,7 @@ ${this.footer()}` };
     this.#closeCtl();
     const after = readState(this.#o.home, roomId);
     if (!after || !isOpen(after)) return;
-    this.#ctl = this.#listenCtl(roomId, state.ctl_path, keys.roomIdBytes).catch((e) => {
+    this.#ctl = this.#listenCtl(roomId, state.ctl_path, base32Decode(roomId)).catch((e) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });
@@ -27862,6 +27854,17 @@ ${this.footer()}` };
       (e) => this.#o.log.warn("ctl_listen_retry", { error_message: e.message })
     );
   }
+  /** " · another session here (codex) is in a room", for a session without one (04 §3). */
+  #othersText() {
+    try {
+      const others = otherMemberships(this.#o.home, this.projectDir, this.#pid, this.#o.isAlive ?? isProcessAlive);
+      if (others.length === 0) return "";
+      const harnesses = [...new Set(others.map((o) => o.harness ?? "unknown harness"))].join(", ");
+      return others.length === 1 ? ` \xB7 another session here (${harnesses}) is in a room` : ` \xB7 ${others.length} other sessions here (${harnesses}) are in rooms`;
+    } catch {
+      return "";
+    }
+  }
   #roomState() {
     if (!this.#roomId) return null;
     const s = readState(this.#o.home, this.#roomId);
@@ -27873,7 +27876,7 @@ ${this.footer()}` };
   }
   #requireRoom() {
     const s = this.#roomState();
-    if (!s || !isOpen(s)) throw new ToolError("No open pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
+    if (!s || !isOpen(s)) throw new ToolError("No open pairwire room in this session. Your user can run /pairwire:start or /pairwire:join.");
     return s;
   }
   /** Size limits and the secret scan (04 §7 steps 2–3), shared by `send` and `leave`. */

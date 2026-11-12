@@ -164,6 +164,8 @@ export interface ConnectionStatus {
 export interface ConnectionOptions {
   home: string;
   keys: RoomKeys;
+  /** The room's directory under rooms/ (04 §3, ADR-036); default `keys.roomId`. */
+  roomKey?: string;
   /** wss://host/v1/rooms/<room_id> */
   url: string;
   hello: HelloPayload;
@@ -259,7 +261,7 @@ export class RoomConnection {
     this.#t = options.timers ?? realTimers;
     this.#tune = { ...DEFAULT_TUNING, ...options.tuning };
     this.#ulid = monotonicFactory(() => this.#t.random());
-    this.#roomId = options.keys.roomId;
+    this.#roomId = options.roomKey ?? options.keys.roomId;
   }
 
   // --- public API ----------------------------------------------------------------------

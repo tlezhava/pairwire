@@ -4,35 +4,35 @@ import {
   appendTranscript,
   noticeLine,
   transcriptTail
-} from "./chunk-WD2LWGRD.mjs";
+} from "./chunk-POHET3J6.mjs";
 import {
   dropHeld,
   hiddenBodies,
   releaseHeld,
   renderItemsFor
-} from "./chunk-2DQ52KMV.mjs";
+} from "./chunk-ZMASPVBM.mjs";
 import {
   assertStatePrivate
-} from "./chunk-RLVUH3TI.mjs";
+} from "./chunk-YEYARWRO.mjs";
 import {
   CTL_PROOF_FAILED_TEXT,
   CtlProofError,
   CtlUnreachableError,
   ctlCall,
   ctlTarget
-} from "./chunk-R6E7YRZO.mjs";
+} from "./chunk-FJQX44XF.mjs";
 import {
   CTL_MAX_REQUEST
-} from "./chunk-RFCUS3IU.mjs";
+} from "./chunk-N573BUDX.mjs";
 import {
   holdMode,
   isOpen,
   isProcessAlive,
-  readBinding,
+  readBindings,
   readState,
   resolveProjectDir,
   updateState
-} from "./chunk-KPJ36APL.mjs";
+} from "./chunk-HYOGY7D3.mjs";
 import {
   pairwireHome
 } from "./chunk-H3AY57FF.mjs";
@@ -104,6 +104,25 @@ ${result}`;
 
 ${result}`;
 }
+function pickBinding(home, all, env, harness) {
+  const session = env.CLAUDE_CODE_SESSION_ID;
+  const own = session ? all.find((b) => b.owner_session === session) : void 0;
+  if (own) return own;
+  const open = all.filter((b) => {
+    try {
+      const s = readState(home, b.room_id);
+      return s !== null && isOpen(s);
+    } catch {
+      return true;
+    }
+  });
+  const pool = (open.length > 0 ? open : all).filter((b) => harness === null || (b.owner_harness ?? "claude-code") === harness);
+  if (pool.length <= 1) return pool[0] ?? null;
+  const live = pool.filter((b) => isProcessAlive(b.owner_pid));
+  if (live.length === 1) return live[0];
+  const names = [...new Set((live.length > 0 ? live : pool).map((b) => b.owner_harness ?? "claude-code"))].join(", ");
+  return `pairwire: this folder has more than one pairwire room (${names}). Run ctl --harness <name> \u2026 to pick one.`;
+}
 async function runCtl(args, io) {
   const print = (text) => io.stdout.write(text.endsWith("\n") ? text : `${text}
 `);
@@ -114,10 +133,16 @@ async function runCtl(args, io) {
     print(`pairwire: ${e.message}`);
     return 0;
   }
-  const [op, ...rest] = args;
+  const wanted = args[0] === "--harness" ? args[1] ?? "" : null;
+  const [op, ...rest] = wanted === null ? args : args.slice(2);
   const fromArgs = rest[0] === "--args" ? rest.slice(1).join(" ") : void 0;
   const arg = fromArgs ?? rest[0];
-  const binding = readBinding(home, resolveProjectDir(io.env, io.cwd));
+  const picked = pickBinding(home, readBindings(home, resolveProjectDir(io.env, io.cwd)), io.env, wanted);
+  if (typeof picked === "string") {
+    print(picked);
+    return 0;
+  }
+  const binding = picked;
   const state = binding ? readState(home, binding.room_id) : null;
   if (!binding || !state) {
     print("pairwire: there is no pairwire room in this project.");
