@@ -339,13 +339,28 @@ var roomStateSchema = external_exports.strictObject({
 var StateError = class extends Error {
   name = "StateError";
 };
+var RoomExistsError = class extends StateError {
+  constructor() {
+    super("This room is already stored on this machine.");
+  }
+};
+function createMembership(home, room, env = process.env) {
+  for (let key = room.roomId; ; key = base32Encode(randomBytes(16))) {
+    try {
+      createRoom(home, { ...room, roomId: key }, env);
+      return key;
+    } catch (e) {
+      if (!(e instanceof RoomExistsError)) throw e;
+    }
+  }
+}
 function createRoom(home, room, env = process.env) {
   if (room.secret.length !== SECRET_BYTES) throw new StateError("Room secret has the wrong length.");
   ensurePrivateDir(roomsDir(home));
   try {
     mkdirSync2(roomDir(home, room.roomId), { mode: PRIVATE_DIR_MODE });
   } catch (e) {
-    if (errorCode(e) === "EEXIST") throw new StateError("This room is already stored on this machine.");
+    if (errorCode(e) === "EEXIST") throw new RoomExistsError();
     throw e;
   }
   writeFileAtomic(roomFile(home, room.roomId, "secret"), room.secret);
@@ -469,6 +484,7 @@ import { readdirSync as readdirSync2, readFileSync as readFileSync2 } from "node
 import { join as join2 } from "node:path";
 var bindingSchema = external_exports.strictObject({
   project_dir: external_exports.string(),
+  /** The room key: the room's directory under rooms/ (ADR-036). */
   room_id: external_exports.string().regex(ROOM_ID_PATTERN),
   owner_pid: external_exports.number().int().positive(),
   owner_session: external_exports.string().nullable(),
@@ -479,30 +495,27 @@ var bindingSchema = external_exports.strictObject({
 function owner(me) {
   return { owner_pid: me.pid, owner_session: me.session, ...me.harness !== void 0 ? { owner_harness: me.harness } : {}, updated_at: me.now };
 }
-var PassiveSessionError = class extends Error {
-  constructor(ownerPid) {
-    super(`Another session in this project (pid ${ownerPid}) owns the pairwire room.`);
-    this.ownerPid = ownerPid;
-  }
-  ownerPid;
-  name = "PassiveSessionError";
-};
-var bindingPath = (home, projectDir) => join2(bindingsDir(home), `${projectHash(projectDir)}.json`);
+var LEGACY_NAME = /^([0-9a-f]{16})\.json$/;
+var KEYED_NAME = /^([0-9a-f]{16})\.([a-z2-7]{26})\.json$/;
+var keyedBindingPath = (home, projectDir, roomKey) => join2(bindingsDir(home), `${projectHash(projectDir)}.${roomKey}.json`);
 var harnessPidSchema = external_exports.strictObject({
   owner_pid: external_exports.number().int().positive(),
   harness_pid: external_exports.number().int().min(2)
 });
 var sidecarPath = (path) => path.replace(/\.json$/, ".harness-pid");
-var harnessPidPath = (home, projectDir) => sidecarPath(bindingPath(home, projectDir));
 function readHarnessPid(home, projectDir, binding) {
+  const file = folderBindings(home, projectDir).find((f) => f.binding.room_id === binding.room_id);
+  return file ? readSidecar(file) : null;
+}
+function readSidecar(file) {
   let text;
   try {
-    text = readFileSync2(harnessPidPath(home, projectDir), "utf8");
+    text = readFileSync2(sidecarPath(file.path), "utf8");
   } catch {
     return null;
   }
   const parsed = harnessPidSchema.safeParse(safeJson(text));
-  return parsed.success && parsed.data.owner_pid === binding.owner_pid ? parsed.data.harness_pid : null;
+  return parsed.success && parsed.data.owner_pid === file.binding.owner_pid ? parsed.data.harness_pid : null;
 }
 function safeJson(text) {
   try {
@@ -537,8 +550,32 @@ function readBindingFile(path) {
     return null;
   }
 }
-function readBinding(home, projectDir) {
-  return readBindingFile(bindingPath(home, projectDir));
+function bindingNames(home) {
+  try {
+    return readdirSync2(bindingsDir(home)).sort();
+  } catch (e) {
+    if (errorCode(e) === "ENOENT") return [];
+    throw e;
+  }
+}
+function bindingFiles(home) {
+  return bindingNames(home).filter((n) => LEGACY_NAME.test(n) || KEYED_NAME.test(n)).map((n) => join2(bindingsDir(home), n));
+}
+function folderPaths(home, projectDir) {
+  const hash = projectHash(projectDir);
+  return bindingNames(home).filter((n) => n === `${hash}.json` || KEYED_NAME.exec(n)?.[1] === hash).map((n) => join2(bindingsDir(home), n));
+}
+function folderBindings(home, projectDir) {
+  return folderPaths(home, projectDir).flatMap((path) => {
+    const binding = readBindingFile(path);
+    return binding ? [{ path, binding }] : [];
+  });
+}
+function readBindings(home, projectDir) {
+  return folderBindings(home, projectDir).map((f) => f.binding);
+}
+function newestFirst(files) {
+  return [...files].sort((a, b) => b.binding.updated_at - a.binding.updated_at);
 }
 function roomIsOpen(home, roomId) {
   try {
@@ -548,32 +585,46 @@ function roomIsOpen(home, roomId) {
     return true;
   }
 }
-function claimProject(home, projectDir, me, alive = isProcessAlive) {
-  const path = bindingPath(home, projectDir);
-  ensurePrivateDir(bindingsDir(home));
-  return withLock(path, () => {
-    const binding = readBindingFile(path);
-    if (!binding) return { kind: "idle" };
-    if (!roomIsOpen(home, binding.room_id)) {
-      removeBindingFile(path);
-      return { kind: "idle" };
-    }
-    if (binding.owner_pid === me.pid) return { kind: "owner", roomId: binding.room_id, tookOver: false };
-    if (alive(binding.owner_pid)) return { kind: "passive", ownerPid: binding.owner_pid, roomId: binding.room_id };
-    const { owner_harness: _previous, ...rest } = binding;
-    writeBinding(path, { ...rest, ...owner(me) }, me.harnessPid);
-    return { kind: "owner", roomId: binding.room_id, tookOver: true };
-  });
+function isOwnKind(b, me) {
+  return b.owner_harness === void 0 || me.harness === void 0 || b.owner_harness === me.harness;
 }
-function bindProject(home, projectDir, roomId, me, alive = isProcessAlive) {
-  const path = bindingPath(home, projectDir);
+function claimProject(home, projectDir, me, alive = isProcessAlive) {
   ensurePrivateDir(bindingsDir(home));
+  const files = folderBindings(home, projectDir);
+  const live = [];
+  for (const f of files) {
+    if (roomIsOpen(home, f.binding.room_id)) live.push(f);
+    else withLock(f.path, () => readBindingFile(f.path)?.room_id === f.binding.room_id ? removeBindingFile(f.path) : void 0);
+  }
+  const mine = live.find((f) => f.binding.owner_pid === me.pid);
+  if (mine) return { kind: "owner", roomId: mine.binding.room_id, tookOver: false };
+  const candidates = newestFirst(live.filter((f) => isOwnKind(f.binding, me))).sort(
+    (a, b) => Number(me.session !== null && b.binding.owner_session === me.session) - Number(me.session !== null && a.binding.owner_session === me.session)
+  );
+  for (const f of candidates) {
+    const taken = withLock(f.path, () => {
+      const b = readBindingFile(f.path);
+      if (!b || b.room_id !== f.binding.room_id || b.owner_pid === me.pid || alive(b.owner_pid) || !isOwnKind(b, me)) return false;
+      const { owner_harness: _previous, ...rest } = b;
+      writeBinding(f.path, { ...rest, ...owner(me) }, me.harnessPid);
+      return true;
+    });
+    if (taken) return { kind: "owner", roomId: f.binding.room_id, tookOver: true };
+  }
+  return { kind: "idle" };
+}
+function otherMemberships(home, projectDir, pid, alive = isProcessAlive) {
+  return folderBindings(home, projectDir).filter((f) => f.binding.owner_pid !== pid && alive(f.binding.owner_pid) && roomIsOpen(home, f.binding.room_id)).map((f) => ({ harness: f.binding.owner_harness ?? null, pid: f.binding.owner_pid }));
+}
+function bindProject(home, projectDir, roomKey, me) {
+  ensurePrivateDir(bindingsDir(home));
+  for (const f of folderBindings(home, projectDir)) {
+    if (f.binding.owner_pid !== me.pid || f.binding.room_id === roomKey) continue;
+    withLock(f.path, () => readBindingFile(f.path)?.owner_pid === me.pid ? removeBindingFile(f.path) : void 0);
+  }
+  const path = keyedBindingPath(home, projectDir, roomKey);
   return withLock(path, () => {
-    const existing = readBindingFile(path);
-    if (existing && existing.owner_pid !== me.pid && roomIsOpen(home, existing.room_id) && alive(existing.owner_pid)) {
-      throw new PassiveSessionError(existing.owner_pid);
-    }
-    const binding = { project_dir: projectDir, room_id: roomId, ...owner(me) };
+    const binding = { project_dir: projectDir, room_id: roomKey, ...owner(me) };
     writeBinding(path, binding, me.harnessPid);
     return binding;
   });
@@ -584,14 +635,6 @@ function writeBinding(path, binding, harnessPid) {
   const record = harnessPidSchema.safeParse({ owner_pid: binding.owner_pid, harness_pid: harnessPid });
   if (binding.owner_session === null && record.success) writeFileAtomic(side, JSON.stringify(record.data) + "\n");
   else removeFile(side);
-}
-function bindingFiles(home) {
-  try {
-    return readdirSync2(bindingsDir(home)).filter((n) => /^[0-9a-f]{16}\.json$/.test(n)).map((n) => join2(bindingsDir(home), n));
-  } catch (e) {
-    if (errorCode(e) === "ENOENT") return [];
-    throw e;
-  }
 }
 function bindingsForRoom(home, roomId) {
   return bindingFiles(home).flatMap((path) => {
@@ -609,12 +652,17 @@ function removeBindingFor(home, roomId) {
 function sessionOwnsBinding(binding, sessionId) {
   return binding !== null && binding.owner_session !== null && binding.owner_session === sessionId;
 }
+function bindingOfSession(home, projectDir, sessionId) {
+  if (!sessionId) return null;
+  return newestFirst(folderBindings(home, projectDir)).find((f) => sessionOwnsBinding(f.binding, sessionId))?.binding ?? null;
+}
 function adoptOwnerSession(home, projectDir, roomId, pid, session) {
-  const path = bindingPath(home, projectDir);
-  return withLock(path, () => {
-    const b = readBindingFile(path);
+  const file = folderBindings(home, projectDir).find((f) => f.binding.room_id === roomId);
+  if (!file) return false;
+  return withLock(file.path, () => {
+    const b = readBindingFile(file.path);
     if (!b || b.room_id !== roomId || b.owner_pid !== pid || b.owner_session !== null) return false;
-    writeBinding(path, { ...b, owner_session: session });
+    writeBinding(file.path, { ...b, owner_session: session });
     return true;
   });
 }
@@ -729,6 +777,7 @@ export {
   fileSink,
   hookErrorLogger,
   resolveProjectDir,
+  createMembership,
   createRoom,
   readState,
   updateState,
@@ -739,15 +788,17 @@ export {
   readSessionCaps,
   writeSessionCaps,
   refreshActiveFlag,
-  PassiveSessionError,
   readHarnessPid,
   isProcessAlive,
-  readBinding,
+  folderBindings,
+  readBindings,
   claimProject,
+  otherMemberships,
   bindProject,
   bindingsForRoom,
   removeBindingFor,
   sessionOwnsBinding,
+  bindingOfSession,
   adoptOwnerSession,
   pushes,
   DEFAULT_CONFIG,

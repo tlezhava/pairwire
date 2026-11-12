@@ -184,7 +184,7 @@ describe("hooks: delivery (D2)", () => {
 });
 
 describe("hooks: ownership and safety", () => {
-  it("a passive session's hooks do nothing and take none of the owner's messages", () => {
+  it("another session's hooks in the folder do nothing and take none of the owner's messages", () => {
     const h = setup();
     h.message("for the owner");
     expect(h.run("post-tool-use", "post-tool-use-bash", { session_id: "someone-else" })).toBeNull();

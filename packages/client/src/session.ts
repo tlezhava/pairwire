@@ -6,6 +6,7 @@ import {
   DEFAULT_RELAY_HOST,
   MAX_PATHS,
   acceptHint,
+  base32Decode,
   isCollabKind,
   noticeHeld,
   deriveRoomKeys,
@@ -26,7 +27,7 @@ import {
   type HelloPayload,
 } from "@pairwire/core";
 import { z } from "zod";
-import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, PassiveSessionError } from "./binding.js";
+import { adoptOwnerSession, bindProject, claimProject, isProcessAlive, otherMemberships } from "./binding.js";
 import { holdMode, loadConfig, pushes, resolveDisplayName, type Config } from "./config.js";
 import { RoomConnection, type ConnectionEvents, type SendInput, type SocketFactory, type Timers, type Tuning } from "./connection.js";
 import type { Logger } from "./log.js";
@@ -34,7 +35,7 @@ import { chooseCtlPath, configPath, roomFile } from "./paths.js";
 import { assertStatePrivate } from "./permissions.js";
 import { resolveProjectDir } from "./project.js";
 import { claimUndelivered, inboxCounts, readCoordSent, readOutbox, type InboxCounts, type InboxEntry } from "./room-files.js";
-import { createRoom, expiresAt, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
+import { createMembership, createRoom, expiresAt, isOpen, readSecret, readState, updateState, type RoomState } from "./state.js";
 import { CodexWake } from "./codex-wake.js";
 import { CollabSendError, planStructured, type CollabPlan } from "./collab-send.js";
 import { coordFooter, coordStatusLines, loadView, renderItemsFor } from "./coord.js";
@@ -147,7 +148,6 @@ export class ClientSession {
   readonly projectDir: string;
   #fatal: string | null = null;
   #config: Config | null = null;
-  #passiveOwner: number | null = null;
   #roomId: string | null = null;
   #conn: RoomConnection | null = null;
   #ctl: Promise<CtlServer | null> | null = null;
@@ -222,7 +222,7 @@ export class ClientSession {
           : `pairwire: queued your message for ${to} (id ${sent.id}); it goes out when they connect. Do not send it again.`,
       };
     } catch (e) {
-      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError || e instanceof PassiveSessionError;
+      const known = e instanceof ToolError || e instanceof EnvelopeTooLargeError;
       if (!known) this.#o.log.error("ctl_failed", e);
       return { ok: false, text: `pairwire: ${known ? (e as Error).message : "internal error; see the MCP server log."}` };
     }
@@ -236,7 +236,7 @@ export class ClientSession {
     const state = this.#roomState();
     const send = (frame: WaitFrame) => void socket.end(JSON.stringify(frame) + "\n");
     // Only the owning session waits, and only when messages are pushed at all.
-    if (!own || session !== own || this.#passiveOwner !== null || !config || !pushes(config.delivery) || !config.autoContinue || !state || !isOpen(state)) {
+    if (!own || session !== own || !config || !pushes(config.delivery) || !config.autoContinue || !state || !isOpen(state)) {
       return send({ t: "refused" });
     }
     this.#endWaiter(session, { t: "superseded" });
@@ -280,7 +280,7 @@ export class ClientSession {
     const config = this.#config;
     const roomId = this.#roomId;
     if (!config || config.delivery !== "wake" || !config.autoContinue || harnessOf(this.#o.env) !== "codex") return;
-    if (this.#passiveOwner !== null || !roomId || !this.#roomOpen()) return;
+    if (!roomId || !this.#roomOpen()) return;
     try {
       this.#codex.maybeWake(this.#o.home, roomId, this.#hold());
     } catch (e) {
@@ -334,14 +334,14 @@ export class ClientSession {
       const config = this.#ready();
       const current = this.#roomState();
       if (current && current.status === "active") {
-        throw new ToolError(`This project already has an active pairwire room with ${this.#peerLabel(current)}. Run /pairwire:leave first.`);
+        throw new ToolError(`This session already has an active pairwire room with ${this.#peerLabel(current)}. Run /pairwire:leave first.`);
       }
       if (current && current.status === "waiting") await this.#conn?.leave();
       const secret = generateSecret();
       const keys = deriveRoomKeys(secret);
       const name = this.#name(input.name);
       createRoom(this.#o.home, { roomId: keys.roomId, secret, relay: config.relay, name, now: this.#now() }, this.#o.env);
-      bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant(), this.#o.isAlive);
+      bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant());
       this.#open(keys.roomId);
       const share = encodeShareString(secret, config.relay ? parseRelayAddress(config.relay) : undefined);
       const reached = await this.#waitFor(() => this.#conn?.status().socket === "joined" || !this.#roomOpen(), this.#o.startWaitMs ?? 10_000);
@@ -364,23 +364,17 @@ export class ClientSession {
     return this.#tool(async () => {
       const config = this.#ready();
       const current = this.#roomState();
-      if (current && isOpen(current)) throw new ToolError("This project already has a pairwire room. Run /pairwire:leave first.");
+      if (current && isOpen(current)) throw new ToolError("This session already has a pairwire room. Run /pairwire:leave first.");
       const parsed = parseShareString(input.share);
       const keys = deriveRoomKeys(parsed.secret);
-      const existing = readState(this.#o.home, keys.roomId);
-      if (existing) {
-        throw new ToolError(
-          isOpen(existing)
-            ? "This machine already holds that room (did you start it here?). The other person must join it."
-            : "That room has ended. Ask your collaborator to start a new one.",
-        );
-      }
       const relay = parsed.relay ? formatRelayAddress(parsed.relay) : null;
-      createRoom(this.#o.home, { roomId: keys.roomId, secret: parsed.secret, relay, name: this.#name(input.name), now: this.#now() }, this.#o.env);
-      bindProject(this.#o.home, this.projectDir, keys.roomId, this.#claimant(), this.#o.isAlive);
-      this.#open(keys.roomId);
+      // Another membership of this room on this machine (another agent here started or joined
+      // it) keeps its directory; this one gets a fresh room key (04 §3, ADR-036).
+      const roomKey = createMembership(this.#o.home, { roomId: keys.roomId, secret: parsed.secret, relay, name: this.#name(input.name), now: this.#now() }, this.#o.env);
+      bindProject(this.#o.home, this.projectDir, roomKey, this.#claimant());
+      this.#open(roomKey);
       const paired = await this.#waitFor(() => !!this.#roomState()?.peer || !this.#roomOpen(), this.#o.joinWaitMs ?? 30_000);
-      const state = readState(this.#o.home, keys.roomId);
+      const state = readState(this.#o.home, roomKey);
       if (!state || !isOpen(state)) {
         const why = state?.error === "room_full" ? "the room already has two members" : "the room no longer exists";
         throw new ToolError(`Could not join: ${why}. Ask your collaborator to start a new room.`);
@@ -453,7 +447,7 @@ export class ClientSession {
       this.#ready();
       // An ended room's last messages (the bye, the notice) must stay readable.
       const state = this.#roomState();
-      if (!state) throw new ToolError("No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
+      if (!state) throw new ToolError(`No pairwire room in this session${this.#othersText()}. Your user can run /pairwire:start or /pairwire:join.`);
       const hold = this.#hold();
       const text = claimUndelivered(this.#o.home, state.roomId, { hold }, (items, ledger) => ({
         ids: items.map((i) => i.id),
@@ -467,7 +461,7 @@ export class ClientSession {
     return this.#tool(async () => {
       const config = this.#ready();
       const state = this.#roomState();
-      if (!state) return "No pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.";
+      if (!state) return `No pairwire room in this session${this.#othersText()}. Your user can run /pairwire:start or /pairwire:join.`;
       const conn = this.#conn?.status();
       const hold = this.#hold();
       const lines = [
@@ -512,7 +506,6 @@ export class ClientSession {
         e instanceof ToolError ||
         e instanceof CollabSendError ||
         e instanceof EnvelopeTooLargeError ||
-        e instanceof PassiveSessionError ||
         (e as Error).name === "ShareStringError";
       if (!known) this.#o.log.error("tool_failed", e);
       result = { text: known ? (e as Error).message : "pairwire hit an internal error; details are in its log.", isError: true };
@@ -523,9 +516,8 @@ export class ClientSession {
   /** The status line every tool result ends with (04 §4, delivery tier D1). */
   footer(): string {
     if (this.#fatal) return "[pairwire] not running: see the error above";
-    if (this.#passiveOwner !== null) return `[pairwire] another session (pid ${this.#passiveOwner}) owns this project's room`;
     const state = this.#roomState();
-    if (!state) return "[pairwire] not in a room";
+    if (!state) return `[pairwire] not in a room${this.#othersText()}`;
     if (!isOpen(state)) return `[pairwire] room ${state.status}`;
     const budget = this.#config?.hopBudget ?? 8;
     const who = state.peer ? `paired with ${this.#peerLabel(state)}` : "waiting for your collaborator";
@@ -537,18 +529,15 @@ export class ClientSession {
   #ready(): Config {
     if (this.#fatal) throw new ToolError(this.#fatal);
     this.#claim();
-    if (this.#passiveOwner !== null) throw new PassiveSessionError(this.#passiveOwner);
     return this.#config!;
   }
 
-  /** Re-checks ownership on every call, so a passive session takes over once the owner dies. */
+  /**
+   * Re-checks ownership on every call, so a session without a room takes over its harness's
+   * membership once that owner dies (04 §3, ADR-036).
+   */
   #claim(): void {
     const own = claimProject(this.#o.home, this.projectDir, this.#claimant(), this.#o.isAlive ?? isProcessAlive);
-    if (own.kind === "passive") {
-      this.#passiveOwner = own.ownerPid;
-      return;
-    }
-    this.#passiveOwner = null;
     if (own.kind === "owner" && (this.#roomId !== own.roomId || !this.#conn)) {
       if (own.tookOver) this.#o.log.info("took_over");
       this.#open(own.roomId);
@@ -575,7 +564,7 @@ export class ClientSession {
   noteHarnessSession(id: unknown): void {
     if (this.#o.env.CLAUDE_CODE_SESSION_ID || this.#learnedSession || typeof id !== "string" || id === "" || id.length > 200) return;
     this.#learnedSession = id;
-    if (this.#roomId && this.#passiveOwner === null) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
+    if (this.#roomId) adoptOwnerSession(this.#o.home, this.projectDir, this.#roomId, this.#pid, id);
   }
 
   /**
@@ -593,6 +582,9 @@ export class ClientSession {
     const state = readState(this.#o.home, roomId);
     if (!secret || !state) throw new ToolError("The room's local state is missing.");
     const keys = deriveRoomKeys(secret);
+    // The relay and the protocol know the room by the id derived from its secret; `roomId` is
+    // the local room key, which differs for a second membership on this machine (ADR-036).
+    // ctl's proof covers the room key, as `ctl` computes it from the directory (ADR-029).
     const hello: HelloPayload = {
       v: 1,
       name: state.name,
@@ -601,11 +593,12 @@ export class ClientSession {
       instance: state.instance,
       caps: this.#o.helloCaps ?? HELLO_CAPS,
     };
-    const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${roomId}`;
+    const url = `${relayUrl(state.relay ? parseRelayAddress(state.relay) : null)}/v1/rooms/${keys.roomId}`;
     this.#roomId = roomId;
     this.#conn = new RoomConnection({
       home: this.#o.home,
       keys,
+      roomKey: roomId,
       url,
       hello,
       log: this.#o.log,
@@ -639,7 +632,7 @@ export class ClientSession {
     // ctl.key: no key and no control channel for it then (ADR-029).
     const after = readState(this.#o.home, roomId);
     if (!after || !isOpen(after)) return;
-    this.#ctl = this.#listenCtl(roomId, state.ctl_path, keys.roomIdBytes).catch((e: unknown) => {
+    this.#ctl = this.#listenCtl(roomId, state.ctl_path, base32Decode(roomId)).catch((e: unknown) => {
       this.#o.log.error("ctl_listen_failed", e);
       return null;
     });
@@ -672,6 +665,18 @@ export class ClientSession {
     );
   }
 
+  /** " · another session here (codex) is in a room", for a session without one (04 §3). */
+  #othersText(): string {
+    try {
+      const others = otherMemberships(this.#o.home, this.projectDir, this.#pid, this.#o.isAlive ?? isProcessAlive);
+      if (others.length === 0) return "";
+      const harnesses = [...new Set(others.map((o) => o.harness ?? "unknown harness"))].join(", ");
+      return others.length === 1 ? ` · another session here (${harnesses}) is in a room` : ` · ${others.length} other sessions here (${harnesses}) are in rooms`;
+    } catch {
+      return "";
+    }
+  }
+
   #roomState(): (RoomState & { roomId: string }) | null {
     if (!this.#roomId) return null;
     const s = readState(this.#o.home, this.#roomId);
@@ -685,7 +690,7 @@ export class ClientSession {
 
   #requireRoom(): RoomState & { roomId: string } {
     const s = this.#roomState();
-    if (!s || !isOpen(s)) throw new ToolError("No open pairwire room in this project. Your user can run /pairwire:start or /pairwire:join.");
+    if (!s || !isOpen(s)) throw new ToolError("No open pairwire room in this session. Your user can run /pairwire:start or /pairwire:join.");
     return s;
   }
 

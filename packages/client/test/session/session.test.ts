@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
-import { readBinding } from "../../src/binding.js";
+import { readBinding, readBindings } from "../../src/binding.js";
 import { createMcpServer } from "../../src/mcp.js";
 import { readOutbox } from "../../src/room-files.js";
 import { listRooms, readState } from "../../src/state.js";
@@ -173,16 +173,16 @@ describe("tools: leave", () => {
 });
 
 describe("ownership", () => {
-  it("runs passive while another live session owns the project's room, then REQ-ROOM-6 takes over when it dies", async () => {
+  it("ADR-036: a second session in the folder is idle, not refused, and REQ-ROOM-6 takes over its harness's room when the owner dies", async () => {
     const { port } = await startRelay();
     const a = side(port, "Tazo", { pid: 1001, isAlive: () => true });
     await a.session.start({});
     let ownerAlive = true;
     const second = side(port, "Tazo", { home: a.home, project: a.project, pid: 1002, isAlive: (pid) => pid !== 1001 || ownerAlive });
     const r = await second.session.status();
-    expect(r.isError).toBe(true);
-    expect(r.text).toContain("Another session in this project (pid 1001) owns the pairwire room.");
-    expect(r.text).toContain("[pairwire] another session (pid 1001) owns this project's room");
+    expect(r.isError).toBeUndefined();
+    expect(r.text).toContain("No pairwire room in this session · another session here (claude-code) is in a room.");
+    expect(r.text).toContain("[pairwire] not in a room · another session here (claude-code) is in a room");
 
     a.session.shutdown();
     ownerAlive = false;
@@ -191,6 +191,42 @@ describe("ownership", () => {
     expect(after.text).toContain("Room: waiting");
     expect(readBinding(a.home, a.project)).toMatchObject({ owner_pid: 1002, owner_session: "sess-Tazo" });
     await until(() => second.session.footer().includes("waiting for your collaborator"), 3000, "reconnected");
+  });
+
+  it("ADR-036: Claude Code and Codex on one machine, in one folder, pair with each other and keep their own rooms", async () => {
+    const { port } = await startRelay();
+    const live = new Set([2001, 2002]);
+    const isAlive = (pid: number) => live.has(pid);
+    const claude = side(port, "Tazo", { pid: 2001, isAlive });
+    const codexEnv = { PAIRWIRE_RELAY: `127.0.0.1:${port}`, PAIRWIRE_NAME: "Tazo", PAIRWIRE_HARNESS: "codex" };
+    const codex = side(port, "Tazo", { home: claude.home, project: claude.project, pid: 2002, isAlive, env: codexEnv });
+    const share = (await claude.session.start({})).text.match(SHARE)![0];
+    const joined = await codex.session.join({ share });
+    expect(joined.text).toContain("Paired with Tazo (claude-code)");
+    await until(() => claude.session.footer().includes("paired with Tazo (codex)"), 5000, "claude sees codex");
+
+    // Two memberships of one room, under two room keys, each in its own binding.
+    const keys = listRooms(claude.home);
+    expect(keys).toHaveLength(2);
+    expect(readBindings(claude.home, claude.project).map((b) => [b.owner_harness, b.owner_pid]).sort()).toEqual([
+      ["claude-code", 2001],
+      ["codex", 2002],
+    ]);
+
+    await claude.session.send({ kind: "chat", body: "hello from claude" });
+    await until(async () => (await codex.session.inbox()).text.includes("hello from claude"), 5000, "codex got it");
+    await codex.session.send({ kind: "chat", body: "hello from codex" });
+    await until(async () => (await claude.session.inbox()).text.includes("hello from codex"), 5000, "claude got it");
+
+    // Codex restarts: the new Codex server resumes Codex's membership, never Claude Code's.
+    codex.session.shutdown();
+    live.delete(2002);
+    live.add(2003);
+    const codex2 = side(port, "Tazo", { home: claude.home, project: claude.project, pid: 2003, isAlive, env: codexEnv });
+    await until(() => codex2.session.footer().includes("paired with Tazo (claude-code)"), 5000, "codex resumed");
+    expect(readBindings(claude.home, claude.project).map((b) => b.owner_pid).sort()).toEqual([2001, 2003]);
+    await claude.session.send({ kind: "chat", body: "after the restart" });
+    await until(async () => (await codex2.session.inbox()).text.includes("after the restart"), 5000, "codex2 got it");
   });
 
   // Windows has no mode bits, and the check does not run there (04 §3, ADR-024).

@@ -131,7 +131,11 @@ From then on it fails CI.
 - REQ-SAFE-4/INV-6: ninth consecutive send fails; `user-prompt-submit` hook resets;
   `ctl continue` resets; no MCP tool resets; a `user-prompt-submit` whose prompt starts
   with `<task-notification>` (a D3 wake) does not reset.
-- Passive mode: second MCP server in the same project refuses with the owner pid.
+- Several memberships (ADR-036): a second MCP server in the same project is idle, not
+  refused; it can start or join, including the room the first one is in, and each server
+  keeps its own membership across a restart of the other. A share string for a room this
+  machine already holds joins under a fresh room key. A server takes over only a dead
+  binding of its own harness.
 - Dead-owner takeover and reconnect (REQ-ROOM-6).
 - INV-7: grep all files under `PAIRWIRE_HOME` (except `secret` and `state.json`), all
   captured logs and all tool results after a session for the secret and share string.
@@ -158,7 +162,7 @@ From then on it fails CI.
   `install --print-config` and `install --codex` from the installed copy.
 - Release script: the version bump rewrites every version location and nothing else,
   refuses invalid or non-increasing versions, and `--check` reports a mismatched location.
-- Passive session hooks never mark the owner's messages delivered.
+- Hooks of another session in the folder never mark a membership's messages delivered.
 - `ctl.sock` falls back to a short path when `PAIRWIRE_HOME` is long.
 - INV-3: `ctl log` output passes through `renderTranscript()`: wrapped, labeled, and a peer
   body cannot close the wrapper. `ctl say` sends `author: "human"`, resets the hop budget and
@@ -192,7 +196,7 @@ From then on it fails CI.
   rendered items on stderr, marked delivered; items already undelivered when it registers
   wake it at once; a second `wait` for the same session ends the first with exit 0;
   `wait_cancel` from UserPromptSubmit and PostToolUse ends it with exit 0; an ack never
-  wakes it; a passive session's waiter, `delivery: pull`, `auto_continue: false`, an
+  wakes it; another session's waiter, `delivery: pull`, `auto_continue: false`, an
   unreachable `ctl.sock`, a dropped connection and SIGTERM all end it with exit 0 and no
   output; it has no timer of its own.
 - Internal error → exit 0, no output, error logged.

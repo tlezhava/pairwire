@@ -20,7 +20,7 @@ function setup(ownerHarness: string | null = "cursor") {
   const project = tempDir();
   createRoom(home, { roomId: ROOM, secret: new Uint8Array(32), relay: null, name: "Tazo", now: Date.now() }, {});
   updateState(home, ROOM, (s) => ({ ...s, status: "active", peer: { name: "Nika", harness: "claude-code", instance: "b".repeat(26) } }));
-  bindProject(home, project, ROOM, { pid: SERVER_PID, session: null, ...(ownerHarness !== null ? { harness: ownerHarness } : {}), harnessPid: MCP_HOST_PID, now: Date.now() }, () => false);
+  bindProject(home, project, ROOM, { pid: SERVER_PID, session: null, ...(ownerHarness !== null ? { harness: ownerHarness } : {}), harnessPid: MCP_HOST_PID, now: Date.now() });
   let n = 0;
   const message = (body: string) => {
     const id = `01JPW00000000000000000000${++n}`;

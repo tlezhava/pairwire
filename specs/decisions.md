@@ -52,7 +52,7 @@ before an MCP tool runs, showing its input. The plugin simply never pre-approves
 
 ## ADR-007 One room per project directory
 
-Status: accepted (2026-10-15, after S2)
+Status: superseded by ADR-036 (2026-11-12); accepted 2026-10-15, after S2
 
 Hooks and the MCP server are separate processes; tying a room to the project directory
 gives both a shared key (`project_hash`). Cost: two sessions in the same directory can't
@@ -1218,6 +1218,45 @@ Decisions:
 
 Open, for the desktop manual acceptance: whether `codex queue` reaches a thread of the Codex
 app, whether the Code tab runs the D3 waiter's `asyncRewake`, and `/pairwire:say` there.
+
+## ADR-036 Several memberships on one machine and in one folder (0.4.0)
+
+Status: accepted (2026-11-12). Supersedes ADR-007's one room per project directory; changes
+`04-client.md` sections 3, 6, 8 and 10 and `07-testing.md`. No protocol or invariant
+changes.
+
+Context. The human tried to pair Claude Code with Codex on their own machine, in the same
+folder (2026-11-11): Codex started a room, and Claude Code could not join it. Two rules
+stood in the way. Local state is keyed by `room_id`, so `join` refused a room the machine
+already held ("did you start it here?"). And one binding per folder made the second
+session passive. Both rules predate a second harness; the workaround (a second
+`PAIRWIRE_HOME`) does not work for a plugin or a desktop app.
+
+Decisions:
+
+1. **Room key.** A room directory is named by a room key: the `room_id` when this machine
+   holds no other membership of the room, else 16 random bytes in base32 (same shape, so
+   every path check stays). The `room_id` is derived from `secret` whenever it is needed
+   (relay URL, AAD), so nothing new is stored and `state.json`, which 0.1.x to 0.3.x parse
+   with a strict schema on every `listRooms`, keeps its fields.
+2. **One binding per membership.** `bindings/<project_hash>.<room_key>.json`, beside the
+   legacy `bindings/<project_hash>.json`. Older clients match bindings with
+   `^[0-9a-f]{16}\.json$`, so they never see the new files: an older server in the same
+   folder stays idle instead of taking over a membership whose room key it would put in the
+   relay URL (which would end the membership with 4002).
+3. **No passive mode.** A server without a membership is idle and can start or join. It
+   takes over only a dead binding of its own harness (preferring its own session id, which a
+   restart usually changes), so restarting Claude Code resumes Claude Code's membership,
+   not Codex's (REQ-ROOM-6).
+4. **Hooks and `ctl` pick their membership.** Hooks by session id, the harness-pid rule or
+   the Cursor workspace rule, as before, now over all of the folder's bindings. `ctl` by
+   `CLAUDE_CODE_SESSION_ID`, then `--harness`, then the only live one, and refuses to guess.
+
+Trade-offs. Two sessions of one harness in one folder can now each be in a room; a
+restarted session resumes the most recent dead one of its harness, which may be the other's
+if neither has a session id (Gemini, Cursor). A downgrade to 0.3.x no longer sees rooms
+joined under 0.4.0 in that folder. Both members of a room on one machine share its state
+directory: a local attacker who can read one can read both, as before with two homes.
 
 ## Spike findings
 

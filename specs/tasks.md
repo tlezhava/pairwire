@@ -89,7 +89,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 ## M3 — Client
 
 - [x] **M3-1 Config + state layer** (`04` §2–3): atomic writes, locks, permissions
-  check (INV-9), bindings, passive mode, dead-owner takeover.
+  check (INV-9), bindings, passive mode (replaced by ADR-036), dead-owner takeover.
 - [x] **M3-2 Logger** with redaction (INV-7).
 - [x] **M3-3 Connection manager:** join/rejoin with token, backoff (1 s → 30 s, jitter),
   handshake, sessions current/previous, outbox flush, acks, `peer_left` handling.
@@ -162,7 +162,7 @@ affected spec updated (remove the matching **[verify: Sn]** marker).
 
 - [x] Desktop apps: every setting in `config.json` (`codex_wake`), Codex wake state in
   `status` (ADR-035).
-- [ ] Several memberships on one machine and in one project folder: Claude Code and Codex
+- [x] Several memberships on one machine and in one project folder: Claude Code and Codex
   in one room from the same machine (ADR-036).
 - [ ] Rooms with more than two members when the starter asks for it (ADR-037).
 

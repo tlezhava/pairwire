@@ -25,7 +25,7 @@ describe("pairwire mcp (stdio)", () => {
     await client.connect(transport);
     expect((await client.listTools()).tools).toHaveLength(6);
     const res = await client.callTool({ name: "status", arguments: {} });
-    expect((res.content as { text: string }[])[0]!.text).toContain("No pairwire room in this project.");
+    expect((res.content as { text: string }[])[0]!.text).toContain("No pairwire room in this session.");
     await client.close();
     expect(stderr).toContain('"event":"mcp_started"');
   }, 30_000);

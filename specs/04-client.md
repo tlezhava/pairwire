@@ -118,12 +118,15 @@ it cannot tell whether the human asked for it, so it fails closed.
 ├── active                                empty flag file; exists iff some room on this machine
 │                                         is "waiting" or "active" (hook fast path, section 6)
 ├── bindings/<project_hash>.json          {project_dir, room_id, owner_pid, owner_session,
-│                                          owner_harness?, updated_at}
-├── bindings/<project_hash>.harness-pid   {owner_pid, harness_pid}: the owning server's parent,
+│                                          owner_harness?, updated_at}: a membership bound
+│                                         by 0.3.x or earlier (ADR-036)
+├── bindings/<project_hash>.<room_key>.json  the same fields: one file per membership in that
+│                                         folder, written by 0.4.0 and later (ADR-036)
+├── bindings/<binding>.harness-pid        {owner_pid, harness_pid}: the owning server's parent,
 │                                         while owner_session is null (section 10, ADR-033)
 ├── hook-cursor-miss.json                 {project_dir, at}: the folder of the last Cursor hook
 │                                         that found no binding, for diagnosis (ADR-034)
-└── rooms/<room_id>/                      0700
+└── rooms/<room_key>/                     0700: one membership of a room (ADR-036)
     ├── secret                            raw 32 bytes; deleted on leave
     ├── ctl.key                           32 random bytes, the control channel's proof key
     │                                     (section 8, ADR-029); deleted with secret
@@ -157,6 +160,14 @@ it cannot tell whether the human asked for it, so it fails closed.
   deleted with `secret` (leave, end, expiry) and by `purge`; a room that is past its expiry
   when a server opens it is ended before any key is created, and gets no control channel. Rooms opened only by 0.1.x servers have none, and their clients talk
   without the proof (section 8, "Control-channel server proof").
+- **Room key (ADR-036).** A room directory is named by its **room key**: the room's
+  `room_id` when this machine holds no other membership of the room (always so for `start`,
+  and as in 0.3.x and earlier), otherwise 16 fresh random bytes in base32, which has the
+  same 26-character shape. Everything local (files, `ctl_path`, bindings, `room_id` in a
+  binding, log room tags) uses the room key; the relay URL and every protocol input use the
+  `room_id`, which is always derived from `secret` (`02` §2) and therefore stored nowhere
+  else. A `join` never refuses a share string because this machine already holds the room:
+  that is how two agents on one machine pair (Claude Code and Codex, say).
 - `project_hash` = first 16 hex chars of `SHA-256(realpath(project_dir))`. On Windows the
   folder is first brought to one spelling, before and after the realpath, because harnesses
   write the same folder as `C:\x`, `c:/x/` or (from a file URI) `/c:/x`: a leading `/` before a
@@ -191,24 +202,39 @@ it cannot tell whether the human asked for it, so it fails closed.
   inside the user's profile directory, where it may inherit an ACL that lets other users
   read it. Paths are built with `node:path`, so separators are native; nothing assumes `/`
   or `/tmp`.
-- **One room per project directory.** The binding records `owner_pid` (the MCP server)
-  and `owner_session`: the `CLAUDE_CODE_SESSION_ID` the harness gives the MCP server, or
-  `null` in a harness that sets none. It also records `owner_harness`, the owning server's
-  `PAIRWIRE_HARNESS` (absent in bindings written before M5, and when the server has none), so
-  `ctl`, which runs outside the harness, can name the human's commands for it (section 5,
-  Hold mode). When the MCP server starts, it reads the binding:
-  - no binding → idle, ready for `start`/`join`;
-  - binding whose `owner_pid` is alive and isn't this process → **passive mode**: every
-    tool returns "Another session in this project (pid N) owns the pairwire room";
-  - binding with a dead owner → take ownership, record this server's session, and
-    reconnect (REQ-ROOM-6).
-- Hooks deliver only for the owning session: a hook acts only if its input's `session_id`
-  equals the binding's `owner_session`; otherwise it exits 0 with no output, so a passive
-  session never consumes the owner's messages. With `owner_session: null`, hooks deliver
-  only through the harness-pid rule (section 10, "Finding the session without a session
-  id"), which then records the hook's session as `owner_session`; when it does not match,
-  the room relies on D1 (pull). S2 showed each session has its own id, shared
-  by its MCP server and its hooks only, so no process-tree walk is needed.
+- **Memberships per project directory (ADR-036, replacing ADR-007's one room per
+  directory).** Each binding file is one membership: it records `room_id` (the room key),
+  `owner_pid` (the MCP server) and `owner_session`: the `CLAUDE_CODE_SESSION_ID` the harness
+  gives the MCP server, or `null` in a harness that sets none. It also records
+  `owner_harness`, the owning server's `PAIRWIRE_HARNESS` (absent in bindings written before
+  M5, and when the server has none), so `ctl`, which runs outside the harness, can name the
+  human's commands for it (section 5, Hold mode). A folder's bindings are its legacy file
+  `bindings/<project_hash>.json`, if any, and every `bindings/<project_hash>.<room_key>.json`.
+  `start` and `join` write the second form, which 0.3.x and earlier never read, so an older
+  client in the same folder neither resumes nor takes over a membership it cannot connect.
+  A legacy binding is rewritten in place on takeover. Bindings whose room is gone, left or
+  ended are removed when found. An MCP server owns at most one membership. When it starts,
+  and again on every tool call while it owns none, it reads the folder's bindings:
+  - one whose `owner_pid` is this process → it owns that one;
+  - else one with a dead owner that is **its own**: `owner_harness` absent or equal to the
+    server's `PAIRWIRE_HARNESS` → take ownership, record this server's session, and
+    reconnect (REQ-ROOM-6). A restarted harness usually has a new session id, so the session
+    only ranks: among several, a binding whose `owner_session` equals the server's wins,
+    then the most recent `updated_at`;
+  - else → idle, ready for `start`/`join`, even while other live sessions in the folder own
+    memberships. `status` and the footer then say "not in a room" and name the harness of
+    each live membership in the folder ("another session here (codex) is in a room").
+  A server that owns a membership never takes over another; `start`/`join` while it owns an
+  open one is refused ("This session already has a pairwire room").
+- Hooks deliver only for the owning session. A hook looks through its folder's bindings for
+  the one it owns: the binding whose `owner_session` equals its input's `session_id`; else a
+  binding with `owner_session: null` that passes the harness-pid rule (section 10, "Finding
+  the session without a session id"), which then records the hook's session as
+  `owner_session`; Cursor hooks use the workspace rule instead (section 10). A hook that owns
+  none exits 0 with no output, so another session in the folder never consumes a
+  membership's messages; a membership whose hooks never match relies on D1 (pull). S2
+  showed each session has its own id, shared by its MCP server and its hooks only, so no
+  process-tree walk is needed in Claude Code.
 - A room is removed locally (status `ended`, secret and keys deleted, binding removed)
   when the relay closes with 4003 or 4002, when the peer leaves, or at the `expires_at`
   the relay reported in `joined` (`02-protocol.md` §5). Before the first `joined`, a
@@ -843,8 +869,9 @@ Waiter protocol (over the room's `ctl.sock`, section 1):
 1. `run.sh` exits 0 at once if the `active` flag is missing (no room) or Node is missing
    or too old (no `systemMessage`: an async hook's stdout isn't shown).
 2. `pairwire hook stop-wait` exits 0 unless `delivery` is `auto`, `auto_continue` is
-   true, the hook input's `session_id` equals the binding's `owner_session` (passive
-   sessions never wait), and the binding's `owner_pid` is alive (section 8, owner check).
+   true, the hook input's `session_id` equals the `owner_session` of one of the folder's
+   bindings (other sessions never wait), and that binding's `owner_pid` is alive (section
+   8, owner check).
    Otherwise it connects to `ctl.sock` and sends
    `{"op":"wait","session":<session_id>}`. If it can't connect, it exits 0.
 3. The server closes any earlier `wait` connection for that session with
@@ -1028,6 +1055,14 @@ not read; no trailing newline is removed. Without `--args`, `say` reads stdin, a
 `accept` take their one argument from the command line, else from stdin, as above.
 Expected failures are printed as `pairwire: …` on stdout with exit code 0, so the human
 sees them in the prompt.
+
+**Which membership (ADR-036).** `ctl` acts on one of the folder's bindings: the one whose
+`owner_session` equals `CLAUDE_CODE_SESSION_ID` when that variable is set (Claude Code's
+`!` commands run with it); else, with `--harness <name>` before the operation (`ctl
+--harness codex say`), the bindings whose `owner_harness` is `<name>`; then, of those left,
+the only one, else the only one whose owner is alive. When that leaves several, it prints
+"pairwire: this folder has more than one pairwire room (claude-code, codex). Run ctl
+--harness <name> …" with the harnesses of the candidates, and changes nothing.
 
 `ctl.sock` accepts connections only from the same OS user (socket file mode 0600).
 
@@ -1447,15 +1482,16 @@ budget, so two agents waking each other stay bounded by the budgets (REQ-SAFE-3)
 
 **Finding the session without a session id.** Hooks get a session id from every harness,
 but an MCP server gets one only from Claude Code (environment) and Codex (`_meta`). For the
-others the owning server records its parent process (the harness) in a sidecar file,
-`bindings/<hash>.harness-pid`, not in the binding itself, because 0.1.x and 0.2.x read
+others the owning server records its parent process (the harness) in a sidecar file next
+to its binding (`bindings/<binding>.harness-pid`), not in the binding itself, because 0.1.x and 0.2.x read
 bindings with a strict schema; `run.sh` passes its own parent as `PAIRWIRE_HOOK_PPID`. A hook whose binding has no
 `owner_session` acts when the two pids are equal, and on its first action records its
 session id as `owner_session`, exactly as `_meta` does for Codex. If the harness starts
 hooks and MCP servers from different processes, the room stays on D1 there. Cursor does
 (S11, below), so Cursor hooks use the workspace rule instead (ADR-034): a `cursor`-dialect
-hook acts for the binding of its own workspace folder when that binding's `owner_harness` is
-`cursor`, compares no session or process, and records nothing. Cursor opens a folder in one
+hook acts for the binding of its own workspace folder whose `owner_harness` is `cursor` (of
+several, the one with a live owner, then the most recent `updated_at`; ADR-036), compares no
+session or process, and records nothing. Cursor opens a folder in one
 window at most, and that window's one MCP server serves all of its chats, so the folder names
 the server. The pid rule stays for Gemini CLI, where it is unverified [S11]; on native
 Windows it cannot match there, because `sh.exe` always stands between the harness and the
