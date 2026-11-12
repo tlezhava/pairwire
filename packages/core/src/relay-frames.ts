@@ -70,14 +70,16 @@ const groupJoined = z
     token: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
     epoch: u32,
     capacity: z.number().int().min(3).max(8),
+    taken: z.array(memberIndex).max(7),
     present: z.array(memberIndex).max(7),
     buffered: count,
     expires_at: count,
   })
   .superRefine((f, ctx) => {
     if (f.member >= f.capacity) ctx.addIssue({ code: "custom", path: ["member"], message: "member out of range" });
-    const ok = f.present.every((m, i) => m < f.capacity && m !== f.member && (i === 0 || m > f.present[i - 1]!));
-    if (!ok) ctx.addIssue({ code: "custom", path: ["present"], message: "present out of range or order" });
+    const valid = (list: number[]) => list.every((m, i) => m < f.capacity && m !== f.member && (i === 0 || m > list[i - 1]!));
+    if (!valid(f.taken)) ctx.addIssue({ code: "custom", path: ["taken"], message: "taken out of range or order" });
+    if (!valid(f.present) || !f.present.every((m) => f.taken.includes(m))) ctx.addIssue({ code: "custom", path: ["present"], message: "present out of range, order or not taken" });
   });
 
 export const groupRelayFrameSchema = z.discriminatedUnion("t", [

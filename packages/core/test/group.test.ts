@@ -52,7 +52,7 @@ describe("relay room: group mode (02 §8.2)", () => {
   it("REQ-ROOM-9 a v2 tokenless join with capacity creates a group room; members get slots 0 upward", () => {
     const h = harness();
     const a = h.join("s0", { v: 2, token: null, capacity: 3 });
-    expect(joined(a, "s0")).toMatchObject({ t: "joined", member: 0, epoch: 1, capacity: 3, present: [], buffered: 0, expires_at: T0 + RELAY_LIMITS.maxAgeMs });
+    expect(joined(a, "s0")).toMatchObject({ t: "joined", member: 0, epoch: 1, capacity: 3, taken: [], present: [], buffered: 0, expires_at: T0 + RELAY_LIMITS.maxAgeMs });
     const b = h.join("s1", { v: 2, token: null });
     expect(joined(b, "s1")).toMatchObject({ member: 1, epoch: 2, capacity: 3, present: [0] });
     expect(json(b, "s0")).toEqual([{ t: "peer_joined", member: 1, epoch: 2 }]);
@@ -115,6 +115,13 @@ describe("relay room: group mode (02 §8.2)", () => {
     expect(binary(back, "s2b")).toEqual([msgTo(0, 1), msgTo(1, 2)]);
   });
 
+  it("joined lists every taken slot, including members offline now", () => {
+    const g = group(4, 3);
+    g.room.disconnect("s1");
+    const back = g.join("s0b", { v: 2, token: g.tokens[0] });
+    expect(joined(back, "s0b")).toMatchObject({ member: 0, taken: [1, 2], present: [2] });
+  });
+
   it("caps a group member's offline buffer at 2 MiB / capacity", () => {
     const g = group(4, 2);
     g.room.disconnect("s1");
@@ -149,7 +156,7 @@ describe("relay room: group mode (02 §8.2)", () => {
     expect(closes(g.room.text("s0", JSON.stringify({ t: "leave" })))).toEqual([["s0", 4003]]);
     expect(g.room.state?.ended).toBeNull(); // member 2 hasn't left
     const last = g.join("s2c", { v: 2, token: g.tokens[2] });
-    expect(joined(last, "s2c")).toMatchObject({ member: 2, present: [] });
+    expect(joined(last, "s2c")).toMatchObject({ member: 2, taken: [], present: [] });
     expect(closes(g.room.text("s2c", JSON.stringify({ t: "leave" })))).toEqual([["s2c", 4003]]);
     expect(g.room.state?.ended).toMatchObject({ reason: "left" });
     expect(closes(g.join("late", { v: 2, token: g.tokens[2] }))).toEqual([["late", 4003]]);
@@ -206,7 +213,7 @@ describe("relay room: group mode (02 §8.2)", () => {
 
 describe("group relay frames (02 §8.2)", () => {
   const ok = (frame: object) => parseGroupRelayFrame(JSON.stringify(frame));
-  const joinedFrame = { t: "joined", member: 2, token: "A".repeat(43), epoch: 9, capacity: 4, present: [0, 1], buffered: 0, expires_at: 1 };
+  const joinedFrame = { t: "joined", member: 2, token: "A".repeat(43), epoch: 9, capacity: 4, taken: [0, 1, 3], present: [0, 1], buffered: 0, expires_at: 1 };
 
   it("accepts the §8.2 frames", () => {
     expect(ok(joinedFrame)).toMatchObject({ ok: true, frame: joinedFrame });
@@ -228,6 +235,8 @@ describe("group relay frames (02 §8.2)", () => {
       { ...joinedFrame, present: [0, 0] },
       { ...joinedFrame, present: [0, 4] },
       { ...joinedFrame, present: [0, 1, 3, 3] },
+      { ...joinedFrame, taken: [0, 1], present: [0, 3] },
+      { ...joinedFrame, taken: [0, 2] },
       { ...joinedFrame, member: "a" },
     ]) {
       expect(ok(bad)).toMatchObject({ ok: false, reason: "invalid", t: "joined" });

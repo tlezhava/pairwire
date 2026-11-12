@@ -650,15 +650,16 @@ Relay → client, in a group room:
 
 | Frame | Meaning |
 |---|---|
-| `{"t":"joined","member":2,"token":"…","epoch":9,"capacity":4,"present":[0,1],"buffered":0,"expires_at":…}` | Join accepted. `member` is this member's index; `present` lists the other members connected now. |
+| `{"t":"joined","member":2,"token":"…","epoch":9,"capacity":4,"taken":[0,1,3],"present":[0,1],"buffered":0,"expires_at":…}` | Join accepted. `member` is this member's index; `taken` lists the other slots that have been taken and not retired, and `present` those of them connected now. |
 | `{"t":"peer_joined","member":1,"epoch":10}` | Member 1 connected (or reconnected). |
 | `{"t":"peer_left","member":1,"reason":"disconnected"}` | Member 1's socket closed; its slot is kept. |
 | `{"t":"peer_left","member":1,"reason":"left"}` | Member 1 left for good. |
 | `error`, `pong` | As in §5. |
 
 Field bounds (relay protocol errors otherwise, §5): `member` an integer 0..7 and below
-`capacity`; `capacity` an integer 3..8; `present` at most `capacity − 1` distinct members in
-ascending order, each below `capacity` and none equal to `member`; the other fields as in §5.
+`capacity`; `capacity` an integer 3..8; `taken` at most `capacity − 1` distinct members in
+ascending order, each below `capacity` and none equal to `member`; `present` the same, and
+each in `taken`; the other fields as in §5.
 
 Membership rules, replacing §5's for group rooms:
 
@@ -709,10 +710,11 @@ Each pair of members runs §4 on its own, under these changes:
 
 Each pair runs §6 on its own: each member keeps, per peer, the seq of the envelopes it sends
 to that peer (`my_seq`), `peer_max_seq`, the outbox, acks and resends. A message goes to
-every member that has joined and not left when it is sent: one copy per peer, with the same
+every member that has joined and not left when it is sent (`taken` of the last `joined`,
+plus later `peer_joined`, less `peer_left` with `left`): one copy per peer, with the same
 `id` and that peer's next `seq`. A member that joins later does not receive earlier messages.
 A message sent while nobody else has joined is refused. Copies to a peer without a session
-yet wait in the outbox, as in §6.2.
+yet wait in the outbox, as in §6.2, until both have been online at the same time.
 
 - Pacing: at most `8 × (capacity − 1)` binary frames per rolling 10 s.
 - Structured kinds (§6.3) are not used in group rooms: a client does not put `collab1` in a

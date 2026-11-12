@@ -328,7 +328,8 @@ export class RelayRoom {
     state.epoch += 1;
     state.lastActivityAt = now;
     this.#pruneBuffer(slot);
-    const present = state.members!.flatMap((_, i) => (i !== member && this.#socketOf(i) !== undefined ? [i] : []));
+    const taken = state.members!.flatMap((m, i) => (i !== member && isSlot(m) ? [i] : []));
+    const present = taken.filter((i) => this.#socketOf(i) !== undefined);
     this.#send(
       socket,
       JSON.stringify({
@@ -337,6 +338,7 @@ export class RelayRoom {
         token: slot.token,
         epoch: state.epoch,
         capacity: state.capacity,
+        taken,
         present,
         buffered: slot.buffer.length,
         expires_at: state.createdAt + L.maxAgeMs,
