@@ -295,6 +295,23 @@ ADR-027.
   sanitized and labeled.
 - INV-7: no path, hash or body in any log line after a session with every structured kind.
 
+### Group rooms (ADR-037)
+
+- core: the relay room creates a group room only from a `v: 2` tokenless join with
+  `capacity`, gives slots `0` upward, seals after `capacity` joins (4001), refuses a
+  version that doesn't match the room's mode (4004), routes `to || frame` to the addressed
+  member as `from || frame`, buffers per recipient within the group limits, never buffers
+  HELLOs, drops frames to self, free or retired slots, and on `leave` retires only the
+  leaver; the room ends when every taken slot is retired. A stored pair room decodes
+  unchanged.
+- core: group relay frames are validated with the §8.2 bounds; a v2 HELLO opens only with
+  the `from` and `to` it was sealed for.
+- client and e2e (REQ-ROOM-9..11): three clients in a room for 3 pair up pairwise; a message
+  reaches both others, each copy acked on its own; a fourth tokenless join is refused; a
+  member that reconnects gets fresh sessions with everyone; one member leaving leaves the
+  room open for the other two, who get the notice; a coordination kind is refused; a pw1-only
+  client refuses a `pw2_` string; a pair room still works with a 0.3.x-shaped peer.
+
 ### Injection corpus (SEC)
 
 `tests/security/injection-corpus/` holds hostile message bodies: tag breaking, fake

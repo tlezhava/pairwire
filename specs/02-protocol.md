@@ -616,3 +616,104 @@ sid            = 99625b51d4fd490e
 AEAD correctness is covered by `@noble/ciphers`' own vectors; our tests cover round-trip,
 tampering (any flipped bit in header, epoch, nonce, aad or ciphertext fails), and
 wrong-key rejection.
+
+## 8. Group rooms (pw2, ADR-037)
+
+A **group room** has room for 3 to 8 members, chosen by the human who starts it. Every rule in
+§1 to §6 applies to each pair of members unless this section changes it. A room's mode is
+fixed when the relay creates it: a room created by a `v: 1` join is a **pair room** and
+everything above holds unchanged, so pair rooms work between every client and relay version.
+
+### 8.1 Share string
+
+```
+pw2_<base32(secret)>[@<relay-host>[:<port>]]
+```
+
+The same rules as §1, with the prefix `pw2_`. The key schedule (§2) is unchanged: the same
+`room_id`, `psk` and `hello_key`. A client that speaks only pw1 refuses the string with its
+"unsupported version" message (§1), which tells both people to update.
+
+### 8.2 Relay control (`v: 2`)
+
+Client → relay, in a group room:
+
+| Frame | When |
+|---|---|
+| `{"t":"join","v":2,"token":null,"capacity":4}` | First frame, as in §5. `capacity` (integer 3..8) is sent only by the member that starts the room; the relay reads it only when the join creates the room. |
+| `{"t":"join","v":2,"token":null}` | A member joining with the share string. |
+| `{"t":"join","v":2,"token":"<token>"}` | Rejoin. |
+| `{"t":"leave"}` | This member leaves for good; the room goes on for the others. |
+| `{"t":"ping"}` | As in §5. |
+
+Relay → client, in a group room:
+
+| Frame | Meaning |
+|---|---|
+| `{"t":"joined","member":2,"token":"…","epoch":9,"capacity":4,"present":[0,1],"buffered":0,"expires_at":…}` | Join accepted. `member` is this member's index; `present` lists the other members connected now. |
+| `{"t":"peer_joined","member":1,"epoch":10}` | Member 1 connected (or reconnected). |
+| `{"t":"peer_left","member":1,"reason":"disconnected"}` | Member 1's socket closed; its slot is kept. |
+| `{"t":"peer_left","member":1,"reason":"left"}` | Member 1 left for good. |
+| `error`, `pong` | As in §5. |
+
+Field bounds (relay protocol errors otherwise, §5): `member` an integer 0..7 and below
+`capacity`; `capacity` an integer 3..8; `present` at most `capacity − 1` distinct members in
+ascending order, each below `capacity` and none equal to `member`; the other fields as in §5.
+
+Membership rules, replacing §5's for group rooms:
+
+1. A tokenless join takes the lowest free slot, `0` upward. Once `capacity` slots have been
+   taken (left ones included), the room is **sealed** and a tokenless join gets 4001.
+2. A tokenless join to a room that does not exist creates it only when it carries
+   `capacity`; without one it is closed with 4003, so only the starter creates a room.
+3. A join with a token works as §5 rule 2.
+4. A join whose `v` does not match the room's mode (`v: 1` to a group room, `v: 2` to a pair
+   room) is closed with 4004 `unsupported_version`.
+5. `leave` retires the leaver's slot: its token and buffered frames are discarded, every
+   connected member gets `peer_left` (`left`) for it, and its socket is closed with 4003.
+   When every taken slot is retired, the room is ended (a tombstone, as in §5 rule 3).
+6. On (re)join the relay sends `joined`, then buffered frames, then `peer_joined` to every
+   other connected member.
+7. Frames addressed to the sender, to a slot never taken, or to a retired slot are dropped.
+   HELLOs are never buffered (§5 rule 5).
+
+### 8.3 Binary framing
+
+```
+client → relay:  to (1 byte)   || frame
+relay → client:  from (1 byte) || frame
+```
+
+`frame` is a HELLO (§8.4) or a MSG (§3). The relay reads byte 0 (the address) and byte 1
+(the frame type, for the HELLO buffering rule), forwards the rest unchanged, and replaces the
+address with the sender's member index. Frame sizes are those of §3 plus one byte.
+
+### 8.4 Pairwise handshake
+
+Each pair of members runs §4 on its own, under these changes:
+
+- `aad = utf8("pairwire/v2/hello") || room_id_bytes || u32be(epoch) || from || to || e_pub`,
+  where `from` and `to` are the sender's and the recipient's member indexes, one byte each. A
+  receiver opens a HELLO with `from` set to the index the relay gave and `to` set to its own,
+  so a HELLO can't be passed to a third member.
+- On `joined` with epoch `E`, a client sends a HELLO for `E` to each member in `present`. On
+  `peer_joined` for member `m` with epoch `E`, it sends one to `m`.
+- Handshake state is kept per peer, for the latest epoch of an event involving that peer (our
+  `joined` while it was present, or its `peer_joined`); one HELLO per peer is accepted for that
+  epoch, and every other is dropped and counted as in §4.1. The epoch floor (§4.1) is the
+  room's: the highest epoch seen, persisted, applies to every peer.
+- Decrypt failures are counted per connection across all peers (§4.2).
+- Session keys (§4.3) and stored sessions (§4.4) are per peer.
+
+### 8.5 Envelopes and delivery
+
+Each pair runs §6 on its own: each member keeps, per peer, the seq of the envelopes it sends
+to that peer (`my_seq`), `peer_max_seq`, the outbox, acks and resends. A message goes to
+every member that has joined and not left when it is sent: one copy per peer, with the same
+`id` and that peer's next `seq`. A member that joins later does not receive earlier messages.
+A message sent while nobody else has joined is refused. Copies to a peer without a session
+yet wait in the outbox, as in §6.2.
+
+- Pacing: at most `8 × (capacity − 1)` binary frames per rolling 10 s.
+- Structured kinds (§6.3) are not used in group rooms: a client does not put `collab1` in a
+  group room's HELLO and refuses to send a structured kind there (`04-client.md` section 4).

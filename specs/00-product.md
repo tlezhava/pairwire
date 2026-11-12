@@ -44,7 +44,8 @@ approves what their agent sends, and stays in control of what their agent does.
 
 ## Non-goals (v1)
 
-- Rooms with more than two participants.
+- Rooms with more than eight participants. Rooms are for two people unless the person who
+  starts one asks for more (ADR-037).
 - File sync, shared editing, or screen sharing. Code moves through git.
 - Remote execution of any kind: a peer can never trigger a command, tool or file write.
 - Replacing Claude Code's native same-account messaging.
@@ -66,8 +67,9 @@ client unless stated otherwise. Each requirement has at least one test (see
   handshake with the peer.
 - **REQ-ROOM-3** WHEN the handshake completes THE SYSTEM SHALL show both users the peer's
   display name and harness.
-- **REQ-ROOM-4** WHEN a third client tries to join a room that already has two members
-  THE RELAY SHALL refuse it with close code 4001 `room_full`.
+- **REQ-ROOM-4** WHEN a client tries to join a room whose slots have all been taken (two,
+  or the size given when the room was started) THE RELAY SHALL refuse it with close code
+  4001 `room_full`.
 - **REQ-ROOM-5** WHEN a user runs `/pairwire:leave` THE SYSTEM SHALL notify the peer, close
   the connection, and delete the local room secret.
 - **REQ-ROOM-6** WHEN a session restarts in the same project directory while its room is
@@ -75,6 +77,15 @@ client unless stated otherwise. Each requirement has at least one test (see
 - **REQ-ROOM-7** WHEN a room has had no connected member and no frame for 72 hours, or
   is 7 days old, THE RELAY SHALL end it, and later joins SHALL be refused with `ended`
   (4003), or with `bad_token` (4002) once the relay has deleted the room after max age.
+- **REQ-ROOM-9** WHEN a user starts a room with a size from 3 to 8 THE SYSTEM SHALL create
+  a group room that admits that many members and show a `pw2_` share string; without a size
+  the room is for two people.
+- **REQ-ROOM-10** WHEN a member of a group room sends a message THE SYSTEM SHALL deliver it
+  to every member that has joined and not left, under keys separate for each pair of
+  members, and report delivery per recipient.
+- **REQ-ROOM-11** WHEN a member leaves a group room THE SYSTEM SHALL tell the other members
+  who left, and the room SHALL stay open for them until the last member leaves or it
+  expires.
 - **REQ-ROOM-8** WHEN the share string is malformed THE SYSTEM SHALL refuse it with a
   message that says what is wrong, without echoing the string.
 
