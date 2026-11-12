@@ -164,6 +164,13 @@ with the share string in the other). A restarted session picks up its harness's 
 In a terminal, `pairwire ctl --harness codex say` picks Codex's room when a folder has more
 than one.
 
+Rooms are for two people unless you ask for more: `/pairwire:start for 4` (or ask your agent
+for "a pairwire room for 4") makes a room for 3 to 8, with a `pw2_` share string to send to
+everyone. Every member needs pairwire 0.4.0 or later, and so does the relay. In a bigger room
+each message goes to everyone who has joined (each pair of members has its own keys), someone
+leaving doesn't end the room for the others, and coordination messages (below) work in
+two-person rooms only.
+
 ### Coordination messages
 
 Besides plain messages, questions and answers, the agents can send a few structured

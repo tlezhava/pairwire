@@ -1,19 +1,22 @@
 import { createRequire as __pwCreateRequire } from "node:module";
 const require = __pwCreateRequire(import.meta.url);
 import {
+  peopleLabel
+} from "./chunk-GRSVGBV2.mjs";
+import {
   StatePermissionError,
   checkStatePermissions
-} from "./chunk-YEYARWRO.mjs";
+} from "./chunk-4SPMUMTX.mjs";
 import {
   CtlProofError,
   CtlUnreachableError,
   ctlCall,
   ctlTarget
-} from "./chunk-FJQX44XF.mjs";
+} from "./chunk-FUN6BANO.mjs";
 import {
   CtlKeyError,
   readCtlKey
-} from "./chunk-N573BUDX.mjs";
+} from "./chunk-KKOA2SWC.mjs";
 import {
   bindingsForRoom,
   expiresAt,
@@ -23,7 +26,7 @@ import {
   loadConfig,
   readState,
   refreshActiveFlag
-} from "./chunk-HYOGY7D3.mjs";
+} from "./chunk-PKJEAGAD.mjs";
 import {
   activeFlagPath,
   roomDir,
@@ -40,7 +43,7 @@ import {
   displayName,
   parseRelayAddress,
   relayUrl
-} from "./chunk-O5I4E6QX.mjs";
+} from "./chunk-NJ2ULMK2.mjs";
 import "./chunk-KARZWXGF.mjs";
 
 // packages/client/src/doctor.ts
@@ -93,7 +96,7 @@ async function runDoctor(o) {
     try {
       const s = readState(o.home, id);
       if (!s) continue;
-      const peer = s.peer ? `${displayName(s.peer.name)} (${displayName(s.peer.harness)})` : "no peer yet";
+      const peer = peopleLabel(o.home, id, s, displayName) ?? "no peer yet";
       const until = isOpen(s) ? `, expires ${new Date(expiresAt(s)).toISOString()}` : "";
       line(s.error && isOpen(s) ? "warn" : "ok", `room ${id.slice(0, 6)}\u2026: ${s.status}${s.error ? ` (${s.error})` : ""}, ${peer}${until}`);
       if (isOpen(s)) relays.add(s.relay ?? DEFAULT_RELAY_HOST ?? "");

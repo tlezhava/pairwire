@@ -113,6 +113,7 @@ export {
   PREAMBLE,
   noticeHeld,
   noticePeerChanged,
+  noticeMemberLeft,
   noticePeerJoined,
   noticePeerLeft,
   noticePeerUnreadable,

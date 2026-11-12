@@ -56,6 +56,11 @@ export function noticePeerLeft(name: string, reason: "left" | "expired"): Notice
   return { event: "peer_left", text: reason === "left" ? `${displayName(name)} ended the room.` : "The room expired." };
 }
 
+/** A member left a group room, which stays open for the others (02 §8.2, ADR-037). */
+export function noticeMemberLeft(name: string): Notice {
+  return { event: "peer_left", text: `${displayName(name)} left the room; it stays open for the others.` };
+}
+
 export function noticePeerChanged(was: PeerIdentity, now: PeerIdentity): Notice {
   const who = (p: PeerIdentity) => `${displayName(p.name)}/${displayName(p.harness)}`;
   return {

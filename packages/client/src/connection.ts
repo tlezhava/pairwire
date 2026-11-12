@@ -132,7 +132,7 @@ export const DEFAULT_TUNING: Tuning = {
 
 // ---------------------------------------------------------------------------------------
 
-export type EndReason = "left" | "peer_left" | "expired" | "room_full" | "gone";
+export type EndReason = "left" | "peer_left" | "expired" | "room_full" | "gone" | "unsupported";
 
 export interface ConnectionEvents {
   /** A peer message or local notice was appended to the inbox. */
