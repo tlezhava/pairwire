@@ -1,10 +1,12 @@
-// Relay room state machine (03, Room state machine; 02 §5). Pure logic: the host (Durable
-// Object or Node) feeds it socket events and applies the returned effects.
+// Relay room state machine (03, Room state machine; 02 §5, §8). Pure logic: the host (Durable
+// Object or Node) feeds it socket events and applies the returned effects. A pair room has
+// slots "a" and "b"; a group room (02 §8, ADR-037) has slots 0..capacity-1.
 import { randomBytes, utf8ToBytes } from "@noble/hashes/utils.js";
 import { z } from "zod";
-import { RELAY_LIMITS as L } from "./limits.js";
+import { GROUP_LIMITS as G, RELAY_LIMITS as L } from "./limits.js";
 
-export type Member = "a" | "b";
+/** "a"/"b" in a pair room, the slot index in a group room. */
+export type Member = "a" | "b" | number;
 export type SocketId = string;
 
 export interface BufferedFrame {
@@ -28,6 +30,10 @@ export interface RoomState {
   epoch: number;
   ended: null | { at: number; reason: "left" | "expired" };
   slots: { a?: Slot; b?: Slot };
+  /** A group room (02 §8): its capacity, 3..8. Absent in a pair room. */
+  capacity?: number;
+  /** A group room's slots by index: null free, "left" retired. */
+  members?: (Slot | "left" | null)[];
 }
 
 export type Effect =
@@ -63,7 +69,12 @@ const REFILL_PER_MS = L.binaryFramesPerMinute / 60_000;
 const REPLY_REFILL_PER_MS = L.relayRepliesPerMinute / 60_000;
 
 const controlSchema = z.discriminatedUnion("t", [
-  z.strictObject({ t: z.literal("join"), v: z.number(), token: z.string().nullable() }),
+  z.strictObject({
+    t: z.literal("join"),
+    v: z.number(),
+    token: z.string().nullable(),
+    capacity: z.number().int().min(G.minCapacity).max(G.maxCapacity).optional(),
+  }),
   z.strictObject({ t: z.literal("leave") }),
   z.strictObject({ t: z.literal("ping") }),
 ]);
@@ -115,12 +126,7 @@ export class RelayRoom {
     for (const [socket, { member, connectedAt }] of Object.entries(opts.sockets ?? {})) {
       this.#sockets.set(socket, newConn(member, member ? null : (connectedAt ?? now) + L.joinDeadlineMs, now));
     }
-    if (this.state) {
-      for (const m of ["a", "b"] as const) {
-        const slot = this.state.slots[m];
-        if (slot) slot.connected = this.#socketOf(m) !== undefined;
-      }
-    }
+    if (this.state) for (const [m, slot] of slotEntries(this.state)) slot.connected = this.#socketOf(m) !== undefined;
   }
 
   /** The member a socket has joined as: null if it hasn't joined yet, undefined if unknown. */
@@ -158,7 +164,7 @@ export class RelayRoom {
       } catch {
         return this.#close(socket, "protocol_error");
       }
-      if (isObject(raw) && raw.t === "join" && typeof raw.v === "number" && raw.v !== 1) {
+      if (isObject(raw) && raw.t === "join" && typeof raw.v === "number" && raw.v !== 1 && raw.v !== 2) {
         return this.#close(socket, "unsupported_version");
       }
       const parsed = controlSchema.safeParse(raw);
@@ -166,7 +172,9 @@ export class RelayRoom {
       const frame = parsed.data;
       if (frame.t === "ping") return this.#reply(socket, PONG);
       if (conn.member === null) {
-        return frame.t === "join" ? this.#join(socket, conn, frame.token) : this.#close(socket, "protocol_error");
+        if (frame.t !== "join") return this.#close(socket, "protocol_error");
+        if (frame.v === 1 && frame.capacity !== undefined) return this.#close(socket, "protocol_error");
+        return frame.v === 2 ? this.#joinGroup(socket, conn, frame.token, frame.capacity) : this.#join(socket, conn, frame.token);
       }
       if (frame.t === "join") return this.#close(socket, "protocol_error");
       this.#leave(conn.member);
@@ -179,7 +187,8 @@ export class RelayRoom {
       if (!conn) return;
       if (conn.member === null || !this.state || this.state.ended) return this.#close(socket, "protocol_error");
       const member = conn.member;
-      if (bytes.length > L.maxBinaryFrameBytes) return this.#error(socket, "too_large");
+      if (bytes.length > L.maxBinaryFrameBytes + (typeof member === "number" ? 1 : 0)) return this.#error(socket, "too_large");
+      if (typeof member === "number") return this.#binaryGroup(socket, member, bytes);
       const retryAfter = this.#takeToken(member);
       if (retryAfter > 0) return this.#error(socket, "rate_limited", retryAfter);
       this.state.lastActivityAt = this.#now();
@@ -205,7 +214,7 @@ export class RelayRoom {
       const conn = this.#sockets.get(socket);
       if (!conn) return;
       this.#sockets.delete(socket);
-      if (conn.member) this.#memberGone(conn.member);
+      if (conn.member !== null) this.#memberGone(conn.member);
     });
   }
 
@@ -218,7 +227,7 @@ export class RelayRoom {
       const state = this.state;
       if (!state) return;
       if (now >= state.createdAt + L.maxAgeMs) {
-        for (const [socket, conn] of this.#sockets) if (conn.member) this.#close(socket, "ended", false);
+        for (const [socket, conn] of this.#sockets) if (conn.member !== null) this.#close(socket, "ended", false);
         this.state = null;
         this.#buckets.clear();
         this.#out.deleteAll = true;
@@ -230,6 +239,7 @@ export class RelayRoom {
       if (!anyConnected && now - state.lastActivityAt >= L.idleExpiryMs) {
         state.ended = { at: now, reason: "expired" };
         state.slots = {};
+        if (state.members) state.members = state.members.map((m) => (m === null ? null : "left"));
         this.#out.persist = true;
       }
     });
@@ -242,7 +252,8 @@ export class RelayRoom {
       return this.#close(socket, "ended");
     }
 
-    let member: Member;
+    if (this.state?.capacity !== undefined) return this.#close(socket, "unsupported_version");
+    let member: "a" | "b";
     if (token !== null) {
       const found = (["a", "b"] as const).find((m) => this.state?.slots[m]?.token === token);
       if (!found) return this.#close(socket, "bad_token");
@@ -285,34 +296,137 @@ export class RelayRoom {
     this.#out.persist = true;
   }
 
+  /** A `v: 2` join (02 §8.2): only into a group room, which only a join with capacity creates. */
+  #joinGroup(socket: SocketId, conn: Conn, token: string | null, capacity: number | undefined): void {
+    const now = this.#now();
+    if (this.state?.ended) return this.#close(socket, "ended");
+    if (this.state && this.state.capacity === undefined) return this.#close(socket, "unsupported_version");
+    let member: number;
+    if (token !== null) {
+      const found = this.state?.members?.findIndex((m) => isSlot(m) && m.token === token) ?? -1;
+      if (found < 0) return this.#close(socket, "bad_token");
+      member = found;
+      for (const [other, c] of this.#sockets) {
+        if (other !== socket && c.member === member) this.#close(other, "replaced", false);
+      }
+    } else {
+      if (!this.state) {
+        if (capacity === undefined) return this.#close(socket, "ended");
+        this.state = { createdAt: now, lastActivityAt: now, epoch: 0, ended: null, slots: {}, capacity, members: Array.from({ length: capacity }, () => null) };
+      }
+      const free = this.state.members!.indexOf(null);
+      if (free < 0) return this.#close(socket, "room_full");
+      member = free;
+      this.state.members![member] = { token: base64url(this.#random(32)), connected: false, buffer: [] };
+    }
+
+    const state = this.state!;
+    const slot = state.members![member] as Slot;
+    conn.member = member;
+    conn.deadline = null;
+    slot.connected = true;
+    state.epoch += 1;
+    state.lastActivityAt = now;
+    this.#pruneBuffer(slot);
+    const present = state.members!.flatMap((_, i) => (i !== member && this.#socketOf(i) !== undefined ? [i] : []));
+    this.#send(
+      socket,
+      JSON.stringify({
+        t: "joined",
+        member,
+        token: slot.token,
+        epoch: state.epoch,
+        capacity: state.capacity,
+        present,
+        buffered: slot.buffer.length,
+        expires_at: state.createdAt + L.maxAgeMs,
+      }),
+    );
+    for (const frame of slot.buffer) this.#send(socket, frame.bytes);
+    slot.buffer = [];
+    for (const i of present) this.#send(this.#socketOf(i)!, JSON.stringify({ t: "peer_joined", member, epoch: state.epoch }));
+    this.#out.persist = true;
+  }
+
+  /** `to || frame` from `member` becomes `from || frame` for `to` (02 §8.3). */
+  #binaryGroup(socket: SocketId, member: number, bytes: Uint8Array): void {
+    const state = this.state!;
+    const capacity = state.capacity!;
+    const to = bytes[0];
+    if (bytes.length < 2 || to === undefined || to === member || to >= capacity) return;
+    const target = state.members![to];
+    if (!isSlot(target)) return;
+    const retryAfter = this.#takeToken(member);
+    if (retryAfter > 0) return this.#error(socket, "rate_limited", retryAfter);
+    state.lastActivityAt = this.#now();
+    const out = bytes.slice();
+    out[0] = member;
+    const peerSocket = this.#socketOf(to);
+    if (peerSocket !== undefined) return this.#send(peerSocket, out);
+    if (bytes[1] === HELLO_TYPE) return;
+    this.#pruneBuffer(target);
+    const used = target.buffer.reduce((n, f) => n + f.bytes.length, 0);
+    if (target.buffer.length + 1 > L.offlineBufferFrames || used + out.length > Math.floor(G.roomBufferBytes / capacity)) {
+      return this.#error(socket, "buffer_full");
+    }
+    if (!this.#admitBuffered(out.length)) return this.#error(socket, "buffer_full");
+    target.buffer.push({ at: this.#now(), bytes: out });
+    this.#out.persist = true;
+  }
+
   #leave(member: Member): void {
+    if (typeof member === "number") return this.#leaveGroup(member);
     const state = this.state!;
     const peerSocket = this.#socketOf(otherOf(member));
     if (peerSocket !== undefined) this.#send(peerSocket, JSON.stringify({ t: "peer_left", reason: "left" }));
-    for (const [socket, conn] of this.#sockets) if (conn.member) this.#close(socket, "ended", false);
+    for (const [socket, conn] of this.#sockets) if (conn.member !== null) this.#close(socket, "ended", false);
     state.ended = { at: this.#now(), reason: "left" };
     state.slots = {};
     this.#out.persist = true;
   }
 
-  /** A joined member's socket is gone: mark the slot offline and tell the peer. */
+  /** 02 §8.2 rule 5: the leaver's slot is retired; the room ends when every taken slot is. */
+  #leaveGroup(member: number): void {
+    const state = this.state!;
+    const members = state.members!;
+    for (const [socket, conn] of this.#sockets) if (conn.member === member) this.#close(socket, "ended", false);
+    members[member] = "left";
+    for (const [socket, conn] of this.#sockets) {
+      if (typeof conn.member === "number") this.#send(socket, JSON.stringify({ t: "peer_left", member, reason: "left" }));
+    }
+    if (!members.some(isSlot)) state.ended = { at: this.#now(), reason: "left" };
+    state.lastActivityAt = this.#now();
+    this.#out.persist = true;
+  }
+
+  /** A joined member's socket is gone: mark the slot offline and tell the peer(s). */
   #memberGone(member: Member): void {
-    const slot = this.state?.slots[member];
+    const slot = this.state ? slotOf(this.state, member) : undefined;
     if (!this.state || !slot || this.#socketOf(member) !== undefined) return;
     slot.connected = false;
     this.state.lastActivityAt = this.#now();
-    const peerSocket = this.#socketOf(otherOf(member));
-    if (peerSocket !== undefined) this.#send(peerSocket, JSON.stringify({ t: "peer_left", reason: "disconnected" }));
+    if (typeof member === "number") {
+      for (const [socket, conn] of this.#sockets) {
+        if (typeof conn.member === "number") this.#send(socket, JSON.stringify({ t: "peer_left", member, reason: "disconnected" }));
+      }
+    } else {
+      const peerSocket = this.#socketOf(otherOf(member));
+      if (peerSocket !== undefined) this.#send(peerSocket, JSON.stringify({ t: "peer_left", reason: "disconnected" }));
+    }
     this.#out.persist = true;
   }
 
   /** Token bucket per member; returns 0 if a token was taken, else seconds to wait. */
   #takeToken(member: Member): number {
     const now = this.#now();
-    const b = this.#buckets.get(member) ?? { tokens: L.binaryFrameBurst, at: now };
+    // A group member sends one copy per peer: the limits scale with capacity − 1 (03 Limits).
+    const scale = typeof member === "number" ? Math.max(1, (this.state?.capacity ?? 2) - 1) : 1;
+    const burst = L.binaryFrameBurst * scale;
+    const refill = REFILL_PER_MS * scale;
+    const b = this.#buckets.get(member) ?? { tokens: burst, at: now };
     this.#buckets.set(member, b);
-    if (take(b, now, L.binaryFrameBurst, REFILL_PER_MS)) return 0;
-    return Math.max(1, Math.ceil((1 - b.tokens) / REFILL_PER_MS / 1000));
+    if (take(b, now, burst, refill)) return 0;
+    return Math.max(1, Math.ceil((1 - b.tokens) / refill / 1000));
   }
 
   /** Drops expired frames; returns whether anything was dropped. */
@@ -347,7 +461,7 @@ export class RelayRoom {
     const conn = this.#sockets.get(socket);
     this.#out.effects.push({ type: "close", socket, code: CLOSE[name], reason: name });
     this.#sockets.delete(socket);
-    if (notifyPeer && conn?.member) this.#memberGone(conn.member);
+    if (notifyPeer && conn && conn.member !== null) this.#memberGone(conn.member);
   }
 
   #run(fn: () => void): Output {
@@ -392,12 +506,33 @@ function emptyOutput(): Output {
   return { effects: [], persist: false, deleteAll: false, alarmAt: null };
 }
 
-function otherOf(m: Member): Member {
+function otherOf(m: "a" | "b"): "a" | "b" {
   return m === "a" ? "b" : "a";
 }
 
+function isSlot(m: Slot | "left" | null | undefined): m is Slot {
+  return typeof m === "object" && m !== null;
+}
+
+function slotEntries(state: RoomState): [Member, Slot][] {
+  const pair: [Member, Slot | undefined][] = [
+    ["a", state.slots.a],
+    ["b", state.slots.b],
+  ];
+  const group: [Member, Slot | "left" | null][] = (state.members ?? []).map((m, i) => [i, m]);
+  return [...pair, ...group].flatMap(([m, s]) => (isSlot(s) ? [[m, s] as [Member, Slot]] : []));
+}
+
 function slotsOf(state: RoomState): Slot[] {
-  return [state.slots.a, state.slots.b].filter((s): s is Slot => s !== undefined);
+  return slotEntries(state).map(([, s]) => s);
+}
+
+function slotOf(state: RoomState, member: Member): Slot | undefined {
+  if (typeof member === "number") {
+    const m = state.members?.[member];
+    return isSlot(m) ? m : undefined;
+  }
+  return state.slots[member];
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -415,6 +550,8 @@ const roomStateSchema = z.strictObject({
   epoch: z.number().int().nonnegative(),
   ended: z.strictObject({ at: z.number().int(), reason: z.enum(["left", "expired"]) }).nullable(),
   slots: z.strictObject({ a: slotSchema.optional(), b: slotSchema.optional() }),
+  capacity: z.number().int().min(G.minCapacity).max(G.maxCapacity).optional(),
+  members: z.array(z.union([slotSchema, z.literal("left"), z.null()])).max(G.maxCapacity).optional(),
 });
 
 /** RoomState as JSON text, frame bytes as base64url (03, Room state machine). */
@@ -423,6 +560,7 @@ export function encodeRoomState(state: RoomState): string {
   return JSON.stringify({
     ...state,
     slots: { ...(state.slots.a && { a: slot(state.slots.a) }), ...(state.slots.b && { b: slot(state.slots.b) }) },
+    ...(state.members && { members: state.members.map((m) => (isSlot(m) ? slot(m) : m)) }),
   });
 }
 
@@ -436,7 +574,10 @@ export function decodeRoomState(text: string): RoomState {
   const slots: RoomState["slots"] = {};
   if (parsed.slots.a) slots.a = slot(parsed.slots.a);
   if (parsed.slots.b) slots.b = slot(parsed.slots.b);
-  return { ...parsed, slots };
+  const { capacity, members, ...rest } = parsed;
+  if (capacity === undefined && members === undefined) return { ...rest, slots };
+  if (capacity === undefined || members === undefined || members.length !== capacity) throw new Error("bad group room state");
+  return { ...rest, slots, capacity, members: members.map((m) => (m === null || m === "left" ? m : slot(m))) };
 }
 
 const B64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";

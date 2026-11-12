@@ -70,13 +70,14 @@ export {
   type HandshakeAbortReason,
   type Harness,
   type HelloEvent,
+  type HelloPair,
   type HelloPayload,
   type OpenHelloResult,
   type Session,
 } from "./handshake.js";
 export { CTL_KEY_BYTES, CTL_NONCE_BYTES, ctlProof, verifyCtlProof } from "./ctl-proof.js";
 export { SALT, deriveRoomKeys, type RoomKeys } from "./keys.js";
-export { CLIENT_LIMITS, RELAY_LIMITS, SUPPORTED_PROTOCOLS, relayInfo } from "./limits.js";
+export { CLIENT_LIMITS, GROUP_LIMITS, RELAY_LIMITS, SUPPORTED_PROTOCOLS, relayInfo } from "./limits.js";
 export {
   CLOSE,
   RelayRoom,
@@ -93,7 +94,16 @@ export {
   type Slot,
   type SocketId,
 } from "./relay-room.js";
-export { MAX_RETRY_AFTER_S, parseRelayFrame, relayFrameSchema, type RelayFrame, type RelayFrameResult } from "./relay-frames.js";
+export {
+  MAX_RETRY_AFTER_S,
+  parseGroupRelayFrame,
+  parseRelayFrame,
+  relayFrameSchema,
+  type GroupRelayFrame,
+  type GroupRelayFrameResult,
+  type RelayFrame,
+  type RelayFrameResult,
+} from "./relay-frames.js";
 export {
   acceptHint,
   CODEX_CTL,
@@ -119,7 +129,7 @@ export {
 } from "./render.js";
 export { SECRET_RULES_VERSION, redact, scanSecrets, type SecretFinding, type SecretRuleId } from "./secrets.js";
 export { ANONYMOUS, NAME_MAX_CHARS, displayName, escapeAttr, sanitizeAttr, sanitizeText } from "./sanitize.js";
-export { DEFAULT_RELAY_HOST, PROTOCOL_VERSION, SECRET_BYTES, SHARE_PREFIX } from "./config.js";
+export { DEFAULT_RELAY_HOST, GROUP_SHARE_PREFIX, PROTOCOL_VERSION, SECRET_BYTES, SHARE_PREFIX } from "./config.js";
 export {
   NoDefaultRelayError,
   ShareStringError,

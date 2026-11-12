@@ -5,6 +5,9 @@ export const PROTOCOL_VERSION = 1;
 
 export const SHARE_PREFIX = "pw1_";
 
+/** Share strings of group rooms (02 §8.1, ADR-037). */
+export const GROUP_SHARE_PREFIX = "pw2_";
+
 /** Bytes of CSPRNG output in a room secret. */
 export const SECRET_BYTES = 32;
 

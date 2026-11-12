@@ -51,8 +51,15 @@ export class HandshakeAbort extends Error {
   }
 }
 
-export function helloAad(roomIdBytes: Uint8Array, epoch: number, ePub: Uint8Array): Uint8Array {
-  return concatBytes(utf8ToBytes("pairwire/v1/hello"), roomIdBytes, u32be(epoch), ePub);
+/** The sender's and the recipient's member indexes in a group room (02 §8.4). */
+export interface HelloPair {
+  from: number;
+  to: number;
+}
+
+export function helloAad(roomIdBytes: Uint8Array, epoch: number, ePub: Uint8Array, pair?: HelloPair): Uint8Array {
+  if (!pair) return concatBytes(utf8ToBytes("pairwire/v1/hello"), roomIdBytes, u32be(epoch), ePub);
+  return concatBytes(utf8ToBytes("pairwire/v2/hello"), roomIdBytes, u32be(epoch), Uint8Array.of(u8(pair.from), u8(pair.to)), ePub);
 }
 
 export function sealHello(args: {
@@ -61,12 +68,14 @@ export function sealHello(args: {
   ePub: Uint8Array;
   payload: HelloPayload;
   nonce?: Uint8Array;
+  /** Group rooms only (02 §8.4). */
+  pair?: HelloPair;
 }): Uint8Array {
-  const { keys, epoch, ePub, payload } = args;
+  const { keys, epoch, ePub, payload, pair } = args;
   if (ePub.length !== KEY_BYTES) throw new Error("e_pub must be 32 bytes");
   const nonce = args.nonce ?? randomBytes(NONCE_BYTES);
   const plain = utf8ToBytes(JSON.stringify(payload));
-  const ct = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, ePub)).encrypt(plain);
+  const ct = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, ePub, pair)).encrypt(plain);
   return concatBytes(Uint8Array.of(HELLO_TYPE), u32be(epoch), ePub, nonce, ct);
 }
 
@@ -74,14 +83,15 @@ export type OpenHelloResult =
   | { ok: true; epoch: number; pPub: Uint8Array; payload: HelloPayload }
   | { ok: false; reason: "malformed" | "decrypt_failed" | "bad_payload" };
 
-export function openHello(frame: Uint8Array, keys: Pick<RoomKeys, "roomIdBytes" | "helloKey">): OpenHelloResult {
+/** `pair`, in a group room: the sender's index as the relay gave it, and ours (02 §8.4). */
+export function openHello(frame: Uint8Array, keys: Pick<RoomKeys, "roomIdBytes" | "helloKey">, pair?: HelloPair): OpenHelloResult {
   if (frame.length < HEADER_BYTES + TAG_BYTES || frame[0] !== HELLO_TYPE) return { ok: false, reason: "malformed" };
   const epoch = new DataView(frame.buffer, frame.byteOffset + 1, 4).getUint32(0);
   const pPub = frame.slice(5, 5 + KEY_BYTES);
   const nonce = frame.subarray(5 + KEY_BYTES, HEADER_BYTES);
   let plain: Uint8Array;
   try {
-    plain = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, pPub)).decrypt(
+    plain = xchacha20poly1305(keys.helloKey, nonce, helloAad(keys.roomIdBytes, epoch, pPub, pair)).decrypt(
       frame.subarray(HEADER_BYTES),
     );
   } catch {
@@ -156,6 +166,8 @@ export class Handshake {
       keys: Pick<RoomKeys, "roomIdBytes" | "helloKey" | "psk">;
       payload: HelloPayload;
       floor?: number;
+      /** Group rooms (02 §8.4): one Handshake per peer, bound to our index and the peer's. */
+      pair?: { me: number; peer: number };
     },
   ) {
     this.#floor = opts.floor ?? -1;
@@ -187,11 +199,13 @@ export class Handshake {
     const priv = x25519.utils.randomSecretKey();
     const pub = x25519.getPublicKey(priv);
     this.#ephemeral = { epoch, priv, pub };
-    return sealHello({ keys: this.opts.keys, epoch, ePub: pub, payload: this.opts.payload });
+    const pair = this.opts.pair;
+    return sealHello({ keys: this.opts.keys, epoch, ePub: pub, payload: this.opts.payload, ...(pair ? { pair: { from: pair.me, to: pair.peer } } : {}) });
   }
 
   receive(frame: Uint8Array): HelloEvent {
-    const opened = openHello(frame, this.opts.keys);
+    const pair = this.opts.pair;
+    const opened = openHello(frame, this.opts.keys, pair ? { from: pair.peer, to: pair.me } : undefined);
     if (!opened.ok) {
       if (opened.reason === "decrypt_failed") this.#failures++;
       const wrongKey = opened.reason === "decrypt_failed" && this.#failures === MAX_HELLO_FAILURES;
@@ -223,6 +237,11 @@ export class Handshake {
     this.#ephemeral?.priv.fill(0);
     this.#ephemeral = null;
   }
+}
+
+function u8(n: number): number {
+  if (!Number.isInteger(n) || n < 0 || n > 0xff) throw new Error("member index must be a byte");
+  return n;
 }
 
 function u32be(n: number): Uint8Array {

@@ -3,7 +3,7 @@
 import { randomBytes } from "@noble/hashes/utils.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { base32Encode } from "../../src/base32.js";
-import { RELAY_LIMITS, SUPPORTED_PROTOCOLS } from "../../src/limits.js";
+import { GROUP_LIMITS, RELAY_LIMITS, SUPPORTED_PROTOCOLS } from "../../src/limits.js";
 
 export type Received =
   | { kind: "text"; data: string }
@@ -120,6 +120,7 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
         expect(info.protocol).toEqual([...SUPPORTED_PROTOCOLS]);
         expect(info.relay).toMatch(/^\d+\.\d+\.\d+/);
         expect(info.limits).toEqual(RELAY_LIMITS);
+        expect(info.group_limits).toEqual(GROUP_LIMITS);
       });
 
       it("answers 404 for anything else, with no CORS or cookies", async () => {
@@ -230,7 +231,7 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
 
       it("closes with 4004 for an unsupported protocol version", async () => {
         const socket = await relay.connect(room());
-        socket.sendText('{"t":"join","v":2,"token":null}');
+        socket.sendText('{"t":"join","v":3,"token":null}');
         expect(await closed(socket)).toBe(4004);
       });
 
@@ -261,6 +262,68 @@ export function relayConformance(name: string, factory: () => Promise<RelayUnder
         const { socket } = await member(room());
         socket.sendText(JSON.stringify({ t: "leave", pad: "x".repeat(1100) }));
         expect(await closed(socket)).toBe(4005);
+      });
+    });
+
+    describe("group rooms (02 §8, ADR-037)", () => {
+      async function groupMember(roomId: string, frame: Record<string, unknown>) {
+        const socket = await relay.connect(roomId);
+        socket.sendText(JSON.stringify({ t: "join", v: 2, ...frame }));
+        const joined = await text(socket);
+        expect(joined.t).toBe("joined");
+        return { socket, joined: joined as { member: number; token: string; epoch: number; present: number[] } };
+      }
+      /** to || frame */
+      const to = (index: number, n: number) => Uint8Array.from({ length: 48 }, (_, i) => (i === 0 ? index : i === 1 ? 0x02 : (n * 7 + i) & 0xff));
+
+      it("REQ-ROOM-9 a room for 3: slots 0..2, peer_joined with the member, 4001 for a fourth", async () => {
+        const roomId = room();
+        const a = await groupMember(roomId, { token: null, capacity: 3 });
+        const b = await groupMember(roomId, { token: null });
+        expect(b.joined).toMatchObject({ member: 1, capacity: 3, present: [0] });
+        expect(await text(a.socket)).toEqual({ t: "peer_joined", member: 1, epoch: b.joined.epoch });
+        const c = await groupMember(roomId, { token: null });
+        expect(c.joined).toMatchObject({ member: 2, present: [0, 1] });
+        expect(await text(a.socket)).toEqual({ t: "peer_joined", member: 2, epoch: c.joined.epoch });
+        expect(await text(b.socket)).toEqual({ t: "peer_joined", member: 2, epoch: c.joined.epoch });
+        const d = await relay.connect(roomId);
+        d.sendText(JSON.stringify({ t: "join", v: 2, token: null }));
+        expect(await closed(d)).toBe(4001);
+        const old = await relay.connect(roomId);
+        old.sendText(JSON.stringify({ t: "join", v: 1, token: null }));
+        expect(await closed(old)).toBe(4004);
+      });
+
+      it("REQ-ROOM-10 routes to || frame as from || frame, and buffers for an offline member", async () => {
+        const roomId = room();
+        const a = await groupMember(roomId, { token: null, capacity: 3 });
+        const b = await groupMember(roomId, { token: null });
+        await text(a.socket);
+        a.socket.sendBinary(to(1, 5));
+        expect(await binary(b.socket)).toEqual(to(0, 5));
+        await b.socket.close();
+        expect(await text(a.socket)).toEqual({ t: "peer_left", member: 1, reason: "disconnected" });
+        a.socket.sendBinary(to(1, 6));
+        await sync(a.socket);
+        const back = await groupMember(roomId, { token: b.joined.token });
+        expect(back.joined).toMatchObject({ member: 1, buffered: 1 });
+        expect(await binary(back.socket)).toEqual(to(0, 6));
+      });
+
+      it("REQ-ROOM-11 leave retires one member; the others stay", async () => {
+        const roomId = room();
+        const a = await groupMember(roomId, { token: null, capacity: 3 });
+        const b = await groupMember(roomId, { token: null });
+        await text(a.socket);
+        const c = await groupMember(roomId, { token: null });
+        await text(a.socket);
+        await text(b.socket);
+        b.socket.sendText('{"t":"leave"}');
+        expect(await closed(b.socket)).toBe(4003);
+        expect(await text(a.socket)).toEqual({ t: "peer_left", member: 1, reason: "left" });
+        expect(await text(c.socket)).toEqual({ t: "peer_left", member: 1, reason: "left" });
+        a.socket.sendBinary(to(2, 9));
+        expect(await binary(c.socket)).toEqual(to(0, 9));
       });
     });
 

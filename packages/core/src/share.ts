@@ -2,7 +2,7 @@
 // Error messages describe what is wrong and never echo the input (INV-7).
 import { randomBytes } from "@noble/hashes/utils.js";
 import { base32Decode, base32Encode } from "./base32.js";
-import { DEFAULT_RELAY_HOST, SECRET_BYTES, SHARE_PREFIX } from "./config.js";
+import { DEFAULT_RELAY_HOST, GROUP_SHARE_PREFIX, SECRET_BYTES, SHARE_PREFIX } from "./config.js";
 
 export interface RelayAddress {
   /** Lowercase hostname, IPv4 address, or the literal "[::1]". */
@@ -14,6 +14,8 @@ export interface ParsedShareString {
   secret: Uint8Array;
   /** `null` means the built-in default relay. */
   relay: RelayAddress | null;
+  /** A `pw2_` string: a group room (02 §8.1). */
+  group: boolean;
 }
 
 export type ShareStringErrorCode =
@@ -59,9 +61,9 @@ export function generateSecret(): Uint8Array {
   return randomBytes(SECRET_BYTES);
 }
 
-export function encodeShareString(secret: Uint8Array, relay?: RelayAddress): string {
+export function encodeShareString(secret: Uint8Array, relay?: RelayAddress, opts: { group?: boolean } = {}): string {
   if (secret.length !== SECRET_BYTES) throw new Error(`secret must be ${SECRET_BYTES} bytes`);
-  let out = SHARE_PREFIX + base32Encode(secret);
+  let out = (opts.group ? GROUP_SHARE_PREFIX : SHARE_PREFIX) + base32Encode(secret);
   if (relay) {
     const text = formatRelayAddress(relay);
     parseHostPort(text); // validates host and port with the parser's rules
@@ -76,17 +78,18 @@ export function parseShareString(input: string): ParsedShareString {
   if (text.length > MAX_INPUT) fail("too_long", "That text is too long to be a pairwire share string.");
 
   const lower = text.toLowerCase();
-  if (!lower.startsWith(SHARE_PREFIX)) {
+  const group = lower.startsWith(GROUP_SHARE_PREFIX);
+  if (!lower.startsWith(SHARE_PREFIX) && !group) {
     if (/^pw\d+_/.test(lower)) {
       fail(
         "unsupported_version",
-        "This share string is for a pairwire protocol version this client doesn't support (it speaks pw1). Update pairwire on both sides.",
+        "This share string is for a pairwire protocol version this client doesn't support (it speaks pw1 and pw2). Update pairwire on both sides.",
       );
     }
     fail("bad_prefix", "This is not a pairwire share string: it should start with pw1_.");
   }
 
-  const rest = lower.slice(SHARE_PREFIX.length);
+  const rest = lower.slice(SHARE_PREFIX.length); // both prefixes are four characters
   const at = rest.indexOf("@");
   const secretPart = at < 0 ? rest : rest.slice(0, at);
 
@@ -109,7 +112,7 @@ export function parseShareString(input: string): ParsedShareString {
     return fail("non_canonical", "The key part of the share string is not valid: its last character is wrong. It may have been mistyped.");
   }
 
-  return { secret, relay: at < 0 ? null : parseHostPort(rest.slice(at + 1)) };
+  return { secret, relay: at < 0 ? null : parseHostPort(rest.slice(at + 1)), group };
 }
 
 /** Parses a relay address from configuration (`PAIRWIRE_RELAY`, `config.json` "relay"). */

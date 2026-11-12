@@ -83,7 +83,7 @@ describe("REQ-ROOM-8 share string parsing", () => {
     ["only whitespace", "   \n ", "empty"],
     ["no prefix", SECRET_PART, "bad_prefix"],
     ["unrelated text", "hello world", "bad_prefix"],
-    ["future version", `pw2_${SECRET_PART}`, "unsupported_version"],
+    ["future version", `pw3_${SECRET_PART}`, "unsupported_version"],
     ["secret too short", VECTOR_SHARE.slice(0, -1), "bad_secret_length"],
     ["secret too long", `${VECTOR_SHARE}a`, "bad_secret_length"],
     ["digit 1 in secret", `pw1_1${SECRET_PART.slice(1)}`, "bad_secret_chars"],
